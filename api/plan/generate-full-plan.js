@@ -1444,7 +1444,7 @@ module.exports = async (request, response) => {
              
              if (resultData && typeof resultData === 'object' && planItem) {
                  // FIX 3: Merge resultData with the enriched planItem to carry over fields like 'category'
-                 fullResultsMap.set(normalizedKey, { ...planItem, ...resultData, normalizedKey: planItem.normalizedKey });
+                 fullResultsMap.set(normalizedKey, { ...planItem, ...resultData, normalizedKey: planItem.normalizedKey, allProducts: resultData.allProducts || [] });
              } else {
                   log(`Invalid market result structure or missing plan item for "${normalizedKey}"`, 'ERROR', 'SYSTEM', { resultData, planItemExists: !!planItem });
                   const baseData = planItem || { originalIngredient: ingredientKey, normalizedKey: normalizedKey };
