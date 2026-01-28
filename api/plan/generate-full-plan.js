@@ -1,6 +1,5 @@
 // --- Cheffy API: /api/plan/generate-full-plan.js ---
 // [NEW] Hybrid Batched Orchestrator (V14.0 - Ingredient-Centric Architecture)
-// [FIX] V14.1 - Fixed ERR_HTTP_HEADERS_SENT by moving method checks before SSE setup
 // Implements the "full plan" architecture:
 // 1. Compute Targets (passed in)
 // 2. Generate ALL meals
@@ -50,7 +49,8 @@ const ALLOW_PROTEIN_SCALING = process.env.CHEFFY_SCALE_PROTEIN === '1'; // D3: N
 const PLAN_MODEL_NAME_PRIMARY = 'gemini-2.0-flash';
 const PLAN_MODEL_NAME_FALLBACK = 'gemini-2.5-flash';
 
-const getGeminiApiUrl = (modelName) => `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+const getGeminiApiUrl = (modelName) => `https://generativelanguage
+.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
 // --- Vercel KV Client ---
 const kv = createClient({
@@ -134,6 +134,7 @@ function createLogger(run_id, responseStream = null) {
      */
     const writeSseEvent = (eventType, data) => {
         if (!responseStream || responseStream.writableEnded) {
+            // console.warn(`[SSE Logger] Attempted to write event '${eventType}' but stream is null or ended.`); // Optional: Log attempts to write to closed stream
             return; // Can't write to a closed or non-existent stream
         }
         try {
@@ -509,6 +510,7 @@ function runSmarterChecklist(product, ingredientData, log) {
     }
 
     // 4. Category (Not yet implemented in API response - keeping day.js logic for now)
+    // In day.js, the LLM provides allowedCategories which we use here.
     if (!passCategory(product, allowedCategories)) {
          log(`${checkLogPrefix}: FAIL (Category Mismatch: "${product.product_category}" not in [${(allowedCategories || []).join(', ')}])`, 'DEBUG', 'CHECKLIST');
          return { pass: false, score: 0 };
@@ -532,7 +534,6 @@ function runSmarterChecklist(product, ingredientData, log) {
 function normalizeStateHintForItem(item, log) {
   const key = (item.key || '').toLowerCase();
   let hint = (item.stateHint || '').toLowerCase().trim();
-  const originalHint = hint;
 
   // If hint is invalid, drop it to force defaulting
   const validHints = ['dry', 'raw', 'cooked', 'as_pack'];
@@ -636,10 +637,26 @@ RULES:
     d) 'stateHint': (string) MANDATORY. The state of the ingredient. Must be one of: "dry", "raw", "cooked", "as_pack".
     e) 'methodHint': (string | null) MANDATORY. Cooking method if state is "cooked". Must be one of: "boiled", "pan_fried", "grilled", "baked", "steamed", or null.
 4.  **CRITICAL UNIT RULE:** You MUST provide quantities in **'g'** (grams), **'ml'** (milliliters), or a specific single unit like **'egg'** or **'slice'**. You **MUST NOT** use ambiguous units like 'medium', 'large', or 'piece' for any item.
-5.  TARGETS: Aim for the protein target. The code will calculate calories based on your plan; you do NOT need to estimate them.
-6.  Adhere to all user constraints.
-7.  'meals' array is MANDATORY. Do NOT include 'ingredients' array.
-8.  Do NOT include calorie estimates in your response.
+5.  **PER-MEAL TARGETS (A2):** Each MAIN meal (Breakfast, Lunch, Dinner) should aim for ~${perMealTargets.main.calories} kcal, ~${perMealTargets.main.protein}g protein. Each SNACK should aim for ~${perMealTargets.snack.calories} kcal, ~${perMealTargets.snack.protein}g protein.
+6.  **PORTION SCALING (A3):** CRITICAL: Scale protein portions to match per-meal targets. Example: If per-meal protein target is 40g, use ~120-130g chicken breast (not 200g).
+7.  The code will calculate total calories based on your plan; you do NOT need to estimate them.
+8.  Adhere to all user constraints.
+9.  'meals' array is MANDATORY. Do NOT include 'ingredients' array.
+10. Do NOT include calorie estimates in your response.
+
+CRITICAL STATE HINT RULES:
+- "dry": Quantity refers to dry or uncooked weight (oats, rice, pasta, noodles, lentils, quinoa, other grains).
+- "raw": Quantity refers to raw weight (meat, poultry, fish, eggs, raw vegetables).
+- "cooked": Quantity refers to cooked or prepared weight (only if the user explicitly says "cooked" or the food is eaten cooked and measured after cooking).
+- "as_pack": Quantity refers to packaged or ready-to-eat form (yogurt, milk, bread, cheese, ready-to-eat snacks).
+
+DEFAULT BY CATEGORY:
+- Grains and pasta (oats, rice, pasta, noodles, couscous, quinoa, bulgur, barley, polenta, etc.) → "dry" unless the user explicitly specifies cooked weight.
+- Meats and fish (chicken, beef, pork, lamb, fish, mince, etc.) → "raw" unless explicitly cooked.
+- Dairy, bread and packaged foods → "as_pack" unless clearly prepared differently.
+
+You MUST return a valid "stateHint" for every ingredient. Do NOT leave it null or empty.
+Valid values are only: "dry", "raw", "cooked", "as_pack".
 
 Output ONLY the valid JSON object described below. ABSOLUTELY NO PROSE OR MARKDOWN.
 
@@ -663,7 +680,7 @@ JSON Structure:
 }
 `;
 
-// --- Grocery Optimizer Prompt (Full Plan) ---
+// --- Grocery Optimizer Prompt ---
 const GROCERY_OPTIMIZER_SYSTEM_PROMPT = (store, australianTermNote) => `
 You are an expert grocery query optimizer for store: ${store}.
 Your SOLE task is to take a JSON array of ingredient names and generate the full query/validation JSON for each.
@@ -736,7 +753,7 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
         body: JSON.stringify(payload)
-    }, log, logPrefix);
+    }, log, logPrefix); // FIX: Passed logPrefix instead of undefined attemptPrefix
 
     const result = await response.json(); // Safe to call .json() because of the guard in fetchLLMWithRetry
     const candidate = result.candidates?.[0];
@@ -744,23 +761,23 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
 
     // These checks are now for *after* a successful, JSON-parsed response
     if (finishReason === 'MAX_TOKENS') {
-        log(`${logPrefix}: Model ${modelName} failed with finishReason: MAX_TOKENS.`, 'WARN', 'LLM');
+        log(`${logPrefix}: Model ${modelName} failed with finishReason: MAX_TOKENS.`, 'WARN', 'LLM'); // FIX: Used logPrefix
         throw new Error(`Model ${modelName} failed: MAX_TOKENS.`);
     }
     if (finishReason !== 'STOP') {
-         log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result });
+         log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result }); // FIX: Used logPrefix
          throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
     }
 
     const content = candidate?.content;
     if (!content || !content.parts || content.parts.length === 0 || !content.parts[0].text) {
-        log(`${logPrefix}: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM', { result });
+        log(`${logPrefix}: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM', { result }); // FIX: Used logPrefix
         throw new Error(`Model ${modelName} failed: Response missing content.`);
     }
 
     // At this point, content.parts[0].text *is* the JSON string (already parsed once in fetchLLMWithRetry)
     const jsonText = content.parts[0].text;
-    log(`${logPrefix} Raw JSON Text`, 'DEBUG', 'LLM', { raw: jsonText.substring(0, 300) + '...' });
+    log(`${logPrefix} Raw JSON Text`, 'DEBUG', 'LLM', { raw: jsonText.substring(0, 300) + '...' }); // FIX: Used logPrefix
 
     try {
         // Re-parse (this is cheap) to validate shape
@@ -780,11 +797,11 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
             }
         }
         
-        log(`${logPrefix}: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM');
+        log(`${logPrefix}: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM'); // FIX: Used logPrefix
         return parsed; // Return the parsed object
 
     } catch (parseError) {
-        log(`Failed to parse/validate ${logPrefix} JSON from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM', { jsonText: jsonText.substring(0, 300) });
+        log(`Failed to parse/validate ${logPrefix} JSON from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM', { jsonText: jsonText.substring(0, 300) }); // FIX: Used logPrefix
         throw new Error(`Model ${modelName} failed: Invalid JSON response. ${parseError.message}`);
     }
 }
@@ -816,6 +833,8 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
     const mealTypesMap = {'3':['B','L','D'],'4':['B','L','D','S1'],'5':['B','L','D','S1','S2']};
     const requiredMeals = mealTypesMap[eatingOccasions]||mealTypesMap['3'];
     const cuisineInstruction = cuisine && cuisine.trim() ? `Focus: ${cuisine}.` : 'Neutral.';
+
+    // Removed outdated mealAvg/mealMax calculation
 
     const systemPrompt = MEAL_PLANNER_SYSTEM_PROMPT(weight, calories, 0, day, perMealTargets); // mealMax parameter is now obsolete, passed 0
     let userQuery = `Gen plan Day ${day} for ${name||'Guest'}. Profile: ${age}yo ${gender}, ${height}cm, ${weight}kg. Act: ${formData.activityLevel}. Goal: ${goal}. Store: ${store}. Day ${day} Targets: DAILY ~${calories} kcal. PER MAIN MEAL: ~${mainMealCal} kcal, ~${mainMealP}g protein. PER SNACK: ~${snackCal} kcal, ~${snackP}g protein. Dietary: ${dietary}. Meals: ${eatingOccasions} (${Array.isArray(requiredMeals) ? requiredMeals.join(', ') : '3 meals'}). Spend: ${costPriority}. Cuisine: ${cuisineInstruction}.`;
@@ -862,6 +881,7 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
  * Generates grocery query details for the *entire* aggregated list.
  */
 async function generateGroceryQueries_Batched(aggregatedIngredients, store, log) {
+// ... (omitted)
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
@@ -955,25 +975,34 @@ async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
     const candidate = result.candidates?.[0];
     const finishReason = candidate?.finishReason;
 
-    if (finishReason === 'MAX_TOKENS' || finishReason !== 'STOP') {
+    if (finishReason !== 'STOP') {
+        log(`Chef AI [${mealName}]: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM_CHEF', { result });
         throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
     }
 
     const content = candidate?.content;
-    if (!content || !content.parts || content.parts.length === 0 || !content.parts[0].text) {
+    if (!content || !content.parts || !content.parts.length === 0 || !content.parts[0].text) {
+        log(`Chef AI [${mealName}]: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM_CHEF', { result });
         throw new Error(`Model ${modelName} failed: Response missing content.`);
     }
 
     const jsonText = content.parts[0].text;
     try {
-        const parsed = JSON.parse(jsonText.trim());
-        if (!parsed.description || !parsed.instructions) {
-            throw new Error("Parsed recipe missing 'description' or 'instructions'.");
+        // [FIX] Add JSON guard
+        const trimmedText = jsonText.trim();
+        if (!trimmedText.startsWith('{') || !trimmedText.endsWith('}')) {
+             throw new Error(`Response text was not a JSON object. (Likely a safety refusal)`);
+        }
+        
+        const parsed = JSON.parse(trimmedText); 
+        if (!parsed || typeof parsed.description !== 'string' || !Array.isArray(parsed.instructions) || parsed.instructions.length === 0) {
+             throw new Error("Invalid JSON structure: 'description' (string) or 'instructions' (array) missing/empty.");
         }
         log(`Chef AI [${mealName}]: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM_CHEF');
         return parsed;
     } catch (parseError) {
-        throw new Error(`Model ${modelName} failed: Invalid JSON. ${parseError.message}`);
+        log(`Failed to parse/validate Chef AI JSON for [${mealName}] from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM_CHEF', { jsonText: jsonText.substring(0, 300) });
+        throw new Error(`Model ${modelName} failed: Invalid JSON response. ${parseError.message}`);
     }
 }
 
@@ -989,7 +1018,7 @@ async function generateChefInstructions(meal, store, log) {
 
         // 2. Prepare Prompt
         const systemPrompt = CHEF_SYSTEM_PROMPT(store);
-        const ingredientList = (meal.items || []).map(item => `- ${item.qty_value || item.qty || ''}${item.qty_unit || item.unit || ''} ${item.key}`).join('\n');
+        const ingredientList = meal.items.map(item => `- ${item.qty_value}${item.qty_unit} ${item.key}`).join('\n');
         const userQuery = `Generate a recipe for "${meal.name}" using only these ingredients:\n${ingredientList}`;
         
         log(`Chef AI Prompt for [${mealName}]`, 'INFO', 'LLM_PROMPT', {
@@ -1035,9 +1064,13 @@ async function generateChefInstructions(meal, store, log) {
 /// ===== API-CALLERS-END ===== ////
 
 
-// --- Market Run Logic ---
-/* The processSingleIngredientOptimized function is defined inside the main handler
-   where the 'log' and 'store' variables are correctly scoped. */
+// --- Market Run Logic (Copied from day.js) ---
+/* The processSingleIngredientOptimized function was here but has been moved
+   inside the main handler (module.exports) where the 'log' and 'store' variables
+   are correctly scoped to fix the "log is not defined" error. 
+*/
+
+// --- End Market Run Logic ---
 
 
 /// ===== MAIN-HANDLER-START ===== \\
@@ -1047,35 +1080,7 @@ module.exports = async (request, response) => {
     
     const run_id = crypto.randomUUID();
 
-    // ========================================================================
-    // [FIX] Handle OPTIONS and method checks BEFORE setting SSE headers
-    // This prevents ERR_HTTP_HEADERS_SENT when non-POST requests come in
-    // ========================================================================
-    
-    // Handle OPTIONS pre-flight request for CORS (before any headers are set)
-    if (request.method === 'OPTIONS') {
-        response.setHeader('Access-Control-Allow-Origin', '*');
-        response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-        response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-        response.status(200).end();
-        return;
-    }
-
-    // Check method BEFORE setting SSE headers
-    if (request.method !== 'POST') {
-        response.setHeader('Access-Control-Allow-Origin', '*');
-        response.setHeader('Allow', 'POST, OPTIONS');
-        console.log(`[${run_id}] Method Not Allowed: ${request.method}`);
-        response.status(405).json({
-            code: "METHOD_NOT_ALLOWED",
-            message: `Method ${request.method} Not Allowed. Please use POST.`
-        });
-        return;
-    }
-
-    // ========================================================================
-    // Now it's safe to set up SSE stream (only for valid POST requests)
-    // ========================================================================
+    // --- Setup SSE Stream ---
     response.setHeader('Content-Type', 'text/event-stream');
     response.setHeader('Cache-Control', 'no-cache');
     response.setHeader('Connection', 'keep-alive');
@@ -1087,18 +1092,25 @@ module.exports = async (request, response) => {
     const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, sendEvent } = createLogger(run_id, response);
     // --- End SSE Setup ---
 
+    if (request.method === 'OPTIONS') {
+        log("Handling OPTIONS pre-flight.", 'INFO', 'HTTP');
+        response.status(200).end(); 
+        return;
+    }
+
+    if (request.method !== 'POST') {
+        log(`Method Not Allowed: ${request.method}`, 'WARN', 'HTTP');
+        response.setHeader('Allow', 'POST, OPTIONS');
+        logErrorAndClose(`Method ${request.method} Not Allowed.`, "METHOD_NOT_ALLOWED");
+        return;
+    }
+
     let finalMealPlan = []; // This will hold the final, processed meals
     let store = ''; // Must be defined outside try block for market run logic scope
 
     try {
-        const { formData, nutritionalTargets } = request.body || {};
-        
-        // [FIX] Add null check for request body
-        if (!request.body) {
-            throw new Error("Request body is empty or missing.");
-        }
-        
-        const numDays = parseInt(formData?.days, 10) || 7;
+        const { formData, nutritionalTargets } = request.body;
+        const numDays = parseInt(formData.days, 10) || 7;
         log(`Plan generation starting for ${numDays} days.`, 'INFO', 'SYSTEM');
         sendEvent('plan:start', { days: numDays, formData: getSanitizedFormData(formData) });
 
@@ -1194,11 +1206,9 @@ module.exports = async (request, response) => {
         for (const day of fullMealPlan) {
             for (const meal of day.meals) {
                 // Add normalizedKey to all items *early*
-                if (meal.items) {
-                    meal.items.forEach(item => { if(item && item.key) { item.normalizedKey = normalizeKey(item.key); } });
-                }
+                meal.items.forEach(item => { if(item && item.key) { item.normalizedKey = normalizeKey(item.key); } });
 
-                for (const item of (meal.items || [])) {
+                for (const item of meal.items) {
                     // [Step 5] Ensure stateHint is normalized before use in quantity normalization
                     normalizeStateHintForItem(item, log);
                     
@@ -1235,16 +1245,14 @@ module.exports = async (request, response) => {
 
         // 3a. Generate Queries (LLM call)
         const groceryQueryData = await generateGroceryQueries_Batched(aggregatedIngredients, store, log);
-        const { ingredients: ingredientPlan } = groceryQueryData || {};
-        
-        // [FIX] Add null check for ingredientPlan
+        const { ingredients: ingredientPlan } = groceryQueryData;
         if (!ingredientPlan || ingredientPlan.length === 0) {
              throw new Error(`Grocery Optimizer AI returned empty ingredients.`);
         }
         
         // Map aggregated plan to full plan details
         const fullIngredientPlan = aggregatedIngredients.map(aggItem => {
-            const planDetails = ingredientPlan.find(p => p && p.originalIngredient === aggItem.originalIngredient);
+            const planDetails = ingredientPlan.find(p => p.originalIngredient === aggItem.originalIngredient);
             if (!planDetails) {
                  log(`No plan details from LLM for "${aggItem.originalIngredient}". Using fallback.`, 'WARN', 'LLM');
                  return {
@@ -1274,7 +1282,7 @@ module.exports = async (request, response) => {
          * Note: 'log' and 'store' are now correctly in scope from the enclosing handler.
          */
         const processSingleIngredientOptimized = async (ingredient) => {
-            let telemetry = { name: ingredient?.originalIngredient || 'unknown', used: 'none', score: 0, page: 1 };
+            let telemetry = { name: ingredient.originalIngredient, used: 'none', score: 0, page: 1 };
             try {
                 if (!ingredient || !ingredient.originalIngredient) {
                     log(`Market Run: Skipping invalid ingredient data`, 'WARN', 'MARKET_RUN', { ingredient });
@@ -1289,21 +1297,34 @@ module.exports = async (request, response) => {
                 
                 const result = { ...ingredient, allProducts: [], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url, source: 'failed', searchAttempts: [] };
                 const qn = ingredient.normalQuery;
-                const qt = (ingredient.tightQuery && ingredient.tightQuery.trim()) ? ingredient.tightQuery : synthTight(ingredient, store);
-                const qw = (ingredient.wideQuery && ingredient.wideQuery.trim()) ? ingredient.wideQuery : synthWide(ingredient, store);
+                const qt = (ingredient.tightQuery && ingredient.tightQuery.trim()) ? ingredient.tightQuery : synthTight(ingredient, ingredient.store); // Use ingredient.store (passed from LLM) or infer from outer scope
+                const qw = (ingredient.wideQuery && ingredient.wideQuery.trim()) ? ingredient.wideQuery : synthWide(ingredient, ingredient.store);
                 
-                const searchLadder = [['tight', qt], ['normal', qn], ['wide', qw]].filter(([_, q]) => q && q.trim());
+                const queriesToTry = [ { type: 'tight', query: qt }, { type: 'normal', query: qn }, { type: 'wide', query: qw } ].filter(q => q.query && q.query.trim());
+                
+                log(`[${ingredientKey}] Queries: Tight (${qt ? (ingredient.tightQuery ? 'AI' : 'Synth') : 'N/A'}), Normal (AI), Wide (${qw ? (ingredient.wideQuery ? 'AI' : 'Synth') : 'N/A'})`, 'DEBUG', 'MARKET_RUN');
                 
                 let acceptedQueryType = 'none';
                 let bestScore = 0;
 
-                for (const [type, query] of searchLadder) {
-                    if (!query || !query.trim()) continue;
-                    
+                for (const [index, { type, query }] of queriesToTry.entries()) {
+                    if (type === 'normal' && acceptedQueryType !== 'none') {
+                        continue; 
+                    }
+                    if (type === 'wide') {
+                        if (acceptedQueryType !== 'none') continue;
+                        const isFailFastCategory = ingredient.allowedCategories.some(c => FAIL_FAST_CATEGORIES.includes(c));
+                        if (isFailFastCategory) {
+                            log(`[${ingredientKey}] Skipping "wide" query due to fail-fast category.`, 'DEBUG', 'MARKET_RUN');
+                            continue;
+                        }
+                    }
+
                     log(`[${ingredientKey}] Attempting "${type}" query: "${query}"`, 'DEBUG', 'HTTP');
                     result.searchAttempts.push({ queryType: type, query: query, status: 'pending', foundCount: 0});
                     const currentAttemptLog = result.searchAttempts.at(-1);
 
+                    // NOTE: The store variable from the outer scope is correctly captured here.
                     const { data: priceData } = await fetchPriceData(store, query, 1, log);
 
                     if (priceData.error) {
@@ -1318,6 +1339,7 @@ module.exports = async (request, response) => {
                     
                     for (const rawProduct of rawProducts) {
                         if (!rawProduct || !rawProduct.product_name) continue;
+                        // log is correctly scoped here
                         const checklistResult = runSmarterChecklist(rawProduct, ingredient, log); 
                         if (checklistResult.pass) {
                             validProductsOnPage.push({ 
@@ -1328,6 +1350,7 @@ module.exports = async (request, response) => {
                                     size: rawProduct.product_size, 
                                     url: rawProduct.url, 
                                     barcode: rawProduct.barcode, 
+                                    // calculateUnitPrice is module-scoped, fine
                                     unit_price_per_100: calculateUnitPrice(rawProduct.current_price, rawProduct.product_size) 
                                 }, 
                                 score: checklistResult.score
@@ -1335,7 +1358,9 @@ module.exports = async (request, response) => {
                         }
                     }
                     
+                    // log is correctly scoped here
                     const filteredProducts = applyPriceOutlierGuard(validProductsOnPage, log, ingredientKey); 
+                    // Syntax Fix applied previously: (max, p => Math.max...) -> (max, p) => Math.max...
                     const currentBestScore = filteredProducts.length > 0 ? filteredProducts.reduce((max, p) => Math.max(max, p.score), 0) : 0;
                     currentAttemptLog.bestScore = currentBestScore;
 
@@ -1367,8 +1392,11 @@ module.exports = async (request, response) => {
                                 log(`[${ingredientKey}] Found valid 'normal' match. Stopping search.`, 'DEBUG', 'MARKET_RUN');
                                 break;
                             }
+                        } else { 
+                            currentAttemptLog.status = 'no_match_post_filter'; 
                         }
                     } else { 
+                        log(`[${ingredientKey}] No valid products (${type}).`, 'WARN', 'DATA'); 
                         currentAttemptLog.status = 'no_match'; 
                     }
                 }
@@ -1399,25 +1427,17 @@ module.exports = async (request, response) => {
         // Collate market results (fullResultsMap still needed to map key to selected product)
         const fullResultsMap = new Map(); // Map<normalizedKey, result>
         parallelResultsArray.forEach(currentResult => {
-             if (!currentResult) return; // [FIX] Skip null/undefined results
-             
              // FIX 1 & 2: Derive normalized key and look up plan item
-             const ingredientKey = Object.keys(currentResult).find(k => k !== '_error' && k !== 'itemKey' && k !== 'message');
-             if (!ingredientKey && currentResult._error) {
-                 log(`Market Run Item Error for "${currentResult.itemKey}": ${currentResult.message}`, 'WARN', 'MARKET_RUN');
-                 return;
-             }
-             if (!ingredientKey) return; // [FIX] Skip if no valid key found
-             
+             const ingredientKey = Object.keys(currentResult)[0];
              const normalizedKey = normalizeKey(ingredientKey);
              const resultData = currentResult[ingredientKey];
              
              // Look up the enriched plan item using the normalized key
-             const planItem = fullIngredientPlan.find(i => i && i.normalizedKey === normalizedKey);
+             const planItem = fullIngredientPlan.find(i => i.normalizedKey === normalizedKey);
 
              if (currentResult._error) {
                  log(`Market Run Item Error for "${currentResult.itemKey}": ${currentResult.message}`, 'WARN', 'MARKET_RUN');
-                 const baseData = planItem || { originalIngredient: currentResult.itemKey, normalizedKey: normalizeKey(currentResult.itemKey || 'unknown') };
+                 const baseData = planItem || { originalIngredient: currentResult.itemKey, normalizedKey: normalizeKey(currentResult.itemKey) };
                  fullResultsMap.set(normalizedKey, { ...baseData, source: 'error', error: currentResult.message, allProducts:[], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url });
                  return;
              }
@@ -1433,7 +1453,7 @@ module.exports = async (request, response) => {
         });
         
         market_run_ms = Date.now() - marketStartTime;
-        sendEvent('phase:end', { name: 'market', duration_ms: market_run_ms, itemsFound: Array.from(fullResultsMap.values()).filter(v => v && v.source === 'discovery').length });
+        sendEvent('phase:end', { name: 'market', duration_ms: market_run_ms, itemsFound: Array.from(fullResultsMap.values()).filter(v => v.source === 'discovery').length });
 
 
         // --- Phase 3.5: Price Extraction (Mod Zone 3) ---
@@ -1442,8 +1462,7 @@ module.exports = async (request, response) => {
         const priceDataMap = new Map(); 
 
         for (const [normalizedKey, result] of fullResultsMap.entries()) {
-            if (!result) continue; // [FIX] Skip null results
-            const selected = (result.allProducts || []).find(p => p && p.url === result.currentSelectionURL);
+            const selected = result.allProducts.find(p => p && p.url === result.currentSelectionURL);
             
             if (selected) {
                 priceDataMap.set(normalizedKey, {
@@ -1462,7 +1481,7 @@ module.exports = async (request, response) => {
                     store: store,
                     packSize: 'N/A', 
                     unitPrice: 0,
-                    productName: result.originalIngredient || 'Unknown'
+                    productName: result.originalIngredient
                 });
             }
         }
@@ -1521,23 +1540,26 @@ module.exports = async (request, response) => {
         const solverStartTime = Date.now();
         finalMealPlan = []; // Reset final plan, will be rebuilt here
 
+        // [NEW] Macro Debug Data Initialization
+        // Removed outdated targetsPerMeal calculation (B1)
+        
         const macroDebugDaysData = [];
 
         /**
          * Calculates the macros for a single item using the master nutrition map.
          * This function returns a detailed object including debug information required for the macroDebug payload.
          */
-        const computeDetailedItemMacros = (item, mealItems) => {
+        const computeDetailedItemMacros = (item, mealItems) => { // Relies on closure 'log' and 'nutritionDataMap'
              const normalizedKey = item.normalizedKey; 
              
              // 1. Get user-facing quantity
              const { value: gramsOrMl } = normalizeToGramsOrMl(item, log);
-             const gramsInput = gramsOrMl;
+             const gramsInput = gramsOrMl; // Normalized grams/ml before transforms
 
              // Initialize debug item structure
              const debugItem = {
                 key: item.key,
-                displayName: item.key,
+                displayName: item.key, // Using key as fallback
                 qtyValue: item.qty_value || null,
                 qtyUnit: item.qty_unit || null,
                 stateHint: item.stateHint || null,
@@ -1549,9 +1571,10 @@ module.exports = async (request, response) => {
                 computedMacros: { calories: 0, protein: 0, fat: 0, carbs: 0 },
                 source: 'missing',
                 notes: null,
-                lookupMethod: 'ingredient-centric'
+                lookupMethod: 'ingredient-centric' // MOD ZONE 4.3: Add ingredient-centric flag
              };
              
+             // ... (rest of initial checks) ...
              if (!Number.isFinite(gramsInput) || gramsInput < 0 || gramsInput === 0) {
                  if (gramsInput !== 0) {
                     log(`[MACRO_DEBUG] Invalid quantity for item '${item.key}'.`, 'ERROR', 'CALC', { item, gramsInput });
@@ -1565,36 +1588,87 @@ module.exports = async (request, response) => {
              debugItem.gramsAsSold = grams_as_sold;
              debugItem.methodHint = item.methodHint || inferredMethod || null;
              
-             // 3. Look up nutrition by normalized key
-             const nut = nutritionDataMap.get(normalizedKey);
-             
+             // 3. Get nutrition data (per 100g)
+             const nutritionData = nutritionDataMap.get(normalizedKey);
+             let grams = grams_as_sold;
              let p = 0, f = 0, c = 0, kcal = 0;
              
-             if (nut && nut.per100g) {
-                 const factor = grams_as_sold / 100;
-                 p = (nut.per100g.protein || 0) * factor;
-                 f = (nut.per100g.fat || 0) * factor;
-                 c = (nut.per100g.carbs || 0) * factor;
-                 kcal = (nut.per100g.kcal || 0) * factor;
+             let source = 'missing';
+
+             if (nutritionData && nutritionData.status === 'found') {
+                 // Use real data
+                 const proteinPer100 = Number(nutritionData.protein || nutritionData.protein_g_per_100g) || 0;
+                 const fatPer100 = Number(nutritionData.fat || nutritionData.fat_g_per_100g) || 0;
+                 const carbsPer100 = Number(nutritionData.carbs || nutritionData.carb_g_per_100g) || 0;
+
+                 // RFC-001: calories is the primary field from nutrition-search.js
+                 // Fallback chain: calories → kcal → kcal_per_100g → reconstruct from macros
+                 const kcalPer100 = 
+                     Number(nutritionData.calories) ||
+                     Number(nutritionData.kcal) || 
+                     Number(nutritionData.kcal_per_100g) || 
+                     ((proteinPer100 * 4) + (fatPer100 * 9) + (carbsPer100 * 4));
+
+
+                 // Populate debug per100
+                 debugItem.per100.kcal = kcalPer100;
+                 debugItem.per100.protein = proteinPer100;
+                 debugItem.per100.fat = fatPer100;
+                 debugItem.per100.carbs = carbsPer100;
                  
-                 debugItem.per100 = {
-                     kcal: nut.per100g.kcal || 0,
-                     protein: nut.per100g.protein || 0,
-                     fat: nut.per100g.fat || 0,
-                     carbs: nut.per100g.carbs || 0
-                 };
-                 debugItem.computedMacros = { calories: kcal, protein: p, fat: f, carbs: c };
-                 debugItem.source = nut.source || 'api';
-             } else {
-                 debugItem.notes = 'Nutrition data not found';
+                 p = (proteinPer100 / 100) * grams;
+                 f = (fatPer100 / 100) * grams;
+                 c = (carbsPer100 / 100) * grams;
+                 
+                 source = nutritionData.source.toLowerCase();
+                 debugItem.source = source;
+                 
+                 // MOD ZONE 4.2: Log warning if an external API was used
+                 // In the ingredient-centric flow, the only valid sources are HOT_PATH, CANONICAL, or FALLBACK
+                 if (source !== 'hot_path' && source !== 'canonical' && source !== 'fallback' && gramsInput > 0) {
+                     log(`[MACRO_DEBUG] WARNING: External API used for '${item.key}'. Potential for macro drift. Source: ${nutritionData.source}`, 'WARN', 'CALC');
+                 }
+             } else { 
+                if (gramsInput > 0) {
+                   log(`[MACRO_DEBUG] No nutrition found for '${item.key}'. Macros set to 0.`, 'WARN', 'CALC', { normalizedKey }); 
+                }
+                debugItem.notes = 'Nutrition data missing or not found.';
              }
              
-             // Sanity check
-             if (kcal > MAX_CALORIES_PER_ITEM) {
-                 log(`[MACRO_DEBUG] Sanity check failed for '${item.key}': ${kcal.toFixed(0)} kcal > ${MAX_CALORIES_PER_ITEM}. Nullifying.`, 'WARN', 'CALC');
-                 p = 0; f = 0; c = 0; kcal = 0;
-                 debugItem.computedMacros = { calories: 0, protein: 0, fat: 0, carbs: 0 };
-                 debugItem.notes = (debugItem.notes ? debugItem.notes + '; ' : '') + 'Macros nullified due to sanity check failure.';
+             // 4. Add extras (e.g., oil absorption)
+             const { absorbed_oil_g } = getAbsorbedOil(item, debugItem.methodHint, mealItems, log);
+             if (absorbed_oil_g > 0) { 
+                 f += absorbed_oil_g; 
+                 debugItem.notes = (debugItem.notes ? debugItem.notes + '; ' : '') + `Added ${absorbed_oil_g.toFixed(1)}g fat from absorbed oil.`;
+             }
+             
+             // 5. Calculate final kcal
+             kcal = (p * 4) + (f * 9) + (c * 4);
+
+             // Populate debug computed macros
+             debugItem.computedMacros.calories = kcal;
+             debugItem.computedMacros.protein = p;
+             debugItem.computedMacros.fat = f;
+             debugItem.computedMacros.carbs = c;
+             
+             // 6. Set Final Source and Log Anomalies
+             
+             if (kcal === 0 && gramsInput > 0) {
+                 // Log anomaly: Zero-calorie item with non-zero quantity (Rule 4)
+                 log(`[MACRO_DEBUG] Zero-calorie item with non-zero qty: '${item.key}' (${gramsInput.toFixed(0)}g). Source: ${source}`, 'WARN', 'CALC');
+             }
+             
+             if (source === 'canonical' && gramsInput > 0) {
+                 // Log anomaly: Canonical fallback used (Rule 4)
+                 log(`[MACRO_DEBUG] Canonical fallback used for '${item.key}'.`, 'INFO', 'CALC');
+             }
+
+             if (kcal > MAX_CALORIES_PER_ITEM && !item.key.toLowerCase().includes('oil')) {
+                log(`CRITICAL: Item '${item.key}' calculated to ${kcal.toFixed(0)} kcal, exceeding sanity limit.`, 'CRITICAL', 'CALC', { item, grams, p, f, c });
+                // Nullify macros to prevent breaking the plan
+                kcal = 0; p = 0; f = 0; c = 0;
+                debugItem.computedMacros = { calories: 0, protein: 0, fat: 0, carbs: 0 };
+                debugItem.notes = (debugItem.notes ? debugItem.notes + '; ' : '') + 'Macros nullified due to sanity check failure.';
              }
 
              return { p, f, c, kcal, key: item.key, debugItem };
@@ -1602,6 +1676,7 @@ module.exports = async (request, response) => {
 
 
         // Redefine the simple helper that calculateTotals and reconcilerGetItemMacros expects.
+        // This function replaces the original `computeItemMacros` but maintains the simple return structure.
         const computeItemMacros = (item, mealItems) => {
              const result = computeDetailedItemMacros(item, mealItems);
              return { p: result.p, f: result.f, c: result.c, kcal: result.kcal, key: result.key };
@@ -1614,23 +1689,25 @@ module.exports = async (request, response) => {
             let planHasInvalidItems = false;
             for (const meal of mealList) {
                  let mealKcal = 0, mealP = 0, mealF = 0, mealC = 0;
-                 for (const item of (meal.items || [])) {
+                 for (const item of meal.items) {
                      // Attach normalizedKey again as it was lost in deep copy
                      item.normalizedKey = normalizeKey(item.key); 
                      
                      // Ensure stateHint is normalized before macro calculation
                      normalizeStateHintForItem(item, log);
                      
+                     // This is the call to the macro calculator (the getMacros function for validation)
                      const macros = computeItemMacros(item, meal.items);
                      mealKcal += macros.kcal; mealP += macros.p; mealF += macros.f; mealC += macros.c;
                  }
                  meal.subtotal_kcal = mealKcal; meal.subtotal_protein = mealP; meal.subtotal_fat = mealF; meal.subtotal_carbs = mealC;
-                 if (meal.subtotal_kcal <= 0 && (meal.items || []).length > 0) {
-                     log(`[Solver] Meal "${meal.name}" (Day ${dayNum}) has zero/negative kcal.`, 'WARN', 'CALC', { items: (meal.items || []).map(i => i.key) });
+                 if (meal.subtotal_kcal <= 0 && meal.items.length > 0) { // Only log if not an empty meal
+                     log(`[Solver] Meal "${meal.name}" (Day ${dayNum}) has zero/negative kcal.`, 'WARN', 'CALC', { items: meal.items.map(i => i.key) });
                      planHasInvalidItems = true;
                  }
                  totalKcal += mealKcal; totalP += mealP; totalF += mealF; totalC += mealC;
             }
+            // Return total object, which serves as the dayTotals input for validation
             return { totalKcal, totalP, totalF, totalC, planHasInvalidItems };
         };
 
@@ -1638,6 +1715,7 @@ module.exports = async (request, response) => {
         // --- Run Solver V1 (Shadow) vs Reconciler V0 (Live) ---
         for (const day of fullMealPlan) {
             let mealsForThisDay = JSON.parse(JSON.stringify(day.meals)); // Deep copy for safety
+            // nutritionalTargets is the targets object for the current day
             const targetCalories = nutritionalTargets.calories;
             
             // Determine per meal targets for logging (Phase 5)
@@ -1653,6 +1731,7 @@ module.exports = async (request, response) => {
                 const meal = mealsForThisDay[i];
                 const mealTargets = targetsPerMeal(meal);
                 
+                // Use a deep copy for the reconciliation input as it mutates the meal object internally
                 const mealCopy = JSON.parse(JSON.stringify(meal));
 
                 const { adjusted, factor, meal: reconciledMeal } = reconcileMealLevel({
@@ -1661,11 +1740,12 @@ module.exports = async (request, response) => {
                     targetProtein: mealTargets.protein,
                     getItemMacros: computeItemMacros,
                     log: log,
-                    tolPct: 15
+                    tolPct: 15 // Use 15% tolerance for individual meal adjustment
                 });
                 
                 if (adjusted) {
                     reconciliationHappened = true;
+                    // Replace the original meal with the reconciled one
                     mealsForThisDay[i] = reconciledMeal; 
                 }
             }
@@ -1675,30 +1755,32 @@ module.exports = async (request, response) => {
             }
 
             // --- 1. Run Solver V1 (Shadow Path) ---
-            const solverV1Meals = JSON.parse(JSON.stringify(mealsForThisDay));
+            const solverV1Meals = JSON.parse(JSON.stringify(mealsForThisDay)); // Fresh deep copy (start from possibly reconciled state)
             const solverV1Totals = calculateTotals(solverV1Meals, day.dayNumber);
 
             // --- 2. Run Reconciler V0 (Live Path by default) ---
             const reconcilerGetItemMacros = (item) => {
-                item.normalizedKey = normalizeKey(item.key);
+                item.normalizedKey = normalizeKey(item.key); // Ensure key is normalized
+                // State hint is normalized inside calculateTotals, but we must ensure consistency here too
                 normalizeStateHintForItem(item, log);
                 
-                const mealContext = mealsForThisDay.find(m => (m.items || []).some(i => i.key === item.key))?.items || [];
+                const mealContext = mealsForThisDay.find(m => m.items.some(i => i.key === item.key))?.items || [];
                 return computeItemMacros(item, mealContext);
             };
 
             const { adjusted, factor, meals: scaledMeals } = reconcileNonProtein({
-                meals: mealsForThisDay.map(m => ({ ...m, items: (m.items || []).map(i => ({ ...i, qty: i.qty_value, unit: i.qty_unit })) })),
+                meals: mealsForThisDay.map(m => ({ ...m, items: m.items.map(i => ({ ...i, qty: i.qty_value, unit: i.qty_unit })) })),
                 targetKcal: targetCalories,
-                getItemMacros: reconcilerGetItemMacros,
+                getItemMacros: reconcilerGetItemMacros, // Use our master calculator
                 tolPct: 5,
+                // D1, D2, D3: Pass parameters for protein scaling logic
                 allowProteinScaling: ALLOW_PROTEIN_SCALING,
                 targetProtein: nutritionalTargets.protein,
                 log: log
             });
 
             // Re-format scaled meals and calculate their *final* totals
-            const reconcilerV0Meals = scaledMeals.map(m => ({ ...m, items: (m.items || []).map(i => ({ ...i, qty_value: i.qty, qty_unit: i.unit })) }));
+            const reconcilerV0Meals = scaledMeals.map(m => ({ ...m, items: m.items.map(i => ({ ...i, qty_value: i.qty, qty_unit: i.unit })) }));
             const reconcilerV0Totals = calculateTotals(reconcilerV0Meals, day.dayNumber);
             
             // --- Determine which meal/total set to use ---
@@ -1715,7 +1797,7 @@ module.exports = async (request, response) => {
                 reconciler_factor: factor
             });
 
-            // --- 4. Validation ---
+            // --- 4. Validation (Task 3) ---
             const validationResult = validateDayPlan({
               meals: selectedMeals,
               dayTotals: {
@@ -1730,7 +1812,7 @@ module.exports = async (request, response) => {
               log: log
             });
 
-            // --- 5. Optional Log Validation Issues ---
+            // --- 5. Optional Log Validation Issues (Task 5) ---
             if (validationResult && validationResult.hasIssues && validationResult.hasIssues()) {
               log(
                 `[VALIDATION] Day ${day.dayNumber}: ${validationResult.issues.length} issues (confidence=${validationResult.confidenceScore.toFixed(2)})`,
@@ -1738,23 +1820,25 @@ module.exports = async (request, response) => {
                 'CALC'
               );
             }
+            // --- End Validation ---
 
-            // --- 6. Select Path and Finalize Day Object ---
+            // --- 6. Select Path and Finalize Day Object (Task 4) ---
             log(`[Solver] Using ${USE_SOLVER_V1 ? 'SOLVER_V1' : 'RECONCILER_V0'} for Day ${day.dayNumber}`, 'INFO', 'SOLVER');
 
-            // --- Collect Macro Debug Data for this Day ---
+            // --- [NEW] Collect Macro Debug Data for this Day ---
             const dayDebug = {
-                dayIndex: day.dayNumber - 1,
+                dayIndex: day.dayNumber - 1, // 0-based
                 dayLabel: `Day ${day.dayNumber}`,
                 meals: []
             };
             
             for (const meal of selectedMeals) {
+                // Use per-meal target function for logging (Phase 5)
                 const targetMacros = targetsPerMeal(meal); 
 
                 const mealDebug = {
                     mealName: meal.name,
-                    mealId: null,
+                    mealId: null, // Not available
                     targetMacros: {
                         calories: targetMacros.calories ? Math.round(targetMacros.calories) : null,
                         protein: targetMacros.protein ? Math.round(targetMacros.protein) : null,
@@ -1776,8 +1860,10 @@ module.exports = async (request, response) => {
                     items: []
                 };
 
-                for (const item of (meal.items || [])) {
+                for (const item of meal.items) {
+                    // Recalculate item macros using the detailed function to get the debug object
                     const { debugItem } = computeDetailedItemMacros(item, meal.items);
+                    // Round the final computed macros in the debug item
                     debugItem.computedMacros.calories = Math.round(debugItem.computedMacros.calories);
                     debugItem.computedMacros.protein = Math.round(debugItem.computedMacros.protein);
                     debugItem.computedMacros.fat = Math.round(debugItem.computedMacros.fat);
@@ -1799,6 +1885,7 @@ module.exports = async (request, response) => {
                     fat: selectedTotals.totalF,
                     carbs: selectedTotals.totalC
                 },
+                // [NEW] Attach validation result (Task 4)
                 validation: validationResult.toJSON()
             });
         }
@@ -1807,26 +1894,31 @@ module.exports = async (request, response) => {
 
 
         // --- Phase 6: Chef AI (Writer) ---
+        // This phase runs *after* the solver, so it has the *final* scaled quantities
         sendEvent('phase:start', { name: 'writer', description: 'Writing recipes...' });
         sendEvent('plan:progress', { pct: 95, message: `Writing final recipes...` });
         const writerStartTime = Date.now();
         
         const allMeals = finalMealPlan.flatMap(day => day.meals);
+        // Run recipe generation in parallel for all meals across all days
         const recipeResults = await concurrentlyMap(allMeals, 6, (meal) => generateChefInstructions(meal, store, log));
         
+        // Create a map to re-assemble the plan
         const recipeMap = new Map();
         recipeResults.forEach((result, index) => {
             if (result && !result._error) {
                 const originalMeal = allMeals[index];
+                // Find which day this meal belonged to
                 const dayNumber = finalMealPlan.find(d => d.meals.includes(originalMeal))?.dayNumber;
                 recipeMap.set(`${dayNumber}:${originalMeal.name}`, result);
             }
         });
 
+        // Re-inject recipes into the final plan
         for (const day of finalMealPlan) {
             day.meals = day.meals.map(meal => {
                 const recipe = recipeMap.get(`${day.dayNumber}:${meal.name}`);
-                return recipe || { ...meal, ...MOCK_RECIPE_FALLBACK };
+                return recipe || { ...meal, ...MOCK_RECIPE_FALLBACK }; // Fallback if chef failed
             });
         }
         writer_ms = Date.now() - writerStartTime;
@@ -1835,18 +1927,23 @@ module.exports = async (request, response) => {
         // --- Phase 7: Finalize ---
         sendEvent('phase:start', { name: 'finalize', description: 'Assembling final plan...' });
         
+        // Clean up meal objects for the frontend
         let totalCalories = 0, totalProtein = 0, totalFat = 0, totalCarbs = 0;
         
         // 1. Create the final unique ingredient ARRAY (for uniqueIngredients field)
         const finalUniqueIngredients = aggregatedIngredients.map(({ normalizedKey, dayRefs, ...rest }) => {
              const priceData = priceDataMap.get(normalizedKey) || {};
-             const marketResult = fullResultsMap.get(normalizedKey) || {};
+             const marketResult = fullResultsMap.get(normalizedKey) || {}; // GET THE FULL RESULT
              
+             // Merge market data (which contains allProducts, currentSelectionURL, source, etc.)
+             // then override with the cleaner priceData structure where available.
              return {
-                 ...rest,
-                 normalizedKey,
-                 dayRefs: Array.from(dayRefs),
+                 ...rest, // originalIngredient, requested_total_g, stateHint
+                 normalizedKey,  // Keep normalizedKey for frontend lookups
+                 dayRefs: Array.from(dayRefs), // Convert Set to Array
+                 // Include ALL market result data (allProducts, currentSelectionURL, source)
                  ...marketResult,
+                 // Include price data (overwrites for cleaner structure)
                  ...priceData
              };
         });
@@ -1861,6 +1958,7 @@ module.exports = async (request, response) => {
 
 
         finalMealPlan.forEach(day => {
+            // Store rounded totals separately for frontend consumption
             const dayTotals = day.totals;
             day.totals = {
                 calories: Math.round(dayTotals.calories || 0),
@@ -1868,6 +1966,7 @@ module.exports = async (request, response) => {
                 fat: Math.round(dayTotals.fat || 0),
                 carbs: Math.round(dayTotals.carbs || 0),
             }
+            // Aggregate totals for the summary (Rule 3)
             totalCalories += dayTotals.calories;
             totalProtein += dayTotals.protein;
             totalFat += dayTotals.fat;
@@ -1875,11 +1974,13 @@ module.exports = async (request, response) => {
 
 
             day.meals.forEach(meal => {
+                // Round meal macros
                 meal.subtotal_kcal = Math.round(meal.subtotal_kcal || 0);
                 meal.subtotal_protein = Math.round(meal.subtotal_protein || 0);
                 meal.subtotal_fat = Math.round(meal.subtotal_fat || 0);
                 meal.subtotal_carbs = Math.round(meal.subtotal_carbs || 0);
-                meal.items = (meal.items || []).map(item => ({
+                // Simplify item structure
+                meal.items = meal.items.map(item => ({
                     key: item.key,
                     qty: item.qty_value,
                     unit: item.qty_unit,
@@ -1889,6 +1990,7 @@ module.exports = async (request, response) => {
             });
         });
 
+        // [NEW] Calculate Summary Debug Data (Rule 3)
         const macroDebugSummary = {
             totalDays: numDays,
             totalCalories: Math.round(totalCalories),
@@ -1903,8 +2005,11 @@ module.exports = async (request, response) => {
         const responseData = {
             message: `Successfully generated full ${numDays}-day plan.`,
             mealPlan: finalMealPlan,
+            // FIX: Use the OBJECT structure for 'results' expected by the ShoppingList component
             results: resultsObject,           
+            // Keep the ARRAY structure for 'uniqueIngredients' (used by list views)
             uniqueIngredients: finalUniqueIngredients,
+            // [NEW] Macro Debug Payload (Rule 1)
             macroDebug: {
                 days: macroDebugDaysData,
                 summary: macroDebugSummary
@@ -1946,3 +2051,4 @@ module.exports = async (request, response) => {
 };
 
 /// ===== MAIN-HANDLER-END ===== ////
+
