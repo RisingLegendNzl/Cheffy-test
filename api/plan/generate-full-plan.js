@@ -1462,7 +1462,7 @@ module.exports = async (request, response) => {
         const priceDataMap = new Map(); 
 
         for (const [normalizedKey, result] of fullResultsMap.entries()) {
-            const selected = result.allProducts.find(p => p && p.url === result.currentSelectionURL);
+            const selected = (result.allProducts || []).find(p => p && p.url === result.currentSelectionURL);
             
             if (selected) {
                 priceDataMap.set(normalizedKey, {
@@ -2051,4 +2051,3 @@ module.exports = async (request, response) => {
 };
 
 /// ===== MAIN-HANDLER-END ===== ////
-
