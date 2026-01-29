@@ -139,41 +139,49 @@ const useAppLogic = ({
         };
     }, []);
 
-    // --- Persist Log Visibility Preferences ---
-    useEffect(() => {
-      localStorage.setItem('cheffy_show_orchestrator_logs', JSON.stringify(showOrchestratorLogs));
-    }, [showOrchestratorLogs]);
-
-    useEffect(() => {
-      localStorage.setItem('cheffy_show_failed_ingredients_logs', JSON.stringify(showFailedIngredientsLogs));
-    }, [showFailedIngredientsLogs]);
-    
-    // Macro Debug Log Persistence
-    useEffect(() => {
-      localStorage.setItem('cheffy_show_macro_debug_log', JSON.stringify(showMacroDebugLog));
-    }, [showMacroDebugLog]);
-
-    // --- NEW: Load meal plan from localStorage on mount ---
-    useEffect(() => {
-        if (mealPlan.length > 0) return; // Don't overwrite existing plan
+    // --- Toast System (Unified) ---
+    const showToast = useCallback((message, type = 'info') => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, message, type }]);
         
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            setToasts(prev => prev.filter(t => t.id !== id));
+        }, 5000);
+    }, []);
+
+    const removeToast = useCallback((id) => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+    }, []);
+
+    // --- Plan Persistence Hook ---
+    const planPersistence = usePlanPersistence({
+        db,
+        userId,
+        isAuthReady,
+        showToast,
+        formData,
+        nutritionalTargets,
+        mealPlan,
+        results,
+        uniqueIngredients,
+        totalCost,
+        setFormData,
+        setNutritionalTargets,
+        setMealPlan,
+        setResults,
+        setUniqueIngredients,
+        setTotalCost
+    });
+
+    // --- Restore meal plan from localStorage on mount ---
+    useEffect(() => {
         const loadFromLocalStorage = () => {
             try {
-                const stored = localStorage.getItem(STORAGE_KEY);
-                if (stored) {
-                    const planData = JSON.parse(stored);
-                    
-                    // Check if data is not expired (optional: 7 days)
-                    if (planData.timestamp) {
-                        const age = Date.now() - new Date(planData.timestamp).getTime();
-                        const MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
-                        if (age > MAX_AGE) {
-                            console.log('[LOAD] Stored plan expired, removing from cache');
-                            localStorage.removeItem(STORAGE_KEY);
-                            return;
-                        }
-                    }
-                    
+                const savedPlan = localStorage.getItem(STORAGE_KEY);
+                if (savedPlan) {
+                    const planData = JSON.parse(savedPlan);
+                   
                     // Restore the plan data
                     if (planData.mealPlan && planData.mealPlan.length > 0) {
                         setMealPlan(planData.mealPlan || []);
@@ -211,90 +219,56 @@ const useAppLogic = ({
                 console.log('[SAVE] Meal plan saved to localStorage');
             } catch (error) {
                 console.error('[SAVE] Failed to save plan to localStorage:', error);
-                // If storage quota exceeded, try to clear old data
-                if (error.name === 'QuotaExceededError') {
-                    console.warn('[SAVE] Storage quota exceeded, clearing old plan');
-                    localStorage.removeItem(STORAGE_KEY);
-                }
             }
         }
     }, [mealPlan, results, uniqueIngredients, totalCost, formData, nutritionalTargets]);
 
-    // --- Base Helpers ---
-    const showToast = useCallback((message, type = 'info', duration = 3000) => {
-      const id = Date.now();
-      setToasts(prev => [...prev, { id, message, type, duration }]);
-    }, []);
-    
-    const removeToast = useCallback((id) => {
-      setToasts(prev => prev.filter(toast => toast.id !== id));
-    }, []);
-    
-    const recalculateTotalCost = useCallback((currentResults) => {
-        let newTotal = 0;
-        Object.values(currentResults).forEach(item => {
-            const qty = item.userQuantity || 1;
-            if (item.source === 'discovery' && item.allProducts && item.currentSelectionURL) {
-                const selected = item.allProducts.find(p => p.url === item.currentSelectionURL);
-                if (selected) {
-                    newTotal += (selected.price || 0) * qty;
-                }
-            } else if (item.source === 'failed') {
-                newTotal += (MOCK_PRODUCT_TEMPLATE.price || 0) * qty;
-            } else if (item.price) {
-                newTotal += (item.price || 0) * qty;
-            }
-        });
-        setTotalCost(newTotal);
-    }, []);
+    // --- Computed Values ---
+    const latestLog = useMemo(() => {
+        if (diagnosticLogs.length === 0) return null;
+        return diagnosticLogs[diagnosticLogs.length - 1];
+    }, [diagnosticLogs]);
 
-    // --- Plan Persistence ---
-    const planPersistence = usePlanPersistence({
-        userId,
-        isAuthReady,
-        db,
-        mealPlan,
-        results,
-        uniqueIngredients,
-        formData,
-        nutritionalTargets,
-        showToast,
-        setMealPlan,
-        setResults,
-        setUniqueIngredients
-    });
-
-    // --- Categorized Results (Computed Value) ---
     const categorizedResults = useMemo(() => {
-        const groups = {};
-        Object.keys(results).forEach(normalizedKey => {
-            const item = results[normalizedKey];
-            if (item && item.originalIngredient) {
-                const category = item.category || 'Uncategorized';
-                if (!groups[category]) groups[category] = [];
-                 if (!groups[category].some(existing => existing.originalIngredient === item.originalIngredient)) {
-                      groups[category].push({ normalizedKey: normalizedKey, ingredient: item.originalIngredient, ...item });
-                 }
-            }
+        const categories = { pantry: [], dairy: [], produce: [], meat: [], frozen: [], other: [] };
+        Object.entries(results).forEach(([key, item]) => {
+            const cat = item.category?.toLowerCase() || 'other';
+            if (categories[cat]) categories[cat].push({ key, ...item });
+            else categories.other.push({ key, ...item });
         });
-        const sortedCategories = Object.keys(groups).sort();
-        const sortedGroups = {};
-        for (const category of sortedCategories) {
-            sortedGroups[category] = groups[category];
-        }
-        return sortedGroups;
-    }, [results]); 
+        return categories;
+    }, [results]);
 
     const hasInvalidMeals = useMemo(() => {
-        if (!mealPlan || mealPlan.length === 0) return false;
         return mealPlan.some(dayPlan =>
-            !dayPlan || !Array.isArray(dayPlan.meals) || dayPlan.meals.some(meal =>
-                !meal || typeof meal.subtotal_kcal !== 'number' || meal.subtotal_kcal <= 0
-            )
+            dayPlan.meals?.some(meal => !meal.items || meal.items.length === 0)
         );
-    }, [mealPlan]); 
+    }, [mealPlan]);
 
-    const latestLog = diagnosticLogs.length > 0 ? diagnosticLogs[diagnosticLogs.length - 1] : null;
+    // --- Firebase Auth Handlers ---
+    const handleSignUp = useCallback(async (credentials) => {
+        if (!auth) throw new Error('Firebase auth not initialized');
+        const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
+        const userCredential = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
+        if (credentials.displayName) {
+            await updateProfile(userCredential.user, { displayName: credentials.displayName });
+        }
+        showToast('Account created successfully!', 'success');
+    }, [auth, showToast]);
+
+    const handleSignIn = useCallback(async (credentials) => {
+        if (!auth) throw new Error('Firebase auth not initialized');
+        const { signInWithEmailAndPassword } = await import('firebase/auth');
+        await signInWithEmailAndPassword(auth, credentials.email, credentials.password);
+        showToast('Signed in successfully!', 'success');
+    }, [auth, showToast]);
+
+    const handleSignOut = useCallback(async () => {
+        if (!auth) return;
+        const { signOut } = await import('firebase/auth');
+        await signOut(auth);
+        showToast('Signed out successfully', 'success');
+    }, [auth, showToast]);
 
     // --- Profile Management ---
     const handleSaveProfile = useCallback(async (silent = false) => {
@@ -308,8 +282,7 @@ const useAppLogic = ({
                 nutritionalTargets: nutritionalTargets,
                 lastUpdated: new Date().toISOString()
             };
-            
-            // FIX: Changed from 'profiles' to 'profile' to match the collection name used in load
+
             await setDoc(doc(db, 'profile', userId), profileData);
             console.log("[PROFILE] Profile saved successfully");
             
@@ -453,47 +426,42 @@ const useAppLogic = ({
             console.log('[GENERATE] Aborting previous request.');
             abortControllerRef.current.abort();
         }
+        
+        // --- Create new AbortController for this request ---
         abortControllerRef.current = new AbortController();
         const signal = abortControllerRef.current.signal;
-        // --- End Abort Fix ---
-
+        
+        // --- Reset State ---
         setLoading(true);
         setError(null);
         setDiagnosticLogs([]);
-        setNutritionCache({});
-        if (nutritionalTargets.calories === 0) {
-            setNutritionalTargets({ calories: 0, protein: 0, fat: 0, carbs: 0 });
-        }
         setResults({});
         setUniqueIngredients([]);
-        setMealPlan([]);
-        setTotalCost(0);
-        setEatenMeals({});
         setFailedIngredientsHistory([]);
+        setMealPlan([]);
+        setMacroDebug(null);
         setGenerationStepKey('targets');
-        if (!isLogOpen) { setLogHeight(250); setIsLogOpen(true); }
-        setMacroDebug(null); // Macro Debug Reset
+        setGenerationStatus('Calculating nutritional targets...');
 
+        // --- Fetch Targets ---
         let targets;
-
         try {
             const targetsResponse = await fetch(ORCHESTRATOR_TARGETS_API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData),
+                body: JSON.stringify({ formData }),
                 signal: signal,
             });
 
             if (!targetsResponse.ok) {
-                const errorMsg = await getResponseErrorDetails(targetsResponse);
-                throw new Error(`Failed to calculate targets: ${errorMsg}`);
+                throw new Error(`Targets API failed: ${targetsResponse.status}`);
             }
 
             const targetsData = await targetsResponse.json();
-            targets = targetsData.nutritionalTargets;
-            setNutritionalTargets(targets);
-            setDiagnosticLogs(prev => [...prev, ...(targetsData.logs || [])]);
-            
+            setNutritionalTargets(targetsData);
+            targets = targetsData;
+            console.log('[GENERATE] Targets fetched:', targets);
+
         } catch (err) {
             if (err.name === 'AbortError') {
                 console.log('[GENERATE] Targets request aborted.');
@@ -669,7 +637,6 @@ const useAppLogic = ({
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) {
-                        // FIX: Check planComplete instead of !error
                         if (!planComplete) {
                             throw new Error("Batch stream ended without 'plan:complete' event.");
                         }
@@ -755,6 +722,9 @@ const useAppLogic = ({
                                 break;
 
                             case 'error':
+                                // FIX: Set planComplete to true before throwing error
+                                // This indicates the backend properly closed the stream with an error event
+                                planComplete = true;
                                 throw new Error(eventData.message || 'Unknown backend error');
                         }
                     }
@@ -827,178 +797,125 @@ const useAppLogic = ({
                 });
                 return newResults;
             });
-        } catch (error) {
-            console.error('Nutrition fetch error:', error);
+        } catch (err) {
+            console.error(`Failed to fetch nutrition for ${product.name}:`, err);
+            const errorData = { status: 'error', error: err.message };
+            setNutritionCache(prev => ({ ...prev, [product.url]: errorData }));
         } finally {
             setLoadingNutritionFor(null);
         }
     }, [nutritionCache]);
 
-    const handleSubstituteSelection = useCallback((ingredientKey, selectedProductUrl) => {
+    const handleSubstituteSelection = useCallback((ingredientKey, newProduct) => {
         setResults(prev => {
             const updated = { ...prev };
             if (updated[ingredientKey]) {
+                const currentSelection = updated[ingredientKey].allProducts?.find(p => p.url === updated[ingredientKey].currentSelectionURL);
+                const quantityNeeded = updated[ingredientKey].requested_total_g || 0;
+                const currentQty = currentSelection?.size ? parseFloat(currentSelection.size.match(/\d+\.?\d*/)?.[0]) || 1 : 1;
+                const newQty = newProduct.size ? parseFloat(newProduct.size.match(/\d+\.?\d*/)?.[0]) || 1 : 1;
+                const calculatedQuantity = Math.ceil((quantityNeeded / 1000) / newQty);
                 updated[ingredientKey] = {
                     ...updated[ingredientKey],
-                    currentSelectionURL: selectedProductUrl
+                    currentSelectionURL: newProduct.url,
+                    price: newProduct.price,
+                    size: newProduct.size,
+                    brand: newProduct.brand,
+                    name: newProduct.name,
+                    calculatedQuantity: Math.max(1, calculatedQuantity)
                 };
             }
             return updated;
         });
-        recalculateTotalCost({ ...results, [ingredientKey]: { ...results[ingredientKey], currentSelectionURL: selectedProductUrl } });
-    }, [results, recalculateTotalCost]);
+        showToast(`Switched to ${newProduct.name}`, 'success');
+    }, [showToast]);
 
     const handleQuantityChange = useCallback((ingredientKey, newQuantity) => {
-        const qty = parseInt(newQuantity, 10);
-        if (isNaN(qty) || qty < 1) return;
+        const qty = Math.max(1, parseInt(newQuantity, 10) || 1);
         setResults(prev => {
             const updated = { ...prev };
             if (updated[ingredientKey]) {
                 updated[ingredientKey] = {
                     ...updated[ingredientKey],
-                    userQuantity: qty
+                    calculatedQuantity: qty
                 };
             }
             return updated;
         });
-        recalculateTotalCost({ ...results, [ingredientKey]: { ...results[ingredientKey], userQuantity: qty } });
+    }, []);
+
+    const recalculateTotalCost = useCallback((resultsData) => {
+        let cost = 0;
+        Object.values(resultsData).forEach(item => {
+            const price = parseFloat(item.price) || 0;
+            const qty = parseInt(item.calculatedQuantity, 10) || 1;
+            cost += price * qty;
+        });
+        setTotalCost(cost);
+    }, []);
+
+    useEffect(() => {
+        recalculateTotalCost(results);
     }, [results, recalculateTotalCost]);
 
-    const handleDownloadFailedLogs = useCallback(() => {
-      const blob = new Blob([JSON.stringify(failedIngredientsHistory, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      link.download = `cheffy_failed_ingredients_${timestamp}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    }, [failedIngredientsHistory]);
-
     const handleDownloadLogs = useCallback(() => {
-      const blob = new Blob([JSON.stringify(diagnosticLogs, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      link.download = `cheffy_orchestrator_logs_${timestamp}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    }, [diagnosticLogs]);
+        const logsText = diagnosticLogs.map(log => {
+            const data = log.data ? JSON.stringify(log.data, null, 2) : '';
+            return `[${log.timestamp}] [${log.level}] [${log.tag}] ${log.message}${data ? `\n${data}` : ''}`;
+        }).join('\n\n');
+        const blob = new Blob([logsText], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `cheffy_logs_${new Date().toISOString().split('T')[0]}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Logs downloaded', 'success');
+    }, [diagnosticLogs, showToast]);
+
+    const handleDownloadFailedLogs = useCallback(() => {
+        if (failedIngredientsHistory.length === 0) {
+            showToast('No failed ingredients to download', 'info');
+            return;
+        }
+        const logsText = failedIngredientsHistory.map(item => 
+            `[${item.timestamp}] ${item.originalIngredient}: ${item.error}`
+        ).join('\n');
+        const blob = new Blob([logsText], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `cheffy_failed_ingredients_${new Date().toISOString().split('T')[0]}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Failed ingredients log downloaded', 'success');
+    }, [failedIngredientsHistory, showToast]);
 
     const handleDownloadMacroDebugLogs = useCallback(() => {
-      if (!macroDebug) {
-        showToast('No macro debug data available', 'warning');
-        return;
-      }
-      const blob = new Blob([JSON.stringify(macroDebug, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      link.download = `cheffy_macro_debug_${timestamp}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+        if (!macroDebug || !macroDebug.days || macroDebug.days.length === 0) {
+            showToast('No macro debug data available', 'info');
+            return;
+        }
+        const logsText = JSON.stringify(macroDebug, null, 2);
+        const blob = new Blob([logsText], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `cheffy_macro_debug_${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Macro debug data downloaded', 'success');
     }, [macroDebug, showToast]);
-
-    const handleSignUp = useCallback(async ({ name, email, password }) => {
-        try {
-            console.log("[AUTH] Starting sign up process...");
-            
-            if (!auth) {
-                throw new Error("Firebase not initialized");
-            }
-
-            const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
-            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-            const user = userCredential.user;
-            
-            console.log("[AUTH] User created:", user.uid);
-
-            if (name) {
-                await updateProfile(user, { displayName: name });
-            }
-
-            const trialStartDate = new Date();
-            const trialEndDate = new Date();
-            trialEndDate.setDate(trialEndDate.getDate() + 7);
-
-            if (db) {
-                await setDoc(doc(db, 'users', user.uid), {
-                    name: name || '',
-                    email: email,
-                    createdAt: trialStartDate.toISOString(),
-                    trialStartDate: trialStartDate.toISOString(),
-                    trialEndDate: trialEndDate.toISOString(),
-                    accountStatus: 'trial',
-                    appId: appId
-                });
-                console.log("[AUTH] User profile saved to Firestore");
-            }
-            
-            showToast(`Welcome ${name}! Your 7-day trial has started.`, 'success');
-            
-        } catch (error) {
-            console.error("[AUTH] Sign up error:", error);
-            showToast(error.message || 'Failed to create account', 'error');
-            throw error;
-        }
-    }, [auth, db, appId, showToast]);
-
-    const handleSignIn = useCallback(async ({ email, password }) => {
-        try {
-            console.log("[AUTH] Starting sign in process...");
-            
-            if (!auth) {
-                throw new Error("Firebase not initialized");
-            }
-
-            const { signInWithEmailAndPassword } = await import('firebase/auth');
-            const userCredential = await signInWithEmailAndPassword(auth, email, password);
-            const user = userCredential.user;
-            
-            console.log("[AUTH] User signed in:", user.uid);
-            
-            showToast('Welcome back!', 'success');
-            
-        } catch (error) {
-            console.error("[AUTH] Sign in error:", error);
-            showToast(error.message || 'Failed to sign in', 'error');
-            throw error;
-        }
-    }, [auth, showToast]);
-
-    const handleSignOut = useCallback(async () => {
-        try {
-            if (!auth) {
-                throw new Error("Firebase not initialized");
-            }
-
-            const { signOut } = await import('firebase/auth');
-            await signOut(auth);
-            
-            console.log("[AUTH] User signed out");
-            showToast('Signed out successfully', 'info');
-            
-        } catch (error) {
-            console.error("[AUTH] Sign out error:", error);
-            showToast(error.message || 'Failed to sign out', 'error');
-            throw error;
-        }
-    }, [auth, showToast]);
 
     const onToggleMealEaten = useCallback((dayIndex, mealIndex) => {
       const key = `${dayIndex}-${mealIndex}`;
-      setEatenMeals(prev => ({ ...prev, [key]: !prev[key] }));
-      if (!eatenMeals[key]) {
-        showToast('Meal marked as eaten!', 'success');
-      }
+      setEatenMeals(prev => {
+        const newState = { ...prev, [key]: !prev[key] };
+        if (newState[key]) {
+          showToast('Meal marked as eaten', 'success');
+        }
+        return newState;
+      });
     }, [mealPlan, showToast, eatenMeals]);
 
     // --- Return all handlers and computed values ---
