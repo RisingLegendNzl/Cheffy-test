@@ -10,9 +10,6 @@ const ORCHESTRATOR_FULL_PLAN_API_URL = '/api/plan/generate-full-plan';
 const NUTRITION_API_URL = '/api/nutrition-search';
 const MAX_SUBSTITUTES = 5;
 
-// --- LOCALSTORAGE KEY ---
-const STORAGE_KEY = 'cheffy_current_plan';
-
 // --- MOCK DATA ---
 const MOCK_PRODUCT_TEMPLATE = {
     name: "Placeholder (API DOWN)", 
@@ -139,189 +136,102 @@ const useAppLogic = ({
         };
     }, []);
 
-    // --- Toast System (Unified) ---
-    const showToast = useCallback((message, type = 'info') => {
-        const id = Date.now();
-        setToasts(prev => [...prev, { id, message, type }]);
-        
-        // Auto-remove after 5 seconds
-        setTimeout(() => {
-            setToasts(prev => prev.filter(t => t.id !== id));
-        }, 5000);
-    }, []);
+    // --- Persist Log Visibility Preferences ---
+    useEffect(() => {
+      localStorage.setItem('cheffy_show_orchestrator_logs', JSON.stringify(showOrchestratorLogs));
+    }, [showOrchestratorLogs]);
 
+    useEffect(() => {
+      localStorage.setItem('cheffy_show_failed_ingredients_logs', JSON.stringify(showFailedIngredientsLogs));
+    }, [showFailedIngredientsLogs]);
+    
+    // Macro Debug Log Persistence
+    useEffect(() => {
+      localStorage.setItem('cheffy_show_macro_debug_log', JSON.stringify(showMacroDebugLog));
+    }, [showMacroDebugLog]);
+
+    // --- Base Helpers ---
+    const showToast = useCallback((message, type = 'info', duration = 3000) => {
+      const id = Date.now();
+      setToasts(prev => [...prev, { id, message, type, duration }]);
+    }, []);
+    
     const removeToast = useCallback((id) => {
-        setToasts(prev => prev.filter(t => t.id !== id));
+      setToasts(prev => prev.filter(toast => toast.id !== id));
+    }, []);
+    
+    const recalculateTotalCost = useCallback((currentResults) => {
+        let newTotal = 0;
+        Object.values(currentResults).forEach(item => {
+            const qty = item.userQuantity || 1;
+            if (item.source === 'discovery' && item.allProducts && item.currentSelectionURL) {
+                const selected = item.allProducts.find(p => p && p.url === item.currentSelectionURL);
+                if (selected?.price) {
+                    newTotal += selected.price * qty;
+                }
+            }
+        });
+        setTotalCost(newTotal);
     }, []);
 
-    // --- Plan Persistence Hook ---
+    // --- Plan Persistence Hook Call ---
     const planPersistence = usePlanPersistence({
-        db,
-        userId,
-        isAuthReady,
-        showToast,
-        formData,
-        nutritionalTargets,
-        mealPlan,
-        results,
-        uniqueIngredients,
-        totalCost,
-        setFormData,
-        setNutritionalTargets,
-        setMealPlan,
-        setResults,
-        setUniqueIngredients,
-        setTotalCost
+        userId: userId || null,
+        isAuthReady: isAuthReady || false,
+        db: db || null,
+        mealPlan: mealPlan || [],
+        results: results || {},
+        uniqueIngredients: uniqueIngredients || [],
+        formData: formData || {},
+        nutritionalTargets: nutritionalTargets || {},
+        showToast: showToast || (() => {}),
+        setMealPlan: setMealPlan || (() => {}),
+        setResults: setResults || (() => {}),
+        setUniqueIngredients: setUniqueIngredients || (() => {})
     });
+    // --- End Plan Persistence Hook Call ---
 
-    // --- Restore meal plan from localStorage on mount ---
-    useEffect(() => {
-        const loadFromLocalStorage = () => {
-            try {
-                const savedPlan = localStorage.getItem(STORAGE_KEY);
-                if (savedPlan) {
-                    const planData = JSON.parse(savedPlan);
-                   
-                    // Restore the plan data
-                    if (planData.mealPlan && planData.mealPlan.length > 0) {
-                        setMealPlan(planData.mealPlan || []);
-                        setResults(planData.results || {});
-                        setUniqueIngredients(planData.uniqueIngredients || []);
-                        setTotalCost(planData.totalCost || 0);
-                        console.log('[LOAD] Restored meal plan from localStorage');
-                        showToast('Previous meal plan restored', 'info');
-                    }
-                }
-            } catch (error) {
-                console.error('[LOAD] Failed to restore plan from localStorage:', error);
-                localStorage.removeItem(STORAGE_KEY);
-            }
-        };
-        
-        loadFromLocalStorage();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Only run on mount
-
-    // --- NEW: Save meal plan to localStorage whenever it changes ---
-    useEffect(() => {
-        if (mealPlan.length > 0) {
-            try {
-                const planData = {
-                    mealPlan,
-                    results,
-                    uniqueIngredients,
-                    totalCost,
-                    formData,
-                    nutritionalTargets,
-                    timestamp: new Date().toISOString()
-                };
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(planData));
-                console.log('[SAVE] Meal plan saved to localStorage');
-            } catch (error) {
-                console.error('[SAVE] Failed to save plan to localStorage:', error);
-            }
-        }
-    }, [mealPlan, results, uniqueIngredients, totalCost, formData, nutritionalTargets]);
-
-    // --- Computed Values ---
-    const latestLog = useMemo(() => {
-        if (diagnosticLogs.length === 0) return null;
-        return diagnosticLogs[diagnosticLogs.length - 1];
-    }, [diagnosticLogs]);
-
-    const categorizedResults = useMemo(() => {
-        const categories = { pantry: [], dairy: [], produce: [], meat: [], frozen: [], other: [] };
-        Object.entries(results).forEach(([key, item]) => {
-            const cat = item.category?.toLowerCase() || 'other';
-            if (categories[cat]) categories[cat].push({ key, ...item });
-            else categories.other.push({ key, ...item });
-        });
-        return categories;
-    }, [results]);
-
-    const hasInvalidMeals = useMemo(() => {
-        return mealPlan.some(dayPlan =>
-            dayPlan.meals?.some(meal => !meal.items || meal.items.length === 0)
-        );
-    }, [mealPlan]);
-
-    // --- Firebase Auth Handlers ---
-    const handleSignUp = useCallback(async (credentials) => {
-        if (!auth) throw new Error('Firebase auth not initialized');
-        const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
-        const userCredential = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
-        if (credentials.displayName) {
-            await updateProfile(userCredential.user, { displayName: credentials.displayName });
-        }
-        showToast('Account created successfully!', 'success');
-    }, [auth, showToast]);
-
-    const handleSignIn = useCallback(async (credentials) => {
-        if (!auth) throw new Error('Firebase auth not initialized');
-        const { signInWithEmailAndPassword } = await import('firebase/auth');
-        await signInWithEmailAndPassword(auth, credentials.email, credentials.password);
-        showToast('Signed in successfully!', 'success');
-    }, [auth, showToast]);
-
-    const handleSignOut = useCallback(async () => {
-        if (!auth) return;
-        const { signOut } = await import('firebase/auth');
-        await signOut(auth);
-        showToast('Signed out successfully', 'success');
-    }, [auth, showToast]);
-
-    // --- Profile Management ---
-    const handleSaveProfile = useCallback(async (silent = false) => {
-        if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
-            return;
-        }
-
-        try {
-            const profileData = {
-                formData: formData,
-                nutritionalTargets: nutritionalTargets,
-                lastUpdated: new Date().toISOString()
-            };
-
-            await setDoc(doc(db, 'profile', userId), profileData);
-            console.log("[PROFILE] Profile saved successfully");
-            
-            if (!silent) {
-                showToast('Profile saved!', 'success');
-            }
-            
-        } catch (error) {
-            console.error("[PROFILE] Error saving profile:", error);
-            if (!silent) {
-                showToast('Failed to save profile', 'error');
-            }
-            return;
-        }
-    }, [formData, nutritionalTargets, userId, db, isAuthReady, showToast]);
-
+    // --- Profile & Settings Handlers ---
     const handleLoadProfile = useCallback(async (silent = false) => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
+            if (!silent) {
+                showToast('Please sign in to load your profile', 'warning');
+            }
             return false;
         }
-
+    
         try {
             const profileRef = doc(db, 'profile', userId);
             const profileSnap = await getDoc(profileRef);
-
+    
             if (profileSnap.exists()) {
                 const data = profileSnap.data();
                 
-                if (data.formData) {
-                    setFormData(data.formData);
-                }
+                setFormData({
+                    name: data.name || '',
+                    height: data.height || '180',
+                    weight: data.weight || '75',
+                    age: data.age || '30',
+                    gender: data.gender || 'male',
+                    bodyFat: data.bodyFat || '',
+                    activityLevel: data.activityLevel || 'moderate',
+                    goal: data.goal || 'cut_moderate',
+                    dietary: data.dietary || 'None',
+                    cuisine: data.cuisine || '',
+                    days: data.days || 7,
+                    eatingOccasions: data.eatingOccasions || '3',
+                    store: data.store || 'Woolworths',
+                    costPriority: data.costPriority || 'Best Value',
+                    mealVariety: data.mealVariety || 'Balanced Variety'
+                });
+                
                 if (data.nutritionalTargets) {
                     setNutritionalTargets(data.nutritionalTargets);
                 }
                 
                 console.log("[PROFILE] Profile loaded successfully");
-                
                 if (!silent) {
-                    showToast('Profile loaded!', 'success');
+                    showToast('Profile loaded successfully!', 'success');
                 }
                 
                 return true;
@@ -386,6 +296,56 @@ const useAppLogic = ({
         }
     }, [userId, db, isAuthReady]);
 
+    const handleSaveProfile = useCallback(async (silent = false) => {
+        if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
+            if (!silent) {
+                showToast('Please sign in to save your profile', 'warning');
+            }
+            return;
+        }
+
+        try {
+            const profileData = {
+                name: formData.name,
+                height: formData.height,
+                weight: formData.weight,
+                age: formData.age,
+                gender: formData.gender,
+                bodyFat: formData.bodyFat,
+                activityLevel: formData.activityLevel,
+                goal: formData.goal,
+                dietary: formData.dietary,
+                cuisine: formData.cuisine,
+                days: formData.days,
+                eatingOccasions: formData.eatingOccasions,
+                store: formData.store,
+                costPriority: formData.costPriority,
+                mealVariety: formData.mealVariety,
+                nutritionalTargets: {
+                    calories: nutritionalTargets.calories,
+                    protein: nutritionalTargets.protein,
+                    fat: nutritionalTargets.fat,
+                    carbs: nutritionalTargets.carbs
+                },
+                lastUpdated: new Date().toISOString()
+            };
+
+            await setDoc(doc(db, 'profile', userId), profileData);
+            
+            console.log("[PROFILE] Profile saved successfully");
+            if (!silent) {
+                showToast('Profile saved successfully!', 'success');
+            }
+            
+        } catch (error) {
+            console.error("[PROFILE] Error saving profile:", error);
+            if (!silent) {
+                showToast('Failed to save profile', 'error');
+            }
+            return;
+        }
+    }, [formData, nutritionalTargets, userId, db, isAuthReady, showToast]);
+
     // --- Auto-Save/Load Effects ---
     useEffect(() => {
         if (!userId || userId.startsWith('local_') || !isAuthReady) return;
@@ -426,42 +386,47 @@ const useAppLogic = ({
             console.log('[GENERATE] Aborting previous request.');
             abortControllerRef.current.abort();
         }
-        
-        // --- Create new AbortController for this request ---
         abortControllerRef.current = new AbortController();
         const signal = abortControllerRef.current.signal;
-        
-        // --- Reset State ---
+        // --- End Abort Fix ---
+
         setLoading(true);
         setError(null);
         setDiagnosticLogs([]);
+        setNutritionCache({});
+        if (nutritionalTargets.calories === 0) {
+            setNutritionalTargets({ calories: 0, protein: 0, fat: 0, carbs: 0 });
+        }
         setResults({});
         setUniqueIngredients([]);
-        setFailedIngredientsHistory([]);
         setMealPlan([]);
-        setMacroDebug(null);
+        setTotalCost(0);
+        setEatenMeals({});
+        setFailedIngredientsHistory([]);
         setGenerationStepKey('targets');
-        setGenerationStatus('Calculating nutritional targets...');
+        if (!isLogOpen) { setLogHeight(250); setIsLogOpen(true); }
+        setMacroDebug(null); // Macro Debug Reset
 
-        // --- Fetch Targets ---
         let targets;
+
         try {
             const targetsResponse = await fetch(ORCHESTRATOR_TARGETS_API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ formData }),
+                body: JSON.stringify(formData),
                 signal: signal,
             });
 
             if (!targetsResponse.ok) {
-                throw new Error(`Targets API failed: ${targetsResponse.status}`);
+                const errorMsg = await getResponseErrorDetails(targetsResponse);
+                throw new Error(`Failed to calculate targets: ${errorMsg}`);
             }
 
             const targetsData = await targetsResponse.json();
-            setNutritionalTargets(targetsData);
-            targets = targetsData;
-            console.log('[GENERATE] Targets fetched:', targets);
-
+            targets = targetsData.nutritionalTargets;
+            setNutritionalTargets(targets);
+            setDiagnosticLogs(prev => [...prev, ...(targetsData.logs || [])]);
+            
         } catch (err) {
             if (err.name === 'AbortError') {
                 console.log('[GENERATE] Targets request aborted.');
@@ -519,72 +484,57 @@ const useAppLogic = ({
                                 }
                                 break;
                             }
+                            
+                            const { events, newBuffer } = processSseChunk(value, buffer, decoder);
+                            buffer = newBuffer;
 
-                            const { events } = processSseChunk(value, buffer, decoder);
-                            buffer = ''; 
-
-                            for (const { eventType, data: eventData } of events) {
-                                switch (eventType) {
+                            for (const event of events) {
+                                const eventData = event.data;
+                                switch (event.eventType) {
+                                    case 'message':
                                     case 'log_message':
                                         setDiagnosticLogs(prev => [...prev, eventData]);
-                                        break;
-
-                                    case 'plan:progress':
-                                        setGenerationStatus(eventData.message || `Day ${day}/${numDays}: ${eventData.pct}%`);
-                                        break;
-
-                                    case 'phase:start':
-                                    case 'phase:end':
-                                        const stepKey = eventData.name;
-                                        if (stepKey !== generationStepKey) {
-                                            setGenerationStepKey(stepKey);
-                                            if(eventData.description) setGenerationStatus(eventData.description);
+                                        if (eventData?.tag === 'MARKET_RUN' || eventData?.tag === 'CHECKLIST' || eventData?.tag === 'HTTP') {
+                                            setGenerationStepKey('market');
+                                        } else if (eventData?.tag === 'LLM' || eventData?.tag === 'LLM_PROMPT') {
+                                            setGenerationStepKey('planning');
                                         }
                                         break;
-
-                                    case 'day:result':
-                                        dayDataReceived = true;
-                                        const dayPlan = eventData.dayPlan || {};
-                                        const dayResults = eventData.dayResults || {};
-                                        const dayIngredients = eventData.dayIngredients || [];
-
-                                        accumulatedMealPlan.push(dayPlan);
-                                        Object.assign(accumulatedResults, dayResults);
-                                        dayIngredients.forEach(ing => {
-                                            const key = ing.originalIngredient;
-                                            if (!accumulatedUniqueIngredients.has(key)) {
-                                                accumulatedUniqueIngredients.set(key, ing);
-                                            } else {
-                                                const existing = accumulatedUniqueIngredients.get(key);
-                                                existing.requested_total_g = (existing.requested_total_g || 0) + (ing.requested_total_g || 0);
-                                            }
-                                        });
-                                        break;
-
-                                    case 'ingredient:found':
-                                        setResults(prev => ({ ...prev, [eventData.key]: eventData.data }));
-                                        break;
-
-                                    case 'ingredient:failed':
-                                        const failedItem = {
-                                            timestamp: new Date().toISOString(),
-                                            originalIngredient: eventData.key,
-                                            error: eventData.reason,
-                                        };
-                                        dailyFailedIngredients.push(failedItem);
-                                        break;
-
                                     case 'error':
-                                        dayFetchError = new Error(eventData.message || `Day ${day} error`);
+                                        dayFetchError = eventData.message || 'An error occurred during generation.';
+                                        setError(prevError => prevError ? `${prevError}\nDay ${day}: ${dayFetchError}` : `Day ${day}: ${dayFetchError}`);
+                                        setGenerationStepKey('error');
+                                        break;
+                                    case 'finalData':
+                                        dayDataReceived = true;
+                                        if (eventData.mealPlanForDay) accumulatedMealPlan.push(eventData.mealPlanForDay);
+                                        if (eventData.dayResults) accumulatedResults = { ...accumulatedResults, ...eventData.dayResults };
+                                        if (eventData.dayUniqueIngredients) {
+                                            eventData.dayUniqueIngredients.forEach(ing => {
+                                                if (ing && ing.originalIngredient) accumulatedUniqueIngredients.set(ing.originalIngredient, { ...(accumulatedUniqueIngredients.get(ing.originalIngredient) || {}), ...ing });
+                                            });
+                                        }
+                                        setMealPlan([...accumulatedMealPlan]);
+                                        setResults({ ...accumulatedResults }); 
+                                        setUniqueIngredients(Array.from(accumulatedUniqueIngredients.values()));
+                                        recalculateTotalCost(accumulatedResults);
+                                        break;
+                                    case 'phase:start':
+                                    case 'ingredient:found':
+                                    case 'ingredient:failed':
+                                        setDiagnosticLogs(prev => [...prev, { timestamp: new Date().toISOString(), level: 'DEBUG', tag: 'SSE_UNHANDLED', message: `Received unhandled v2 event '${event.eventType}' in v1 loop.`}]);
                                         break;
                                 }
                             }
+                            if (dayFetchError) break;
                         }
-
-                        if (dayFetchError) throw dayFetchError;
-                        
                     } catch (dayError) {
-                        setError(error ? `${error}\n${dayError.message}` : dayError.message); 
+                        if (dayError.name === 'AbortError') {
+                            console.log(`[GENERATE] Day ${day} request aborted.`);
+                            return; // Exit gracefully
+                        }
+                        console.error(`Error processing day ${day}:`, dayError);
+                        setError(prevError => prevError ? `${prevError}\n${dayError.message}` : dayError.message); 
                         setGenerationStepKey('error');
                         setDiagnosticLogs(prev => [...prev, { timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND', message: dayError.message }]);
                     } finally {
@@ -611,6 +561,8 @@ const useAppLogic = ({
             setGenerationStatus("Generating full plan (batched mode)...");
             
             try {
+                // console.log('[DEBUG] Starting batched plan generation...'); // Diagnostic log removed for cleanup
+                
                 const planResponse = await fetch(ORCHESTRATOR_FULL_PLAN_API_URL, {
                     method: 'POST',
                     headers: { 
@@ -624,12 +576,21 @@ const useAppLogic = ({
                     signal: signal,
                 });
 
+                // console.log('[DEBUG] Fetch completed, status:', planResponse.status, 'ok:', planResponse.ok); // Diagnostic log removed for cleanup
+
                 if (!planResponse.ok) {
+                    // --- FIXED ERROR HANDLING (Alternative Fix: Clone/Text/JSON) ---
                     const errorMsg = await getResponseErrorDetails(planResponse);
                     throw new Error(`Full plan request failed (${planResponse.status}): ${errorMsg}`);
+                    // --- END FIXED ERROR HANDLING ---
                 }
 
+                // console.log('[DEBUG] About to get reader from body...'); // Diagnostic log removed for cleanup
+                // console.log('[DEBUG] planResponse.body exists:', !!planResponse.body); // Diagnostic log removed for cleanup
+                
                 const reader = planResponse.body.getReader();
+                // console.log('[DEBUG] Reader obtained successfully'); // Diagnostic log removed for cleanup
+                
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let planComplete = false;
@@ -637,29 +598,36 @@ const useAppLogic = ({
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) {
-                        if (!planComplete) {
-                            throw new Error("Batch stream ended without 'plan:complete' event.");
+                        if (!planComplete && !error) {
+                            console.error("Stream ended unexpectedly before 'plan:complete' event.");
+                            throw new Error("Stream ended unexpectedly. The plan may be incomplete.");
                         }
                         break;
                     }
+                    
+                    const { events, newBuffer } = processSseChunk(value, buffer, decoder);
+                    buffer = newBuffer;
 
-                    const { events } = processSseChunk(value, buffer, decoder);
-                    buffer = '';
-
-                    for (const { eventType, data: eventData } of events) {
-                        switch (eventType) {
+                    for (const event of events) {
+                        const eventData = event.data;
+                        
+                        switch (event.eventType) {
                             case 'log_message':
                                 setDiagnosticLogs(prev => [...prev, eventData]);
                                 break;
-
-                            case 'plan:progress':
-                                setGenerationStatus(eventData.message || `Processing: ${eventData.pct}%`);
-                                break;
-
+                            
                             case 'phase:start':
-                            case 'phase:end':
-                                const stepKey = eventData.name;
-                                if (stepKey !== generationStepKey) {
+                                const phaseMap = {
+                                    'meals': 'planning',
+                                    'aggregate': 'planning',
+                                    'market': 'market',
+                                    'nutrition': 'market',
+                                    'solver': 'finalizing',
+                                    'writer': 'finalizing',
+                                    'finalize': 'finalizing'
+                                };
+                                const stepKey = phaseMap[eventData.name];
+                                if (stepKey) {
                                     setGenerationStepKey(stepKey);
                                     if(eventData.description) setGenerationStatus(eventData.description);
                                 }
@@ -722,9 +690,6 @@ const useAppLogic = ({
                                 break;
 
                             case 'error':
-                                // FIX: Set planComplete to true before throwing error
-                                // This indicates the backend properly closed the stream with an error event
-                                planComplete = true;
                                 throw new Error(eventData.message || 'Unknown backend error');
                         }
                     }
@@ -733,7 +698,6 @@ const useAppLogic = ({
             } catch (err) {
                 if (err.name === 'AbortError') {
                     console.log('[GENERATE] Batched request aborted.');
-                    setLoading(false);
                     return; // Exit gracefully
                 }
                 
@@ -747,17 +711,20 @@ const useAppLogic = ({
                  setTimeout(() => setLoading(false), 2000);
             }
         }
-    }, [formData, isLogOpen, recalculateTotalCost, useBatchedMode, showToast, nutritionalTargets.calories, error, generationStepKey]);
+    }, [formData, isLogOpen, recalculateTotalCost, useBatchedMode, showToast, nutritionalTargets.calories, error]);
 
     // --- NEW HELPER FUNCTION for robust error parsing ---
     const getResponseErrorDetails = useCallback(async (response) => {
         let errorMsg = `HTTP ${response.status}`;
         try {
+            // Clone the response so we can safely read the body without disturbing the stream
             const clonedResponse = response.clone();
             try {
+                // Attempt to read as JSON first
                 const errorData = await clonedResponse.json();
                 errorMsg = errorData.message || JSON.stringify(errorData);
             } catch (jsonErr) {
+                // If JSON parsing fails, read the raw text
                 errorMsg = await response.text() || `HTTP ${response.status} - Could not read body`;
             }
         } catch (e) {
@@ -775,148 +742,252 @@ const useAppLogic = ({
         }
         setLoadingNutritionFor(product.url);
         try {
-            const params = product.barcode ? 
-                { barcode: product.barcode } : 
-                { url: product.url, name: product.name, brand: product.brand };
-            const queryString = new URLSearchParams(params).toString();
-            const response = await fetch(`${NUTRITION_API_URL}?${queryString}`);
-            if (!response.ok) {
-                throw new Error(`Nutrition lookup failed (${response.status})`);
+            const params = product.barcode ? `barcode=${product.barcode}` : `query=${encodeURIComponent(product.name)}`;
+            const response = await fetch(`${NUTRITION_API_URL}?${params}`);
+            if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
+                const errorText = await response.text();
+                throw new Error(`Nutrition API Error ${response.status}: ${errorText || 'Invalid response'}`);
             }
-            const data = await response.json();
-            setNutritionCache(prev => ({ ...prev, [product.url]: data }));
-            
-            setResults(prev => {
-                const newResults = { ...prev };
-                Object.keys(newResults).forEach(key => {
-                    if (newResults[key].allProducts) {
-                        newResults[key].allProducts = newResults[key].allProducts.map(p => 
-                            p.url === product.url ? { ...p, nutrition: data } : p
-                        );
-                    }
-                });
-                return newResults;
-            });
+            const nutritionData = await response.json();
+            setNutritionCache(prev => ({...prev, [product.url]: nutritionData}));
         } catch (err) {
-            console.error(`Failed to fetch nutrition for ${product.name}:`, err);
-            const errorData = { status: 'error', error: err.message };
-            setNutritionCache(prev => ({ ...prev, [product.url]: errorData }));
+            console.error("Failed to fetch nutrition for", product.name, ":", err);
+            setNutritionCache(prev => ({...prev, [product.url]: { status: 'not_found', source: 'fetch_error', reason: err.message }}));
         } finally {
             setLoadingNutritionFor(null);
         }
-    }, [nutritionCache]);
+    }, [nutritionCache]); 
 
-    const handleSubstituteSelection = useCallback((ingredientKey, newProduct) => {
+    const handleSubstituteSelection = useCallback((key, newProduct) => {
         setResults(prev => {
-            const updated = { ...prev };
-            if (updated[ingredientKey]) {
-                const currentSelection = updated[ingredientKey].allProducts?.find(p => p.url === updated[ingredientKey].currentSelectionURL);
-                const quantityNeeded = updated[ingredientKey].requested_total_g || 0;
-                const currentQty = currentSelection?.size ? parseFloat(currentSelection.size.match(/\d+\.?\d*/)?.[0]) || 1 : 1;
-                const newQty = newProduct.size ? parseFloat(newProduct.size.match(/\d+\.?\d*/)?.[0]) || 1 : 1;
-                const calculatedQuantity = Math.ceil((quantityNeeded / 1000) / newQty);
-                updated[ingredientKey] = {
-                    ...updated[ingredientKey],
-                    currentSelectionURL: newProduct.url,
-                    price: newProduct.price,
-                    size: newProduct.size,
-                    brand: newProduct.brand,
-                    name: newProduct.name,
-                    calculatedQuantity: Math.max(1, calculatedQuantity)
-                };
-            }
-            return updated;
+            const updatedItem = { ...prev[key], currentSelectionURL: newProduct.url };
+            const newResults = { ...prev, [key]: updatedItem };
+            recalculateTotalCost(newResults); 
+            return newResults;
         });
-        showToast(`Switched to ${newProduct.name}`, 'success');
-    }, [showToast]);
+    }, [recalculateTotalCost]); 
 
-    const handleQuantityChange = useCallback((ingredientKey, newQuantity) => {
-        const qty = Math.max(1, parseInt(newQuantity, 10) || 1);
+    const handleQuantityChange = useCallback((key, delta) => {
         setResults(prev => {
-            const updated = { ...prev };
-            if (updated[ingredientKey]) {
-                updated[ingredientKey] = {
-                    ...updated[ingredientKey],
-                    calculatedQuantity: qty
-                };
+            if (!prev[key]) {
+                console.error(`[handleQuantityChange] Error: Ingredient key "${key}" not found.`);
+                return prev;
             }
-            return updated;
+            const currentQty = prev[key].userQuantity || 1; 
+            const newQty = Math.max(1, currentQty + delta); 
+            const updatedItem = { ...prev[key], userQuantity: newQty };
+            const newResults = { ...prev, [key]: updatedItem };
+            recalculateTotalCost(newResults); 
+            return newResults;
         });
-    }, []);
-
-    const recalculateTotalCost = useCallback((resultsData) => {
-        let cost = 0;
-        Object.values(resultsData).forEach(item => {
-            const price = parseFloat(item.price) || 0;
-            const qty = parseInt(item.calculatedQuantity, 10) || 1;
-            cost += price * qty;
-        });
-        setTotalCost(cost);
-    }, []);
-
-    useEffect(() => {
-        recalculateTotalCost(results);
-    }, [results, recalculateTotalCost]);
-
-    const handleDownloadLogs = useCallback(() => {
-        const logsText = diagnosticLogs.map(log => {
-            const data = log.data ? JSON.stringify(log.data, null, 2) : '';
-            return `[${log.timestamp}] [${log.level}] [${log.tag}] ${log.message}${data ? `\n${data}` : ''}`;
-        }).join('\n\n');
-        const blob = new Blob([logsText], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `cheffy_logs_${new Date().toISOString().split('T')[0]}.txt`;
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('Logs downloaded', 'success');
-    }, [diagnosticLogs, showToast]);
+    }, [recalculateTotalCost]); 
 
     const handleDownloadFailedLogs = useCallback(() => {
-        if (failedIngredientsHistory.length === 0) {
-            showToast('No failed ingredients to download', 'info');
-            return;
-        }
-        const logsText = failedIngredientsHistory.map(item => 
-            `[${item.timestamp}] ${item.originalIngredient}: ${item.error}`
-        ).join('\n');
-        const blob = new Blob([logsText], { type: 'text/plain' });
+        if (failedIngredientsHistory.length === 0) return;
+        let logContent = "Failed Ingredient History\n==========================\n\n";
+        failedIngredientsHistory.forEach((item, index) => {
+            logContent += `Failure ${index + 1}:\nTimestamp: ${new Date(item.timestamp).toLocaleString()}\nIngredient: ${item.originalIngredient}\nTight Query: ${item.tightQuery || 'N/A'}\nNormal Query: ${item.normalQuery || 'N/A'}\nWide Query: ${item.wideQuery || 'N/A'}\n${item.error ? `Error: ${item.error}\n` : ''}\n`;
+        });
+        const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `cheffy_failed_ingredients_${new Date().toISOString().split('T')[0]}.txt`;
-        a.click();
+        const link = document.createElement('a');
+        link.href = url;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        link.download = `cheffy_failed_ingredients_${timestamp}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        showToast('Failed ingredients log downloaded', 'success');
-    }, [failedIngredientsHistory, showToast]);
+    }, [failedIngredientsHistory]); 
+
+    const handleDownloadLogs = useCallback(() => {
+        if (!diagnosticLogs || diagnosticLogs.length === 0) return;
+        let logContent = "Cheffy Orchestrator Logs\n=========================\n\n";
+        diagnosticLogs.forEach(log => {
+            if (log && typeof log === 'object' && log.timestamp) {
+                const time = new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+                logContent += `${time} [${log.level || 'N/A'}] [${log.tag || 'N/A'}] ${log.message || ''}\n`;
+                if (log.data) {
+                    try {
+                        logContent += `  Data: ${JSON.stringify(log.data, null, 2)}\n`;
+                    } catch (e) {
+                        logContent += `  Data: [Could not serialize: ${e.message}]\n`;
+                    }
+                }
+                logContent += "\n";
+            } else {
+                 logContent += `[Invalid Log Entry: ${JSON.stringify(log)}]\n\n`;
+            }
+        });
+        const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        link.download = `cheffy_orchestrator_logs_${timestamp}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }, [diagnosticLogs]); 
 
     const handleDownloadMacroDebugLogs = useCallback(() => {
-        if (!macroDebug || !macroDebug.days || macroDebug.days.length === 0) {
-            showToast('No macro debug data available', 'info');
-            return;
-        }
-        const logsText = JSON.stringify(macroDebug, null, 2);
-        const blob = new Blob([logsText], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `cheffy_macro_debug_${new Date().toISOString().split('T')[0]}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('Macro debug data downloaded', 'success');
-    }, [macroDebug, showToast]);
+      if (!macroDebug || Object.keys(macroDebug).length === 0) return;
+      const logContent = JSON.stringify(macroDebug, null, 2);
+      const blob = new Blob([logContent], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      link.download = `cheffy_macro_debug_${timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, [macroDebug]);
 
-    const onToggleMealEaten = useCallback((dayIndex, mealIndex) => {
-      const key = `${dayIndex}-${mealIndex}`;
-      setEatenMeals(prev => {
-        const newState = { ...prev, [key]: !prev[key] };
-        if (newState[key]) {
-          showToast('Meal marked as eaten', 'success');
+    const handleSignUp = useCallback(async ({ name, email, password }) => {
+        try {
+            console.log("[AUTH] Starting sign up process...");
+            
+            if (!auth) {
+                throw new Error("Firebase not initialized");
+            }
+
+            const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+            
+            console.log("[AUTH] User created:", user.uid);
+
+            if (name) {
+                await updateProfile(user, { displayName: name });
+            }
+
+            const trialStartDate = new Date();
+            const trialEndDate = new Date();
+            trialEndDate.setDate(trialEndDate.getDate() + 7);
+
+            if (db) {
+                await setDoc(doc(db, 'users', user.uid), {
+                    name: name || '',
+                    email: email,
+                    createdAt: trialStartDate.toISOString(),
+                    trialStartDate: trialStartDate.toISOString(),
+                    trialEndDate: trialEndDate.toISOString(),
+                    accountStatus: 'trial',
+                    appId: appId
+                });
+                console.log("[AUTH] User profile saved to Firestore");
+            }
+            
+            showToast(`Welcome ${name}! Your 7-day trial has started.`, 'success');
+            
+        } catch (error) {
+            console.error("[AUTH] Sign up error:", error);
+            showToast(error.message || 'Failed to create account', 'error');
+            throw error;
         }
-        return newState;
-      });
-    }, [mealPlan, showToast, eatenMeals]);
+    }, [auth, db, appId, showToast]);
+
+    const handleSignIn = useCallback(async ({ email, password }) => {
+        try {
+            console.log("[AUTH] Starting sign in process...");
+            
+            if (!auth) {
+                throw new Error("Firebase not initialized");
+            }
+
+            const { signInWithEmailAndPassword } = await import('firebase/auth');
+            const userCredential = await signInWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+            
+            console.log("[AUTH] User signed in:", user.uid);
+            
+            showToast('Welcome back!', 'success');
+            
+        } catch (error) {
+            console.error("[AUTH] Sign in error:", error);
+            let errorMessage = 'Failed to sign in';
+            
+            if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+                errorMessage = 'No account found with this email or password';
+            } else if (error.code === 'auth/wrong-password') {
+                errorMessage = 'Incorrect password';
+            } else if (error.code === 'auth/invalid-email') {
+                errorMessage = 'Invalid email address';
+            }
+            
+            showToast(errorMessage, 'error');
+            throw new Error(errorMessage);
+        }
+    }, [auth, showToast]);
+
+    const handleSignOut = useCallback(async () => {
+        try {
+            if (auth) {
+                await auth.signOut();
+                console.log("[FIREBASE] User signed out");
+            }
+            
+            setMealPlan([]);
+            
+            setFormData({ 
+                name: '', height: '180', weight: '75', age: '30', gender: 'male', 
+                activityLevel: 'moderate', goal: 'cut_moderate', dietary: 'None', 
+                days: 7, store: 'Woolworths', eatingOccasions: '3', 
+                costPriority: 'Best Value', mealVariety: 'Balanced Variety', 
+                cuisine: '', bodyFat: '' 
+            });
+            setNutritionalTargets({ calories: 0, protein: 0, fat: 0, carbs: 0 });
+            
+            showToast('Signed out successfully', 'success');
+        } catch (error) {
+            console.error("[FIREBASE] Sign out error:", error);
+            showToast('Error signing out', 'error');
+        }
+    }, [auth, showToast, setFormData, setNutritionalTargets]);
+
+    const onToggleMealEaten = useCallback((day, mealName) => {
+        setEatenMeals(prev => {
+            const dayKey = `day${day}`;
+            const dayMeals = { ...(prev[dayKey] || {}) };
+            dayMeals[mealName] = !dayMeals[mealName];
+            return { ...prev, [dayKey]: dayMeals };
+        });
+    }, []); 
+
+    // --- Computed Values ---
+    const categorizedResults = useMemo(() => {
+        const groups = {};
+        Object.entries(results || {}).forEach(([normalizedKey, item]) => {
+            // FIX: Remove overly restrictive 'source' filter to display all ingredients.
+            if (item && item.originalIngredient) {
+                const category = item.category || 'Uncategorized';
+                if (!groups[category]) groups[category] = [];
+                 if (!groups[category].some(existing => existing.originalIngredient === item.originalIngredient)) {
+                      groups[category].push({ normalizedKey: normalizedKey, ingredient: item.originalIngredient, ...item });
+                 }
+            }
+        });
+        const sortedCategories = Object.keys(groups).sort();
+        const sortedGroups = {};
+        for (const category of sortedCategories) {
+            sortedGroups[category] = groups[category];
+        }
+        return sortedGroups;
+    }, [results]); 
+
+    const hasInvalidMeals = useMemo(() => {
+        if (!mealPlan || mealPlan.length === 0) return false;
+        return mealPlan.some(dayPlan =>
+            !dayPlan || !Array.isArray(dayPlan.meals) || dayPlan.meals.some(meal =>
+                !meal || typeof meal.subtotal_kcal !== 'number' || meal.subtotal_kcal <= 0
+            )
+        );
+    }, [mealPlan]); 
+
+    const latestLog = diagnosticLogs.length > 0 ? diagnosticLogs[diagnosticLogs.length - 1] : null;
 
     // --- Return all handlers and computed values ---
     return {
@@ -996,3 +1067,4 @@ const useAppLogic = ({
 };
 
 export default useAppLogic;
+
