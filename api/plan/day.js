@@ -30,9 +30,9 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v12.2-commonjs'; // Use updated version
 
 // --- Using gemini-2.5-flash as the primary model ---
-const PLAN_MODEL_NAME_PRIMARY = 'gemini-3-flash-preview';
+const PLAN_MODEL_NAME_PRIMARY = 'gemini-3-pro-preview';
 // --- Using gemini-2.5-pro as the fallback ---
-const PLAN_MODEL_NAME_FALLBACK = 'gemini-3-flash-preview'; // Fallback model
+const PLAN_MODEL_NAME_FALLBACK = 'gemini-3-pro-preview'; // Fallback model
 
 // --- Create a function to get the URL ---
 const getGeminiApiUrl = (modelName) => `https://generativelanguage
