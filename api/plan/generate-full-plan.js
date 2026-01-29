@@ -47,7 +47,7 @@ const USE_SOLVER_V1 = process.env.CHEFFY_USE_SOLVER === '1'; // Default to false
 const ALLOW_PROTEIN_SCALING = process.env.CHEFFY_SCALE_PROTEIN === '1'; // D3: New feature flag for protein scaling
 
 const PLAN_MODEL_NAME_PRIMARY = 'gemini-3-flash';
-const PLAN_MODEL_NAME_FALLBACK = 'gemini-2.5-flash';
+const PLAN_MODEL_NAME_FALLBACK = 'gemini-1.5-flash';
 
 const getGeminiApiUrl = (modelName) => `https://generativelanguage
 .googleapis.com/v1beta/models/${modelName}:generateContent`;
