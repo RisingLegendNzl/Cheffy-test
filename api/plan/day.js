@@ -32,7 +32,7 @@ const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v12.2-commonjs'; // Use u
 // --- Using gemini-2.5-flash as the primary model ---
 const PLAN_MODEL_NAME_PRIMARY = 'gemini-3-flash';
 // --- Using gemini-2.5-pro as the fallback ---
-const PLAN_MODEL_NAME_FALLBACK = 'gemini-2.5-pro'; // Fallback model
+const PLAN_MODEL_NAME_FALLBACK = 'gemini-1.5-flash'; // Fallback model
 
 // --- Create a function to get the URL ---
 const getGeminiApiUrl = (modelName) => `https://generativelanguage
