@@ -46,8 +46,8 @@ const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v13.3-hybrid';
 const USE_SOLVER_V1 = process.env.CHEFFY_USE_SOLVER === '1'; // Default to false (use legacy reconcile)
 const ALLOW_PROTEIN_SCALING = process.env.CHEFFY_SCALE_PROTEIN === '1'; // D3: New feature flag for protein scaling
 
-const PLAN_MODEL_NAME_PRIMARY = 'gemini-3-flash-preview';
-const PLAN_MODEL_NAME_FALLBACK = 'gemini-3-flash-preview';
+const PLAN_MODEL_NAME_PRIMARY = 'gemini-3-pro-preview';
+const PLAN_MODEL_NAME_FALLBACK = 'gemini-3-pro-preview';
 
 const getGeminiApiUrl = (modelName) => `https://generativelanguage
 .googleapis.com/v1beta/models/${modelName}:generateContent`;
