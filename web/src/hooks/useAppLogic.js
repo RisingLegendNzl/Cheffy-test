@@ -10,6 +10,9 @@ const ORCHESTRATOR_FULL_PLAN_API_URL = '/api/plan/generate-full-plan';
 const NUTRITION_API_URL = '/api/nutrition-search';
 const MAX_SUBSTITUTES = 5;
 
+// --- LOCALSTORAGE KEY ---
+const STORAGE_KEY = 'cheffy_current_plan';
+
 // --- MOCK DATA ---
 const MOCK_PRODUCT_TEMPLATE = {
     name: "Placeholder (API DOWN)", 
@@ -150,6 +153,73 @@ const useAppLogic = ({
       localStorage.setItem('cheffy_show_macro_debug_log', JSON.stringify(showMacroDebugLog));
     }, [showMacroDebugLog]);
 
+    // --- NEW: Load meal plan from localStorage on mount ---
+    useEffect(() => {
+        if (mealPlan.length > 0) return; // Don't overwrite existing plan
+        
+        const loadFromLocalStorage = () => {
+            try {
+                const stored = localStorage.getItem(STORAGE_KEY);
+                if (stored) {
+                    const planData = JSON.parse(stored);
+                    
+                    // Check if data is not expired (optional: 7 days)
+                    if (planData.timestamp) {
+                        const age = Date.now() - new Date(planData.timestamp).getTime();
+                        const MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+                        if (age > MAX_AGE) {
+                            console.log('[LOAD] Stored plan expired, removing from cache');
+                            localStorage.removeItem(STORAGE_KEY);
+                            return;
+                        }
+                    }
+                    
+                    // Restore the plan data
+                    if (planData.mealPlan && planData.mealPlan.length > 0) {
+                        setMealPlan(planData.mealPlan || []);
+                        setResults(planData.results || {});
+                        setUniqueIngredients(planData.uniqueIngredients || []);
+                        setTotalCost(planData.totalCost || 0);
+                        console.log('[LOAD] Restored meal plan from localStorage');
+                        showToast('Previous meal plan restored', 'info');
+                    }
+                }
+            } catch (error) {
+                console.error('[LOAD] Failed to restore plan from localStorage:', error);
+                localStorage.removeItem(STORAGE_KEY);
+            }
+        };
+        
+        loadFromLocalStorage();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Only run on mount
+
+    // --- NEW: Save meal plan to localStorage whenever it changes ---
+    useEffect(() => {
+        if (mealPlan.length > 0) {
+            try {
+                const planData = {
+                    mealPlan,
+                    results,
+                    uniqueIngredients,
+                    totalCost,
+                    formData,
+                    nutritionalTargets,
+                    timestamp: new Date().toISOString()
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(planData));
+                console.log('[SAVE] Meal plan saved to localStorage');
+            } catch (error) {
+                console.error('[SAVE] Failed to save plan to localStorage:', error);
+                // If storage quota exceeded, try to clear old data
+                if (error.name === 'QuotaExceededError') {
+                    console.warn('[SAVE] Storage quota exceeded, clearing old plan');
+                    localStorage.removeItem(STORAGE_KEY);
+                }
+            }
+        }
+    }, [mealPlan, results, uniqueIngredients, totalCost, formData, nutritionalTargets]);
+
     // --- Base Helpers ---
     const showToast = useCallback((message, type = 'info', duration = 3000) => {
       const id = Date.now();
@@ -165,73 +235,119 @@ const useAppLogic = ({
         Object.values(currentResults).forEach(item => {
             const qty = item.userQuantity || 1;
             if (item.source === 'discovery' && item.allProducts && item.currentSelectionURL) {
-                const selected = item.allProducts.find(p => p && p.url === item.currentSelectionURL);
-                if (selected?.price) {
-                    newTotal += selected.price * qty;
+                const selected = item.allProducts.find(p => p.url === item.currentSelectionURL);
+                if (selected) {
+                    newTotal += (selected.price || 0) * qty;
                 }
+            } else if (item.source === 'failed') {
+                newTotal += (MOCK_PRODUCT_TEMPLATE.price || 0) * qty;
+            } else if (item.price) {
+                newTotal += (item.price || 0) * qty;
             }
         });
         setTotalCost(newTotal);
     }, []);
 
-    // --- Plan Persistence Hook Call ---
+    // --- Plan Persistence ---
     const planPersistence = usePlanPersistence({
-        userId: userId || null,
-        isAuthReady: isAuthReady || false,
-        db: db || null,
-        mealPlan: mealPlan || [],
-        results: results || {},
-        uniqueIngredients: uniqueIngredients || [],
-        formData: formData || {},
-        nutritionalTargets: nutritionalTargets || {},
-        showToast: showToast || (() => {}),
-        setMealPlan: setMealPlan || (() => {}),
-        setResults: setResults || (() => {}),
-        setUniqueIngredients: setUniqueIngredients || (() => {})
+        userId,
+        isAuthReady,
+        db,
+        mealPlan,
+        results,
+        uniqueIngredients,
+        formData,
+        nutritionalTargets,
+        showToast,
+        setMealPlan,
+        setResults,
+        setUniqueIngredients
     });
-    // --- End Plan Persistence Hook Call ---
 
-    // --- Profile & Settings Handlers ---
+    // --- Categorized Results (Computed Value) ---
+    const categorizedResults = useMemo(() => {
+        const groups = {};
+        Object.keys(results).forEach(normalizedKey => {
+            const item = results[normalizedKey];
+            if (item && item.originalIngredient) {
+                const category = item.category || 'Uncategorized';
+                if (!groups[category]) groups[category] = [];
+                 if (!groups[category].some(existing => existing.originalIngredient === item.originalIngredient)) {
+                      groups[category].push({ normalizedKey: normalizedKey, ingredient: item.originalIngredient, ...item });
+                 }
+            }
+        });
+        const sortedCategories = Object.keys(groups).sort();
+        const sortedGroups = {};
+        for (const category of sortedCategories) {
+            sortedGroups[category] = groups[category];
+        }
+        return sortedGroups;
+    }, [results]); 
+
+    const hasInvalidMeals = useMemo(() => {
+        if (!mealPlan || mealPlan.length === 0) return false;
+        return mealPlan.some(dayPlan =>
+            !dayPlan || !Array.isArray(dayPlan.meals) || dayPlan.meals.some(meal =>
+                !meal || typeof meal.subtotal_kcal !== 'number' || meal.subtotal_kcal <= 0
+            )
+        );
+    }, [mealPlan]); 
+
+    const latestLog = diagnosticLogs.length > 0 ? diagnosticLogs[diagnosticLogs.length - 1] : null;
+
+    // --- Profile Management ---
+    const handleSaveProfile = useCallback(async (silent = false) => {
+        if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
+            return;
+        }
+
+        try {
+            const profileData = {
+                formData: formData,
+                nutritionalTargets: nutritionalTargets,
+                lastUpdated: new Date().toISOString()
+            };
+            
+            await setDoc(doc(db, 'profiles', userId), profileData);
+            console.log("[PROFILE] Profile saved successfully");
+            
+            if (!silent) {
+                showToast('Profile saved!', 'success');
+            }
+            
+        } catch (error) {
+            console.error("[PROFILE] Error saving profile:", error);
+            if (!silent) {
+                showToast('Failed to save profile', 'error');
+            }
+            return;
+        }
+    }, [formData, nutritionalTargets, userId, db, isAuthReady, showToast]);
+
     const handleLoadProfile = useCallback(async (silent = false) => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
-            if (!silent) {
-                showToast('Please sign in to load your profile', 'warning');
-            }
             return false;
         }
-    
+
         try {
-            const profileRef = doc(db, 'profile', userId);
+            const profileRef = doc(db, 'profiles', userId);
             const profileSnap = await getDoc(profileRef);
-    
+
             if (profileSnap.exists()) {
                 const data = profileSnap.data();
                 
-                setFormData({
-                    name: data.name || '',
-                    height: data.height || '180',
-                    weight: data.weight || '75',
-                    age: data.age || '30',
-                    gender: data.gender || 'male',
-                    bodyFat: data.bodyFat || '',
-                    activityLevel: data.activityLevel || 'moderate',
-                    goal: data.goal || 'cut_moderate',
-                    dietary: data.dietary || 'None',
-                    cuisine: data.cuisine || '',
-                    days: data.days || 7,
-                    eatingOccasions: data.eatingOccasions || '3',
-                    store: data.store || 'Woolworths',
-                    costPriority: data.costPriority || 'Best Value',
-                    mealVariety: data.mealVariety || 'Balanced Variety'
-                });
-                
+                if (data.formData) {
+                    setFormData(data.formData);
+                }
                 if (data.nutritionalTargets) {
                     setNutritionalTargets(data.nutritionalTargets);
                 }
                 
                 console.log("[PROFILE] Profile loaded successfully");
+                
                 if (!silent) {
-                    showToast('Profile loaded successfully!', 'success');
+                    showToast('Profile loaded!', 'success');
                 }
                 
                 return true;
@@ -295,56 +411,6 @@ const useAppLogic = ({
             console.error("[SETTINGS] Error loading settings:", error);
         }
     }, [userId, db, isAuthReady]);
-
-    const handleSaveProfile = useCallback(async (silent = false) => {
-        if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
-            if (!silent) {
-                showToast('Please sign in to save your profile', 'warning');
-            }
-            return;
-        }
-
-        try {
-            const profileData = {
-                name: formData.name,
-                height: formData.height,
-                weight: formData.weight,
-                age: formData.age,
-                gender: formData.gender,
-                bodyFat: formData.bodyFat,
-                activityLevel: formData.activityLevel,
-                goal: formData.goal,
-                dietary: formData.dietary,
-                cuisine: formData.cuisine,
-                days: formData.days,
-                eatingOccasions: formData.eatingOccasions,
-                store: formData.store,
-                costPriority: formData.costPriority,
-                mealVariety: formData.mealVariety,
-                nutritionalTargets: {
-                    calories: nutritionalTargets.calories,
-                    protein: nutritionalTargets.protein,
-                    fat: nutritionalTargets.fat,
-                    carbs: nutritionalTargets.carbs
-                },
-                lastUpdated: new Date().toISOString()
-            };
-
-            await setDoc(doc(db, 'profile', userId), profileData);
-            
-            console.log("[PROFILE] Profile saved successfully");
-            if (!silent) {
-                showToast('Profile saved successfully!', 'success');
-            }
-            
-        } catch (error) {
-            console.error("[PROFILE] Error saving profile:", error);
-            if (!silent) {
-                showToast('Failed to save profile', 'error');
-            }
-            return;
-        }
-    }, [formData, nutritionalTargets, userId, db, isAuthReady, showToast]);
 
     // --- Auto-Save/Load Effects ---
     useEffect(() => {
@@ -484,57 +550,72 @@ const useAppLogic = ({
                                 }
                                 break;
                             }
-                            
-                            const { events, newBuffer } = processSseChunk(value, buffer, decoder);
-                            buffer = newBuffer;
 
-                            for (const event of events) {
-                                const eventData = event.data;
-                                switch (event.eventType) {
-                                    case 'message':
+                            const { events } = processSseChunk(value, buffer, decoder);
+                            buffer = ''; 
+
+                            for (const { eventType, data: eventData } of events) {
+                                switch (eventType) {
                                     case 'log_message':
                                         setDiagnosticLogs(prev => [...prev, eventData]);
-                                        if (eventData?.tag === 'MARKET_RUN' || eventData?.tag === 'CHECKLIST' || eventData?.tag === 'HTTP') {
-                                            setGenerationStepKey('market');
-                                        } else if (eventData?.tag === 'LLM' || eventData?.tag === 'LLM_PROMPT') {
-                                            setGenerationStepKey('planning');
-                                        }
                                         break;
-                                    case 'error':
-                                        dayFetchError = eventData.message || 'An error occurred during generation.';
-                                        setError(prevError => prevError ? `${prevError}\nDay ${day}: ${dayFetchError}` : `Day ${day}: ${dayFetchError}`);
-                                        setGenerationStepKey('error');
+
+                                    case 'plan:progress':
+                                        setGenerationStatus(eventData.message || `Day ${day}/${numDays}: ${eventData.pct}%`);
                                         break;
-                                    case 'finalData':
-                                        dayDataReceived = true;
-                                        if (eventData.mealPlanForDay) accumulatedMealPlan.push(eventData.mealPlanForDay);
-                                        if (eventData.dayResults) accumulatedResults = { ...accumulatedResults, ...eventData.dayResults };
-                                        if (eventData.dayUniqueIngredients) {
-                                            eventData.dayUniqueIngredients.forEach(ing => {
-                                                if (ing && ing.originalIngredient) accumulatedUniqueIngredients.set(ing.originalIngredient, { ...(accumulatedUniqueIngredients.get(ing.originalIngredient) || {}), ...ing });
-                                            });
-                                        }
-                                        setMealPlan([...accumulatedMealPlan]);
-                                        setResults({ ...accumulatedResults }); 
-                                        setUniqueIngredients(Array.from(accumulatedUniqueIngredients.values()));
-                                        recalculateTotalCost(accumulatedResults);
-                                        break;
+
                                     case 'phase:start':
+                                    case 'phase:end':
+                                        const stepKey = eventData.name;
+                                        if (stepKey !== generationStepKey) {
+                                            setGenerationStepKey(stepKey);
+                                            if(eventData.description) setGenerationStatus(eventData.description);
+                                        }
+                                        break;
+
+                                    case 'day:result':
+                                        dayDataReceived = true;
+                                        const dayPlan = eventData.dayPlan || {};
+                                        const dayResults = eventData.dayResults || {};
+                                        const dayIngredients = eventData.dayIngredients || [];
+
+                                        accumulatedMealPlan.push(dayPlan);
+                                        Object.assign(accumulatedResults, dayResults);
+                                        dayIngredients.forEach(ing => {
+                                            const key = ing.originalIngredient;
+                                            if (!accumulatedUniqueIngredients.has(key)) {
+                                                accumulatedUniqueIngredients.set(key, ing);
+                                            } else {
+                                                const existing = accumulatedUniqueIngredients.get(key);
+                                                existing.requested_total_g = (existing.requested_total_g || 0) + (ing.requested_total_g || 0);
+                                            }
+                                        });
+                                        break;
+
                                     case 'ingredient:found':
+                                        setResults(prev => ({ ...prev, [eventData.key]: eventData.data }));
+                                        break;
+
                                     case 'ingredient:failed':
-                                        setDiagnosticLogs(prev => [...prev, { timestamp: new Date().toISOString(), level: 'DEBUG', tag: 'SSE_UNHANDLED', message: `Received unhandled v2 event '${event.eventType}' in v1 loop.`}]);
+                                        const failedItem = {
+                                            timestamp: new Date().toISOString(),
+                                            originalIngredient: eventData.key,
+                                            error: eventData.reason,
+                                        };
+                                        dailyFailedIngredients.push(failedItem);
+                                        break;
+
+                                    case 'error':
+                                        dayFetchError = new Error(eventData.message || `Day ${day} error`);
                                         break;
                                 }
                             }
-                            if (dayFetchError) break;
                         }
+
+                        if (dayFetchError) throw dayFetchError;
+                        
                     } catch (dayError) {
-                        if (dayError.name === 'AbortError') {
-                            console.log(`[GENERATE] Day ${day} request aborted.`);
-                            return; // Exit gracefully
-                        }
-                        console.error(`Error processing day ${day}:`, dayError);
-                        setError(prevError => prevError ? `${prevError}\n${dayError.message}` : dayError.message); 
+                        setError(error ? `${error}\n${dayError.message}` : dayError.message); 
                         setGenerationStepKey('error');
                         setDiagnosticLogs(prev => [...prev, { timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND', message: dayError.message }]);
                     } finally {
@@ -561,8 +642,6 @@ const useAppLogic = ({
             setGenerationStatus("Generating full plan (batched mode)...");
             
             try {
-                // console.log('[DEBUG] Starting batched plan generation...'); // Diagnostic log removed for cleanup
-                
                 const planResponse = await fetch(ORCHESTRATOR_FULL_PLAN_API_URL, {
                     method: 'POST',
                     headers: { 
@@ -576,21 +655,12 @@ const useAppLogic = ({
                     signal: signal,
                 });
 
-                // console.log('[DEBUG] Fetch completed, status:', planResponse.status, 'ok:', planResponse.ok); // Diagnostic log removed for cleanup
-
                 if (!planResponse.ok) {
-                    // --- FIXED ERROR HANDLING (Alternative Fix: Clone/Text/JSON) ---
                     const errorMsg = await getResponseErrorDetails(planResponse);
                     throw new Error(`Full plan request failed (${planResponse.status}): ${errorMsg}`);
-                    // --- END FIXED ERROR HANDLING ---
                 }
 
-                // console.log('[DEBUG] About to get reader from body...'); // Diagnostic log removed for cleanup
-                // console.log('[DEBUG] planResponse.body exists:', !!planResponse.body); // Diagnostic log removed for cleanup
-                
                 const reader = planResponse.body.getReader();
-                // console.log('[DEBUG] Reader obtained successfully'); // Diagnostic log removed for cleanup
-                
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let planComplete = false;
@@ -598,36 +668,29 @@ const useAppLogic = ({
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) {
-                        if (!planComplete && !error) {
-                            console.error("Stream ended unexpectedly before 'plan:complete' event.");
-                            throw new Error("Stream ended unexpectedly. The plan may be incomplete.");
+                        if (!planComplete) {
+                            throw new Error("Batch stream ended without 'plan:complete' event.");
                         }
                         break;
                     }
-                    
-                    const { events, newBuffer } = processSseChunk(value, buffer, decoder);
-                    buffer = newBuffer;
 
-                    for (const event of events) {
-                        const eventData = event.data;
-                        
-                        switch (event.eventType) {
+                    const { events } = processSseChunk(value, buffer, decoder);
+                    buffer = '';
+
+                    for (const { eventType, data: eventData } of events) {
+                        switch (eventType) {
                             case 'log_message':
                                 setDiagnosticLogs(prev => [...prev, eventData]);
                                 break;
-                            
+
+                            case 'plan:progress':
+                                setGenerationStatus(eventData.message || `Processing: ${eventData.pct}%`);
+                                break;
+
                             case 'phase:start':
-                                const phaseMap = {
-                                    'meals': 'planning',
-                                    'aggregate': 'planning',
-                                    'market': 'market',
-                                    'nutrition': 'market',
-                                    'solver': 'finalizing',
-                                    'writer': 'finalizing',
-                                    'finalize': 'finalizing'
-                                };
-                                const stepKey = phaseMap[eventData.name];
-                                if (stepKey) {
+                            case 'phase:end':
+                                const stepKey = eventData.name;
+                                if (stepKey !== generationStepKey) {
                                     setGenerationStepKey(stepKey);
                                     if(eventData.description) setGenerationStatus(eventData.description);
                                 }
@@ -698,6 +761,7 @@ const useAppLogic = ({
             } catch (err) {
                 if (err.name === 'AbortError') {
                     console.log('[GENERATE] Batched request aborted.');
+                    setLoading(false);
                     return; // Exit gracefully
                 }
                 
@@ -711,20 +775,17 @@ const useAppLogic = ({
                  setTimeout(() => setLoading(false), 2000);
             }
         }
-    }, [formData, isLogOpen, recalculateTotalCost, useBatchedMode, showToast, nutritionalTargets.calories, error]);
+    }, [formData, isLogOpen, recalculateTotalCost, useBatchedMode, showToast, nutritionalTargets.calories, error, generationStepKey]);
 
     // --- NEW HELPER FUNCTION for robust error parsing ---
     const getResponseErrorDetails = useCallback(async (response) => {
         let errorMsg = `HTTP ${response.status}`;
         try {
-            // Clone the response so we can safely read the body without disturbing the stream
             const clonedResponse = response.clone();
             try {
-                // Attempt to read as JSON first
                 const errorData = await clonedResponse.json();
                 errorMsg = errorData.message || JSON.stringify(errorData);
             } catch (jsonErr) {
-                // If JSON parsing fails, read the raw text
                 errorMsg = await response.text() || `HTTP ${response.status} - Could not read body`;
             }
         } catch (e) {
@@ -742,99 +803,97 @@ const useAppLogic = ({
         }
         setLoadingNutritionFor(product.url);
         try {
-            const params = product.barcode ? `barcode=${product.barcode}` : `query=${encodeURIComponent(product.name)}`;
-            const response = await fetch(`${NUTRITION_API_URL}?${params}`);
-            if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
-                const errorText = await response.text();
-                throw new Error(`Nutrition API Error ${response.status}: ${errorText || 'Invalid response'}`);
+            const params = product.barcode ? 
+                { barcode: product.barcode } : 
+                { url: product.url, name: product.name, brand: product.brand };
+            const queryString = new URLSearchParams(params).toString();
+            const response = await fetch(`${NUTRITION_API_URL}?${queryString}`);
+            if (!response.ok) {
+                throw new Error(`Nutrition lookup failed (${response.status})`);
             }
-            const nutritionData = await response.json();
-            setNutritionCache(prev => ({...prev, [product.url]: nutritionData}));
-        } catch (err) {
-            console.error("Failed to fetch nutrition for", product.name, ":", err);
-            setNutritionCache(prev => ({...prev, [product.url]: { status: 'not_found', source: 'fetch_error', reason: err.message }}));
+            const data = await response.json();
+            setNutritionCache(prev => ({ ...prev, [product.url]: data }));
+            
+            setResults(prev => {
+                const newResults = { ...prev };
+                Object.keys(newResults).forEach(key => {
+                    if (newResults[key].allProducts) {
+                        newResults[key].allProducts = newResults[key].allProducts.map(p => 
+                            p.url === product.url ? { ...p, nutrition: data } : p
+                        );
+                    }
+                });
+                return newResults;
+            });
+        } catch (error) {
+            console.error('Nutrition fetch error:', error);
         } finally {
             setLoadingNutritionFor(null);
         }
-    }, [nutritionCache]); 
+    }, [nutritionCache]);
 
-    const handleSubstituteSelection = useCallback((key, newProduct) => {
+    const handleSubstituteSelection = useCallback((ingredientKey, selectedProductUrl) => {
         setResults(prev => {
-            const updatedItem = { ...prev[key], currentSelectionURL: newProduct.url };
-            const newResults = { ...prev, [key]: updatedItem };
-            recalculateTotalCost(newResults); 
-            return newResults;
-        });
-    }, [recalculateTotalCost]); 
-
-    const handleQuantityChange = useCallback((key, delta) => {
-        setResults(prev => {
-            if (!prev[key]) {
-                console.error(`[handleQuantityChange] Error: Ingredient key "${key}" not found.`);
-                return prev;
+            const updated = { ...prev };
+            if (updated[ingredientKey]) {
+                updated[ingredientKey] = {
+                    ...updated[ingredientKey],
+                    currentSelectionURL: selectedProductUrl
+                };
             }
-            const currentQty = prev[key].userQuantity || 1; 
-            const newQty = Math.max(1, currentQty + delta); 
-            const updatedItem = { ...prev[key], userQuantity: newQty };
-            const newResults = { ...prev, [key]: updatedItem };
-            recalculateTotalCost(newResults); 
-            return newResults;
+            return updated;
         });
-    }, [recalculateTotalCost]); 
+        recalculateTotalCost({ ...results, [ingredientKey]: { ...results[ingredientKey], currentSelectionURL: selectedProductUrl } });
+    }, [results, recalculateTotalCost]);
+
+    const handleQuantityChange = useCallback((ingredientKey, newQuantity) => {
+        const qty = parseInt(newQuantity, 10);
+        if (isNaN(qty) || qty < 1) return;
+        setResults(prev => {
+            const updated = { ...prev };
+            if (updated[ingredientKey]) {
+                updated[ingredientKey] = {
+                    ...updated[ingredientKey],
+                    userQuantity: qty
+                };
+            }
+            return updated;
+        });
+        recalculateTotalCost({ ...results, [ingredientKey]: { ...results[ingredientKey], userQuantity: qty } });
+    }, [results, recalculateTotalCost]);
 
     const handleDownloadFailedLogs = useCallback(() => {
-        if (failedIngredientsHistory.length === 0) return;
-        let logContent = "Failed Ingredient History\n==========================\n\n";
-        failedIngredientsHistory.forEach((item, index) => {
-            logContent += `Failure ${index + 1}:\nTimestamp: ${new Date(item.timestamp).toLocaleString()}\nIngredient: ${item.originalIngredient}\nTight Query: ${item.tightQuery || 'N/A'}\nNormal Query: ${item.normalQuery || 'N/A'}\nWide Query: ${item.wideQuery || 'N/A'}\n${item.error ? `Error: ${item.error}\n` : ''}\n`;
-        });
-        const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        link.download = `cheffy_failed_ingredients_${timestamp}.txt`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    }, [failedIngredientsHistory]); 
+      const blob = new Blob([JSON.stringify(failedIngredientsHistory, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      link.download = `cheffy_failed_ingredients_${timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, [failedIngredientsHistory]);
 
     const handleDownloadLogs = useCallback(() => {
-        if (!diagnosticLogs || diagnosticLogs.length === 0) return;
-        let logContent = "Cheffy Orchestrator Logs\n=========================\n\n";
-        diagnosticLogs.forEach(log => {
-            if (log && typeof log === 'object' && log.timestamp) {
-                const time = new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
-                logContent += `${time} [${log.level || 'N/A'}] [${log.tag || 'N/A'}] ${log.message || ''}\n`;
-                if (log.data) {
-                    try {
-                        logContent += `  Data: ${JSON.stringify(log.data, null, 2)}\n`;
-                    } catch (e) {
-                        logContent += `  Data: [Could not serialize: ${e.message}]\n`;
-                    }
-                }
-                logContent += "\n";
-            } else {
-                 logContent += `[Invalid Log Entry: ${JSON.stringify(log)}]\n\n`;
-            }
-        });
-        const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        link.download = `cheffy_orchestrator_logs_${timestamp}.txt`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    }, [diagnosticLogs]); 
+      const blob = new Blob([JSON.stringify(diagnosticLogs, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      link.download = `cheffy_orchestrator_logs_${timestamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }, [diagnosticLogs]);
 
     const handleDownloadMacroDebugLogs = useCallback(() => {
-      if (!macroDebug || Object.keys(macroDebug).length === 0) return;
-      const logContent = JSON.stringify(macroDebug, null, 2);
-      const blob = new Blob([logContent], { type: 'application/json;charset=utf-8' });
+      if (!macroDebug) {
+        showToast('No macro debug data available', 'warning');
+        return;
+      }
+      const blob = new Blob([JSON.stringify(macroDebug, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -844,7 +903,7 @@ const useAppLogic = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-    }, [macroDebug]);
+    }, [macroDebug, showToast]);
 
     const handleSignUp = useCallback(async ({ name, email, password }) => {
         try {
@@ -908,86 +967,37 @@ const useAppLogic = ({
             
         } catch (error) {
             console.error("[AUTH] Sign in error:", error);
-            let errorMessage = 'Failed to sign in';
-            
-            if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
-                errorMessage = 'No account found with this email or password';
-            } else if (error.code === 'auth/wrong-password') {
-                errorMessage = 'Incorrect password';
-            } else if (error.code === 'auth/invalid-email') {
-                errorMessage = 'Invalid email address';
-            }
-            
-            showToast(errorMessage, 'error');
-            throw new Error(errorMessage);
+            showToast(error.message || 'Failed to sign in', 'error');
+            throw error;
         }
     }, [auth, showToast]);
 
     const handleSignOut = useCallback(async () => {
         try {
-            if (auth) {
-                await auth.signOut();
-                console.log("[FIREBASE] User signed out");
+            if (!auth) {
+                throw new Error("Firebase not initialized");
             }
+
+            const { signOut } = await import('firebase/auth');
+            await signOut(auth);
             
-            setMealPlan([]);
+            console.log("[AUTH] User signed out");
+            showToast('Signed out successfully', 'info');
             
-            setFormData({ 
-                name: '', height: '180', weight: '75', age: '30', gender: 'male', 
-                activityLevel: 'moderate', goal: 'cut_moderate', dietary: 'None', 
-                days: 7, store: 'Woolworths', eatingOccasions: '3', 
-                costPriority: 'Best Value', mealVariety: 'Balanced Variety', 
-                cuisine: '', bodyFat: '' 
-            });
-            setNutritionalTargets({ calories: 0, protein: 0, fat: 0, carbs: 0 });
-            
-            showToast('Signed out successfully', 'success');
         } catch (error) {
-            console.error("[FIREBASE] Sign out error:", error);
-            showToast('Error signing out', 'error');
+            console.error("[AUTH] Sign out error:", error);
+            showToast(error.message || 'Failed to sign out', 'error');
+            throw error;
         }
-    }, [auth, showToast, setFormData, setNutritionalTargets]);
+    }, [auth, showToast]);
 
-    const onToggleMealEaten = useCallback((day, mealName) => {
-        setEatenMeals(prev => {
-            const dayKey = `day${day}`;
-            const dayMeals = { ...(prev[dayKey] || {}) };
-            dayMeals[mealName] = !dayMeals[mealName];
-            return { ...prev, [dayKey]: dayMeals };
-        });
-    }, []); 
-
-    // --- Computed Values ---
-    const categorizedResults = useMemo(() => {
-        const groups = {};
-        Object.entries(results || {}).forEach(([normalizedKey, item]) => {
-            // FIX: Remove overly restrictive 'source' filter to display all ingredients.
-            if (item && item.originalIngredient) {
-                const category = item.category || 'Uncategorized';
-                if (!groups[category]) groups[category] = [];
-                 if (!groups[category].some(existing => existing.originalIngredient === item.originalIngredient)) {
-                      groups[category].push({ normalizedKey: normalizedKey, ingredient: item.originalIngredient, ...item });
-                 }
-            }
-        });
-        const sortedCategories = Object.keys(groups).sort();
-        const sortedGroups = {};
-        for (const category of sortedCategories) {
-            sortedGroups[category] = groups[category];
-        }
-        return sortedGroups;
-    }, [results]); 
-
-    const hasInvalidMeals = useMemo(() => {
-        if (!mealPlan || mealPlan.length === 0) return false;
-        return mealPlan.some(dayPlan =>
-            !dayPlan || !Array.isArray(dayPlan.meals) || dayPlan.meals.some(meal =>
-                !meal || typeof meal.subtotal_kcal !== 'number' || meal.subtotal_kcal <= 0
-            )
-        );
-    }, [mealPlan]); 
-
-    const latestLog = diagnosticLogs.length > 0 ? diagnosticLogs[diagnosticLogs.length - 1] : null;
+    const onToggleMealEaten = useCallback((dayIndex, mealIndex) => {
+      const key = `${dayIndex}-${mealIndex}`;
+      setEatenMeals(prev => ({ ...prev, [key]: !prev[key] }));
+      if (!eatenMeals[key]) {
+        showToast('Meal marked as eaten!', 'success');
+      }
+    }, [mealPlan, showToast, eatenMeals]);
 
     // --- Return all handlers and computed values ---
     return {
@@ -1067,4 +1077,3 @@ const useAppLogic = ({
 };
 
 export default useAppLogic;
-
