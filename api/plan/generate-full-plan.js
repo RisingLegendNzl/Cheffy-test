@@ -1080,7 +1080,28 @@ module.exports = async (request, response) => {
     
     const run_id = crypto.randomUUID();
 
-    // --- Setup SSE Stream ---
+    // --- FIX: Handle OPTIONS and method validation BEFORE setting headers ---
+    if (request.method === 'OPTIONS') {
+        response.setHeader('Access-Control-Allow-Origin', '*');
+        response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        response.status(200).end();
+        return;
+    }
+
+    if (request.method !== 'POST') {
+        response.setHeader('Access-Control-Allow-Origin', '*');
+        response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        response.setHeader('Allow', 'POST, OPTIONS');
+        response.status(405).json({
+            message: `Method ${request.method} Not Allowed.`,
+            code: "METHOD_NOT_ALLOWED"
+        });
+        return;
+    }
+
+    // --- Setup SSE Stream (AFTER method validation) ---
     response.setHeader('Content-Type', 'text/event-stream');
     response.setHeader('Cache-Control', 'no-cache');
     response.setHeader('Connection', 'keep-alive');
@@ -1092,18 +1113,7 @@ module.exports = async (request, response) => {
     const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, sendEvent } = createLogger(run_id, response);
     // --- End SSE Setup ---
 
-    if (request.method === 'OPTIONS') {
-        log("Handling OPTIONS pre-flight.", 'INFO', 'HTTP');
-        response.status(200).end(); 
-        return;
-    }
-
-    if (request.method !== 'POST') {
-        log(`Method Not Allowed: ${request.method}`, 'WARN', 'HTTP');
-        response.setHeader('Allow', 'POST, OPTIONS');
-        logErrorAndClose(`Method ${request.method} Not Allowed.`, "METHOD_NOT_ALLOWED");
-        return;
-    }
+    log(`Plan generation request received.`, 'INFO', 'HTTP');
 
     let finalMealPlan = []; // This will hold the final, processed meals
     let store = ''; // Must be defined outside try block for market run logic scope
