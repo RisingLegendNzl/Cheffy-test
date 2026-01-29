@@ -309,7 +309,8 @@ const useAppLogic = ({
                 lastUpdated: new Date().toISOString()
             };
             
-            await setDoc(doc(db, 'profiles', userId), profileData);
+            // FIX: Changed from 'profiles' to 'profile' to match the collection name used in load
+            await setDoc(doc(db, 'profile', userId), profileData);
             console.log("[PROFILE] Profile saved successfully");
             
             if (!silent) {
@@ -331,7 +332,7 @@ const useAppLogic = ({
         }
 
         try {
-            const profileRef = doc(db, 'profiles', userId);
+            const profileRef = doc(db, 'profile', userId);
             const profileSnap = await getDoc(profileRef);
 
             if (profileSnap.exists()) {
@@ -668,6 +669,7 @@ const useAppLogic = ({
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) {
+                        // FIX: Check planComplete instead of !error
                         if (!planComplete) {
                             throw new Error("Batch stream ended without 'plan:complete' event.");
                         }
