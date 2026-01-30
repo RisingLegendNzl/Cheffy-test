@@ -397,12 +397,11 @@ const useAppLogic = ({
         setMealPlan([]);
         setResults({});
         setUniqueIngredients([]);
-        setNutritionalTargets({ calories: 0, protein: 0, fat: 0, carbs: 0 });
         setError(null);
         setDiagnosticLogs([]);
         setFailedIngredientsHistory([]);
         setMacroDebug(null);
-    }, [auth, clearGenerationState, setNutritionalTargets]);
+    }, [auth, clearGenerationState]);
 
     // --- Profile Management ---
     const handleLoadProfile = useCallback(async () => {
