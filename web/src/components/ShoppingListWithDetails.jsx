@@ -1,22 +1,33 @@
 // web/src/components/ShoppingListWithDetails.jsx
-// FIXED VERSION - Enhanced store name detection
+// REDESIGNED - Clean Minimal Shopping Tab
+// Production-ready implementation with full Cheffy integration
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ShoppingBag, 
-  Check,
-  ChevronDown, 
-  ChevronUp,
   Copy,
   Printer,
   Share2
 } from 'lucide-react';
-import { COLORS, SHADOWS } from '../constants';
-import { formatGrams, copyToClipboard, groupBy } from '../helpers';
 import IngredientResultBlock from './IngredientResultBlock';
 
 /**
- * Shopping list with summary card AND detailed product information
+ * Clean, modern shopping list with category filter pills
+ * Matches the minimal design specification from uploaded example
+ * 
+ * @component
+ * @param {Object} props - Component props
+ * @param {Array} props.ingredients - Array of ingredients (legacy support)
+ * @param {Object} props.results - Results object with product data
+ * @param {number} props.totalCost - Total cost of all items
+ * @param {string} props.storeName - Store name (auto-detected if not provided)
+ * @param {Function} props.onShowToast - Toast notification handler
+ * @param {Function} props.onSelectSubstitute - Substitute selection handler
+ * @param {Function} props.onQuantityChange - Quantity change handler
+ * @param {Function} props.onFetchNutrition - Nutrition fetch handler
+ * @param {Object} props.nutritionCache - Cached nutrition data
+ * @param {string} props.loadingNutritionFor - Currently loading nutrition URL
+ * @param {Object} props.categorizedResults - Pre-categorized results by category
  */
 const ShoppingListWithDetails = ({ 
   ingredients = [],
@@ -31,401 +42,612 @@ const ShoppingListWithDetails = ({
   loadingNutritionFor = null,
   categorizedResults = {}
 }) => {
-  const [checkedItems, setCheckedItems] = useState({});
-  const [expandedCategories, setExpandedCategories] = useState({});
+  // ============================================================================
+  // STATE
+  // ============================================================================
+  const [activeCategory, setActiveCategory] = useState('all');
 
-  // Initialize all items as checked when results change
-  useEffect(() => {
-    const initialCheckedState = {};
-    Object.keys(results).forEach(normalizedKey => {
-      initialCheckedState[normalizedKey] = true;
-    });
-    setCheckedItems(initialCheckedState);
-  }, [results]);
-
-  const totalItems = Object.keys(results).length;
-  const checkedCount = Object.values(checkedItems).filter(Boolean).length;
-
-  // Detect actual store from products - ENHANCED
+  // ============================================================================
+  // STORE NAME DETECTION
+  // ============================================================================
   const actualStoreName = useMemo(() => {
-    // Strategy 1: Try to extract from product URLs or data
+    // Try to detect store from product URLs
     for (const [key, result] of Object.entries(results)) {
-      // Check allProducts array
       const products = result.allProducts || result.products || [];
       
       for (const product of products) {
         if (!product) continue;
         
-        // Check if product has a store field
+        // Check explicit store field
         if (product.store) {
           return product.store;
         }
         
-        // Check if URL contains store name
+        // Detect from URL
         if (product.url) {
-          if (product.url.includes('coles.com')) return 'Coles';
-          if (product.url.includes('woolworths.com')) return 'Woolworths';
+          if (product.url.includes('woolworths')) return 'Woolworths';
+          if (product.url.includes('coles')) return 'Coles';
+          if (product.url.includes('aldi')) return 'ALDI';
         }
+      }
+    }
+    
+    return storeName || 'Woolworths';
+  }, [results, storeName]);
+
+  // ============================================================================
+  // PRODUCT TRANSFORMATION
+  // ============================================================================
+  const products = useMemo(() => {
+    const productList = [];
+    
+    Object.entries(categorizedResults).forEach(([category, items]) => {
+      items.forEach(({ normalizedKey, ingredient, ...result }) => {
+        const allProducts = result.allProducts || result.products || [];
+        const selectedIndex = result.selectedIndex || 0;
+        const selectedProduct = allProducts[selectedIndex];
         
-        // Check product name for store prefix
-        if (product.product_name || product.name) {
-          const name = product.product_name || product.name;
-          if (name.toLowerCase().startsWith('coles')) return 'Coles';
-          if (name.toLowerCase().startsWith('woolworths')) return 'Woolworths';
-        }
-      }
-    }
-    
-    // Strategy 2: Check if ingredients have store info
-    for (const ingredient of ingredients) {
-      if (ingredient.store) {
-        return ingredient.store;
-      }
-    }
-    
-    // Strategy 3: Use provided storeName (should be correct from formData)
-    return storeName;
-  }, [results, ingredients, storeName]);
-
-  // Calculate total cost of selected items
-  const selectedTotal = useMemo(() => {
-    let total = 0;
-    
-    Object.entries(results).forEach(([normalizedKey, result]) => {
-      const isChecked = checkedItems[normalizedKey];
-      
-      if (!isChecked || !result) return;
-      
-      // Access products array correctly
-      const products = result.allProducts || result.products || [];
-      if (products.length === 0) return;
-      
-      // Get selected product - check multiple possible locations
-      let selectedProduct = null;
-      
-      if (result.currentSelectionURL) {
-        selectedProduct = products.find(p => p && p.url === result.currentSelectionURL);
-      }
-      
-      if (!selectedProduct && result.selectedIndex !== undefined) {
-        selectedProduct = products[result.selectedIndex];
-      }
-      
-      if (!selectedProduct) {
-        selectedProduct = products[0];
-      }
-      
-      if (!selectedProduct) return;
-      
-      // Get price - try multiple possible field names
-      const price = parseFloat(
-        selectedProduct.product_price || 
-        selectedProduct.price || 
-        selectedProduct.current_price || 
-        0
-      );
-      
-      if (isNaN(price) || price <= 0) return;
-      
-      // Get quantity
-      const quantity = result.userQuantity || 1;
-      
-      total += price * quantity;
+        if (!selectedProduct) return;
+        
+        // Extract price with fallbacks
+        const price = parseFloat(
+          selectedProduct.product_price || 
+          selectedProduct.price || 
+          selectedProduct.current_price || 
+          0
+        );
+        
+        // Extract size with fallbacks
+        const size = selectedProduct.size || 
+                    selectedProduct.product_size || 
+                    selectedProduct.package_size || 
+                    '';
+        
+        // Check if this is the cheapest option
+        const cheapest = selectedProduct.cheapest || false;
+        
+        productList.push({
+          id: normalizedKey,
+          name: ingredient,
+          category: category.toLowerCase(),
+          price: price,
+          size: size,
+          cheapest: cheapest,
+          normalizedKey: normalizedKey,
+          ingredient: ingredient,
+          result: result,
+          selectedProduct: selectedProduct
+        });
+      });
     });
     
-    return total;
-  }, [checkedItems, results]);
+    return productList;
+  }, [categorizedResults]);
 
-  // Toggle item checked state
-  const handleToggleItem = (normalizedKey) => {
-    setCheckedItems(prev => ({
-      ...prev,
-      [normalizedKey]: !prev[normalizedKey]
-    }));
-  };
-
-  // Toggle category expansion
-  const handleToggleCategory = (category) => {
-    setExpandedCategories(prev => ({
-      ...prev,
-      [category]: !prev[category]
-    }));
-  };
-
-  // Expand all categories
-  const handleExpandAll = () => {
-    const allExpanded = {};
-    Object.keys(categorizedResults).forEach(cat => {
-      allExpanded[cat] = true;
+  // ============================================================================
+  // CATEGORY COUNTS
+  // ============================================================================
+  const categoryCounts = useMemo(() => {
+    const counts = {
+      all: products.length
+    };
+    
+    products.forEach(product => {
+      const cat = product.category;
+      counts[cat] = (counts[cat] || 0) + 1;
     });
-    setExpandedCategories(allExpanded);
-  };
+    
+    return counts;
+  }, [products]);
 
-  // Collapse all categories
-  const handleCollapseAll = () => {
-    setExpandedCategories({});
-  };
+  // ============================================================================
+  // CATEGORY LIST FOR PILLS
+  // ============================================================================
+  const categories = useMemo(() => {
+    const uniqueCategories = [...new Set(products.map(p => p.category))];
+    
+    // Sort categories alphabetically
+    const sortedCategories = uniqueCategories.sort((a, b) => a.localeCompare(b));
+    
+    return [
+      { id: 'all', label: 'All Items', count: categoryCounts.all },
+      ...sortedCategories.map(cat => ({
+        id: cat,
+        label: cat.charAt(0).toUpperCase() + cat.slice(1),
+        count: categoryCounts[cat] || 0
+      }))
+    ];
+  }, [products, categoryCounts]);
 
-  // Copy list to clipboard
+  // ============================================================================
+  // FILTERED PRODUCTS
+  // ============================================================================
+  const filteredProducts = useMemo(() => {
+    if (activeCategory === 'all') {
+      return products;
+    }
+    return products.filter(p => p.category === activeCategory);
+  }, [products, activeCategory]);
+
+  // ============================================================================
+  // ESTIMATED SAVINGS
+  // ============================================================================
+  const estimatedSavings = useMemo(() => {
+    // Conservative estimate: $0.50 per cheapest item
+    const cheapestCount = products.filter(p => p.cheapest).length;
+    return cheapestCount * 0.50;
+  }, [products]);
+
+  // ============================================================================
+  // EVENT HANDLERS
+  // ============================================================================
+  
+  /**
+   * Copy shopping list to clipboard
+   */
   const handleCopyList = async () => {
     let text = `Shopping List - ${actualStoreName}\n`;
-    text += `Total (Selected): $${selectedTotal.toFixed(2)}\n`;
-    text += `Items: ${checkedCount} of ${totalItems}\n`;
+    text += `Total Cost: $${totalCost.toFixed(2)}\n`;
+    text += `Items: ${products.length}\n`;
     text += '='.repeat(40) + '\n\n';
 
     Object.entries(categorizedResults).forEach(([category, items]) => {
       text += `${category.toUpperCase()}\n`;
       text += '-'.repeat(40) + '\n';
-      items.forEach(({ normalizedKey, ingredient }) => {
-        const checked = checkedItems[normalizedKey] ? '✓' : '☐';
-        text += `${checked} ${ingredient}\n`;
+      items.forEach(({ ingredient }) => {
+        text += `☐ ${ingredient}\n`;
       });
       text += '\n';
     });
 
-    const success = await copyToClipboard(text);
-    if (success && onShowToast) {
-      onShowToast('Shopping list copied to clipboard!', 'success');
+    try {
+      await navigator.clipboard.writeText(text);
+      if (onShowToast) {
+        onShowToast('Shopping list copied to clipboard!', 'success');
+      }
+    } catch (err) {
+      console.error('Copy failed:', err);
+      if (onShowToast) {
+        onShowToast('Failed to copy list', 'error');
+      }
     }
   };
 
-  // Print list
+  /**
+   * Print shopping list
+   */
   const handlePrint = () => {
     window.print();
   };
 
-  // Share list
+  /**
+   * Share shopping list (native share or fallback to copy)
+   */
   const handleShare = async () => {
     if (navigator.share) {
       try {
         await navigator.share({
           title: 'Cheffy Shopping List',
-          text: `My shopping list from Cheffy - ${checkedCount} of ${totalItems} items selected`,
+          text: `My shopping list from Cheffy - ${products.length} items from ${actualStoreName}`,
         });
       } catch (err) {
-        console.error('Share failed:', err);
+        // User cancelled or share failed - silently ignore
+        console.log('Share cancelled or failed:', err);
       }
     } else {
+      // Fallback to copy
       handleCopyList();
     }
   };
 
-  // Get category icon
-  const getCategoryIcon = (category) => {
-    const iconMap = {
-      produce: '🥕',
-      fruit: '🍎',
-      veg: '🥬',
-      grains: '🌾',
-      meat: '🥩',
-      seafood: '🐟',
-      dairy: '🥛',
-      pantry: '🥫',
-      frozen: '❄️',
-      bakery: '🍞',
-      snacks: '🍿',
-      condiments: '🧂',
-      drinks: '🧃',
-    };
-    return iconMap[category.toLowerCase()] || '🛒';
-  };
-
-  // Debug logging
-  useEffect(() => {
-    console.log('[ShoppingList] Store Detection:', {
-      providedStoreName: storeName,
-      detectedStoreName: actualStoreName,
-      sampleProduct: results[Object.keys(results)[0]]?.allProducts?.[0] || results[Object.keys(results)[0]]?.products?.[0]
-    });
-  }, [storeName, actualStoreName, results]);
-
+  // ============================================================================
+  // RENDER
+  // ============================================================================
   return (
-    <div className="space-y-4">
-      {/* Shopping List Summary Card */}
-      <div
-        className="rounded-2xl p-6 shadow-xl"
-        style={{
-          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-        }}
-      >
-        {/* Header Row */}
-        <div className="flex items-start justify-between mb-6">
-          <div className="flex items-center">
-            <div className="bg-white bg-opacity-20 rounded-xl p-3 mr-4">
-              <ShoppingBag size={32} className="text-white" />
-            </div>
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
+      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, sans-serif',
+    }}>
+      <div style={{
+        maxWidth: '800px',
+        margin: '0 auto',
+        padding: '24px 16px',
+      }}>
+        {/* ================================================================== */}
+        {/* HEADER */}
+        {/* ================================================================== */}
+        <div style={{
+          marginBottom: '24px',
+        }}>
+          <h1 style={{
+            fontSize: '32px',
+            fontWeight: '700',
+            color: '#1a1a1a',
+            margin: '0 0 8px 0',
+            letterSpacing: '-0.5px',
+          }}>
+            Shopping List
+          </h1>
+        </div>
+
+        {/* ================================================================== */}
+        {/* TOTAL COST CARD */}
+        {/* ================================================================== */}
+        <div style={{
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          borderRadius: '16px',
+          padding: '24px',
+          marginBottom: '20px',
+          boxShadow: '0 8px 24px rgba(102, 126, 234, 0.25)',
+        }}>
+          {/* Top Section: Total Cost & Stats */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '12px',
+            flexWrap: 'wrap',
+            gap: '16px',
+          }}>
             <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Shopping List</h2>
-              <p className="text-indigo-100 text-sm">
-                {totalItems} items from {actualStoreName}
-              </p>
+              <div style={{
+                fontSize: '14px',
+                color: 'rgba(255, 255, 255, 0.9)',
+                fontWeight: '500',
+                marginBottom: '4px',
+              }}>
+                Total Cost
+              </div>
+              <div style={{
+                fontSize: '36px',
+                fontWeight: '700',
+                color: '#ffffff',
+                letterSpacing: '-1px',
+              }}>
+                ${totalCost.toFixed(2)}
+              </div>
+            </div>
+            <div style={{
+              textAlign: 'right',
+            }}>
+              <div style={{
+                fontSize: '14px',
+                color: 'rgba(255, 255, 255, 0.85)',
+                marginBottom: '4px',
+              }}>
+                {products.length} items • {categories.length - 1} categories
+              </div>
+              <div style={{
+                fontSize: '13px',
+                color: '#a8e6cf',
+                fontWeight: '600',
+              }}>
+                Est. savings: ${estimatedSavings.toFixed(2)}
+              </div>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-4xl font-bold text-white mb-1">
-              ${selectedTotal.toFixed(2)}
-            </p>
-            <p className="text-indigo-100 text-sm">Total Cost</p>
-          </div>
-        </div>
 
-        {/* Progress Bar */}
-        <div className="bg-white bg-opacity-20 rounded-full h-3 overflow-hidden mb-2">
-          <div
-            className="bg-white h-3 transition-all duration-500 ease-out"
-            style={{ 
-              width: `${totalItems > 0 ? (checkedCount / totalItems) * 100 : 0}%` 
-            }}
-          />
-        </div>
-        <p className="text-indigo-100 text-sm font-medium">
-          {checkedCount} of {totalItems} items checked
-        </p>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={handleCopyList}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          <Copy size={16} className="mr-2" />
-          Copy List
-        </button>
-
-        <button
-          onClick={handleShare}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          <Share2 size={16} className="mr-2" />
-          Share
-        </button>
-
-        <button
-          onClick={handlePrint}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          <Printer size={16} className="mr-2" />
-          Print
-        </button>
-
-        <button
-          onClick={handleExpandAll}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring ml-auto"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          Expand All
-        </button>
-
-        <button
-          onClick={handleCollapseAll}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          Collapse All
-        </button>
-      </div>
-
-      {/* Detailed Product List by Category */}
-      <div className="space-y-3">
-        {Object.entries(categorizedResults).map(([category, items]) => {
-          const isExpanded = expandedCategories[category];
-          const categoryCheckedCount = items.filter(item => 
-            checkedItems[item.normalizedKey]
-          ).length;
-
-          return (
-            <div
-              key={category}
-              className="bg-white rounded-xl overflow-hidden border"
-              style={{ 
-                borderColor: COLORS.gray[200],
-                boxShadow: SHADOWS.sm 
-              }}
-            >
-              {/* Category Header */}
+          {/* Action Buttons */}
+          <div style={{
+            display: 'flex',
+            gap: '8px',
+            marginTop: '16px',
+            paddingTop: '16px',
+            borderTop: '1px solid rgba(255, 255, 255, 0.2)',
+            flexWrap: 'wrap',
+          }}>
+            {[
+              { icon: Copy, label: 'Copy List', onClick: handleCopyList },
+              { icon: Share2, label: 'Share', onClick: handleShare },
+              { icon: Printer, label: 'Print', onClick: handlePrint },
+            ].map(({ icon: Icon, label, onClick }) => (
               <button
-                onClick={() => handleToggleCategory(category)}
-                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-fast"
+                key={label}
+                onClick={onClick}
+                className="shopping-action-button"
+                style={{
+                  flex: 1,
+                  minWidth: '100px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '10px 16px',
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)',
+                  borderRadius: '10px',
+                  color: '#ffffff',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  backdropFilter: 'blur(10px)',
+                }}
               >
-                <div className="flex items-center">
-                  <span className="text-2xl mr-3">{getCategoryIcon(category)}</span>
-                  <div className="text-left">
-                    <h3 className="font-bold" style={{ color: COLORS.gray[900] }}>
-                      {category}
-                    </h3>
-                    <p className="text-sm" style={{ color: COLORS.gray[500] }}>
-                      {categoryCheckedCount} of {items.length} items
-                    </p>
-                  </div>
-                </div>
-                {isExpanded ? (
-                  <ChevronUp style={{ color: COLORS.gray[400] }} />
-                ) : (
-                  <ChevronDown style={{ color: COLORS.gray[400] }} />
-                )}
+                <Icon size={16} />
+                <span style={{ whiteSpace: 'nowrap' }}>{label}</span>
               </button>
+            ))}
+          </div>
+        </div>
 
-              {/* Category Items - Full Product Details */}
-              {isExpanded && (
-                <div className="border-t" style={{ borderColor: COLORS.gray[200] }}>
-                  {items.map(({ normalizedKey, ingredient, ...result }) => {
-                    const isChecked = checkedItems[normalizedKey] || false;
+        {/* ================================================================== */}
+        {/* CATEGORY FILTER PILLS */}
+        {/* ================================================================== */}
+        <div style={{
+          marginBottom: '20px',
+          overflow: 'hidden',
+        }}>
+          <div 
+            className="shopping-category-pills"
+            style={{
+              display: 'flex',
+              gap: '8px',
+              overflowX: 'auto',
+              padding: '4px 2px',
+              WebkitOverflowScrolling: 'touch',
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none',
+            }}
+          >
+            {categories.map(({ id, label, count }) => {
+              const isActive = activeCategory === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveCategory(id)}
+                  className={`shopping-pill ${isActive ? 'active' : ''}`}
+                  style={{
+                    flex: '0 0 auto',
+                    padding: '8px 16px',
+                    background: isActive 
+                      ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+                      : '#ffffff',
+                    color: isActive ? '#ffffff' : '#4a5568',
+                    border: isActive ? 'none' : '1px solid #e2e8f0',
+                    borderRadius: '20px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? '600' : '500',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    whiteSpace: 'nowrap',
+                    boxShadow: isActive 
+                      ? '0 4px 12px rgba(102, 126, 234, 0.3)'
+                      : '0 1px 3px rgba(0, 0, 0, 0.05)',
+                  }}
+                >
+                  {label} ({count})
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-                    return (
-                      <div
-                        key={normalizedKey}
-                        className={`relative transition-all ${
-                          isChecked ? 'opacity-100' : 'opacity-40'
-                        }`}
-                      >
-                        {/* Checkbox Overlay */}
-                        <div className="absolute top-4 right-4 z-10">
-                          <button
-                            onClick={() => handleToggleItem(normalizedKey)}
-                            className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center transition-all shadow-sm ${
-                              isChecked 
-                                ? 'bg-green-500 border-green-500' 
-                                : 'bg-white border-gray-300'
-                            }`}
-                          >
-                            {isChecked && <Check size={20} className="text-white" />}
-                          </button>
-                        </div>
-
-                        {/* Full Product Card */}
-                        <div className={isChecked ? '' : 'pointer-events-none'}>
-                          <IngredientResultBlock
-                            ingredientKey={ingredient}
-                            normalizedKey={normalizedKey}
-                            result={result}
-                            onSelectSubstitute={onSelectSubstitute}
-                            onQuantityChange={onQuantityChange}
-                            onFetchNutrition={onFetchNutrition}
-                            nutritionData={nutritionCache[result.allProducts?.[result.selectedIndex || 0]?.url] || nutritionCache[result.products?.[result.selectedIndex || 0]?.url]}
-                            isLoadingNutrition={loadingNutritionFor === result.allProducts?.[result.selectedIndex || 0]?.url || loadingNutritionFor === result.products?.[result.selectedIndex || 0]?.url}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+        {/* ================================================================== */}
+        {/* PRODUCT LIST */}
+        {/* ================================================================== */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+        }}>
+          {filteredProducts.length === 0 ? (
+            /* Empty State */
+            <div style={{
+              textAlign: 'center',
+              padding: '60px 20px',
+              background: '#ffffff',
+              borderRadius: '16px',
+              border: '2px dashed #e2e8f0',
+            }}>
+              <ShoppingBag 
+                size={48} 
+                style={{ 
+                  color: '#cbd5e0',
+                  margin: '0 auto 16px',
+                  display: 'block',
+                }} 
+              />
+              <div style={{
+                fontSize: '18px',
+                fontWeight: '600',
+                color: '#4a5568',
+                marginBottom: '8px',
+              }}>
+                No {activeCategory !== 'all' ? activeCategory : ''} items yet
+              </div>
+              <div style={{
+                fontSize: '14px',
+                color: '#718096',
+              }}>
+                Add items to your list to get started
+              </div>
             </div>
-          );
-        })}
+          ) : (
+            /* Product Cards */
+            filteredProducts.map((product, index) => (
+              <div
+                key={product.id}
+                className="shopping-product-card"
+                style={{
+                  background: '#ffffff',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
+                  border: '1px solid #f0f0f0',
+                  transition: 'all 0.2s ease',
+                  opacity: 0,
+                  animation: `slideInProduct 0.3s ease forwards ${index * 0.03}s`,
+                }}
+              >
+                {/* Product Header */}
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start',
+                  marginBottom: '12px',
+                  gap: '12px',
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{
+                      fontSize: '16px',
+                      fontWeight: '600',
+                      color: '#1a1a1a',
+                      marginBottom: '4px',
+                      lineHeight: '1.4',
+                    }}>
+                      {product.name}
+                    </div>
+                    <div style={{
+                      fontSize: '14px',
+                      color: '#718096',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      flexWrap: 'wrap',
+                    }}>
+                      <span style={{ fontWeight: '600', color: '#2d3748' }}>
+                        ${product.price.toFixed(2)}
+                      </span>
+                      {product.size && (
+                        <>
+                          <span style={{ color: '#cbd5e0' }}>•</span>
+                          <span>{product.size}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {product.cheapest && (
+                    <div style={{
+                      background: 'linear-gradient(135deg, #48bb78 0%, #38a169 100%)',
+                      color: '#ffffff',
+                      padding: '4px 10px',
+                      borderRadius: '12px',
+                      fontSize: '11px',
+                      fontWeight: '700',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                      boxShadow: '0 2px 8px rgba(72, 187, 120, 0.3)',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      Cheapest
+                    </div>
+                  )}
+                </div>
+                
+                {/* Product Details - IngredientResultBlock Integration */}
+                <div style={{
+                  marginTop: '12px',
+                  paddingTop: '12px',
+                  borderTop: '1px solid #f0f0f0',
+                }}>
+                  <IngredientResultBlock
+                    ingredientKey={product.ingredient}
+                    normalizedKey={product.normalizedKey}
+                    result={product.result}
+                    onSelectSubstitute={onSelectSubstitute}
+                    onQuantityChange={onQuantityChange}
+                    onFetchNutrition={onFetchNutrition}
+                    nutritionData={nutritionCache[product.selectedProduct?.url]}
+                    isLoadingNutrition={loadingNutritionFor === product.selectedProduct?.url}
+                  />
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
-      {/* Empty State */}
-      {totalItems === 0 && (
-        <div className="text-center py-12" style={{ color: COLORS.gray[500] }}>
-          <ShoppingBag size={48} className="mx-auto mb-4 opacity-50" />
-          <p>No items in your shopping list yet</p>
-        </div>
-      )}
+      {/* ================================================================== */}
+      {/* STYLES */}
+      {/* ================================================================== */}
+      <style>{`
+        /* Font Import */
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+        
+        /* Global Box Sizing */
+        * {
+          box-sizing: border-box;
+        }
+        
+        /* Slide In Animation */
+        @keyframes slideInProduct {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        /* Hide Scrollbar for Category Pills */
+        .shopping-category-pills::-webkit-scrollbar {
+          display: none;
+        }
+        
+        /* Action Button Hover */
+        .shopping-action-button:hover {
+          background: rgba(255, 255, 255, 0.3) !important;
+          transform: translateY(-1px);
+        }
+        
+        .shopping-action-button:active {
+          transform: translateY(0);
+        }
+        
+        /* Category Pill Hover (Inactive) */
+        .shopping-pill:not(.active):hover {
+          background: #f7fafc !important;
+          border-color: #cbd5e0 !important;
+          transform: scale(1.02);
+        }
+        
+        .shopping-pill:active {
+          transform: scale(0.98);
+        }
+        
+        /* Product Card Hover */
+        .shopping-product-card:hover {
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+          transform: translateY(-2px);
+        }
+        
+        /* Mobile Responsive Adjustments */
+        @media (max-width: 768px) {
+          .shopping-product-card h1 {
+            font-size: 28px !important;
+          }
+          
+          .shopping-action-button span {
+            display: none;
+          }
+          
+          .shopping-action-button {
+            min-width: 44px !important;
+            padding: 12px !important;
+          }
+        }
+        
+        /* Print Styles */
+        @media print {
+          body {
+            background: white !important;
+          }
+          
+          .shopping-action-button,
+          .shopping-category-pills {
+            display: none !important;
+          }
+          
+          .shopping-product-card {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+        }
+      `}</style>
     </div>
   );
 };
