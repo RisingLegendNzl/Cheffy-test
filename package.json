@@ -4,9 +4,8 @@
   "description": "Unified proxy and orchestrator for Cheffy with direct macro quantification.",
   "private": true,
   "scripts": {
-    "build:canon": "node scripts/build-canon.js",
     "build:web": "cd web && npm install && npm run build",
-    "build": "npm run build:canon && npm run build:web"
+    "build": "npm run build:web"
   },
   "dependencies": {
     "@vercel/kv": "^2.0.0",
@@ -14,5 +13,3 @@
     "axios": "^1.7.2"
   }
 }
-
-
