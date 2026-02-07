@@ -8,7 +8,7 @@ import SubstituteMenu from './SubstituteMenu';
 
 /**
  * Modal/Drawer for displaying complete product details
- * Mobile: Bottom sheet
+ * Mobile: Full-height bottom sheet with smooth independent scroll
  * Desktop: Center modal
  */
 const ProductDetailModal = ({
@@ -40,12 +40,27 @@ const ProductDetailModal = ({
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
+      document.body.style.position = 'fixed';
+      document.body.style.width = '100%';
+      document.body.style.top = `-${window.scrollY}px`;
     } else {
+      const scrollY = document.body.style.top;
       document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
+      document.body.style.top = '';
+      window.scrollTo(0, parseInt(scrollY || '0') * -1);
     }
     
     return () => {
+      const scrollY = document.body.style.top;
       document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
+      document.body.style.top = '';
+      if (scrollY) {
+        window.scrollTo(0, parseInt(scrollY) * -1);
+      }
     };
   }, [isOpen]);
 
@@ -79,13 +94,15 @@ const ProductDetailModal = ({
           bottom: 0,
           left: 0,
           right: 0,
+          top: 0,
           background: 'white',
-          borderRadius: '24px 24px 0 0',
-          height: '92vh',
+          borderRadius: '0',
           display: 'flex',
           flexDirection: 'column',
           zIndex: 1001,
           animation: 'slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
+          maxHeight: '100vh',
+          maxHeight: '100dvh',
         }}
       >
         {/* Swipe Handle (Mobile) */}
@@ -140,12 +157,14 @@ const ProductDetailModal = ({
           </button>
         </div>
 
-        {/* Content */}
+        {/* Content — scrollable area */}
         <div style={{ 
           padding: '24px',
           overflowY: 'auto',
-          flex: 1,
+          flex: '1 1 auto',
+          minHeight: 0,
           WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
         }}>
           {/* Product Name & Badge */}
           <div style={{
@@ -226,72 +245,32 @@ const ProductDetailModal = ({
             </div>
           ) : (
             <>
-              {/* Total Needed */}
+              {/* Quantity Selector */}
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 padding: '12px 16px',
-                background: '#f7fafc',
-                borderRadius: '10px',
-                marginBottom: '16px',
-              }}>
-                <p style={{
-                  fontWeight: '600',
-                  color: '#4a5568',
-                  margin: 0,
-                }}>
-                  Total Needed:
-                </p>
-                <p style={{
-                  padding: '4px 12px',
-                  background: '#e2e8f0',
-                  borderRadius: '20px',
-                  color: '#2d3748',
-                  fontWeight: '600',
-                  margin: 0,
-                }}>
-                  {result?.totalGramsRequired > 0 
-                    ? `${result.totalGramsRequired}g (${result.quantityUnits})`
-                    : 'Not Used'
-                  }
-                </p>
-              </div>
-
-              {/* Quantity Control */}
-              <div style={{
-                padding: '16px',
-                background: 'linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%)',
+                background: '#f0f4ff',
                 borderRadius: '12px',
                 marginBottom: '20px',
               }}>
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: '#1e40af',
+                }}>
+                  Quantity
+                </span>
                 <div style={{
                   display: 'flex',
-                  justifyContent: 'space-between',
                   alignItems: 'center',
-                  marginBottom: '8px',
+                  gap: '12px',
                 }}>
-                  <div>
-                    <p style={{
-                      fontWeight: '700',
-                      color: '#4338ca',
-                      margin: '0 0 4px 0',
-                    }}>
-                      Units to Purchase
-                    </p>
-                    <p style={{
-                      fontSize: '12px',
-                      fontStyle: 'italic',
-                      color: '#6366f1',
-                      margin: 0,
-                    }}>
-                      (Purchase {currentQuantity} × One Unit)
-                    </p>
-                  </div>
                   <div style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '12px',
+                    gap: '16px',
                   }}>
                     <button
                       onClick={() => onQuantityChange(normalizedKey, -1)}
@@ -469,6 +448,15 @@ const ProductDetailModal = ({
 
         .quantity-button:active {
           transform: scale(0.95);
+        }
+
+        /* Mobile: full-screen bottom sheet */
+        .product-modal {
+          touch-action: none;
+        }
+
+        .product-modal > div:last-of-type {
+          touch-action: pan-y;
         }
 
         /* Desktop modal styles */
