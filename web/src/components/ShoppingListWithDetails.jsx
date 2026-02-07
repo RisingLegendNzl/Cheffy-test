@@ -1,6 +1,5 @@
 // web/src/components/ShoppingListWithDetails.jsx
-// REDESIGNED - Clean Minimal Shopping Tab
-// Production-ready implementation with full Cheffy integration
+// REDESIGNED - Clean Minimal Shopping Tab with Compact Ingredient Cards
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
@@ -9,25 +8,12 @@ import {
   Printer,
   Share2
 } from 'lucide-react';
-import IngredientResultBlock from './IngredientResultBlock';
+import IngredientCard from './IngredientCard';
+import ProductDetailModal from './ProductDetailModal';
 
 /**
- * Clean, modern shopping list with category filter pills
- * Matches the minimal design specification from uploaded example
- * 
- * @component
- * @param {Object} props - Component props
- * @param {Array} props.ingredients - Array of ingredients (legacy support)
- * @param {Object} props.results - Results object with product data
- * @param {number} props.totalCost - Total cost of all items
- * @param {string} props.storeName - Store name (auto-detected if not provided)
- * @param {Function} props.onShowToast - Toast notification handler
- * @param {Function} props.onSelectSubstitute - Substitute selection handler
- * @param {Function} props.onQuantityChange - Quantity change handler
- * @param {Function} props.onFetchNutrition - Nutrition fetch handler
- * @param {Object} props.nutritionCache - Cached nutrition data
- * @param {string} props.loadingNutritionFor - Currently loading nutrition URL
- * @param {Object} props.categorizedResults - Pre-categorized results by category
+ * Clean, modern shopping list with category filter pills and compact ingredient cards
+ * Each ingredient is a simple card with "View Product" button that opens a modal
  */
 const ShoppingListWithDetails = ({ 
   ingredients = [],
@@ -46,24 +32,22 @@ const ShoppingListWithDetails = ({
   // STATE
   // ============================================================================
   const [activeCategory, setActiveCategory] = useState('all');
+  const [selectedProductModal, setSelectedProductModal] = useState(null);
 
   // ============================================================================
   // STORE NAME DETECTION
   // ============================================================================
   const actualStoreName = useMemo(() => {
-    // Try to detect store from product URLs
     for (const [key, result] of Object.entries(results)) {
       const products = result.allProducts || result.products || [];
       
       for (const product of products) {
         if (!product) continue;
         
-        // Check explicit store field
         if (product.store) {
           return product.store;
         }
         
-        // Detect from URL
         if (product.url) {
           if (product.url.includes('woolworths')) return 'Woolworths';
           if (product.url.includes('coles')) return 'Coles';
@@ -89,7 +73,6 @@ const ShoppingListWithDetails = ({
         
         if (!selectedProduct) return;
         
-        // Extract price with fallbacks
         const price = parseFloat(
           selectedProduct.product_price || 
           selectedProduct.price || 
@@ -97,13 +80,11 @@ const ShoppingListWithDetails = ({
           0
         );
         
-        // Extract size with fallbacks
         const size = selectedProduct.size || 
                     selectedProduct.product_size || 
                     selectedProduct.package_size || 
                     '';
         
-        // Check if this is the cheapest option
         const cheapest = selectedProduct.cheapest || false;
         
         productList.push({
@@ -116,7 +97,8 @@ const ShoppingListWithDetails = ({
           normalizedKey: normalizedKey,
           ingredient: ingredient,
           result: result,
-          selectedProduct: selectedProduct
+          selectedProduct: selectedProduct,
+          allProducts: allProducts
         });
       });
     });
@@ -145,8 +127,6 @@ const ShoppingListWithDetails = ({
   // ============================================================================
   const categories = useMemo(() => {
     const uniqueCategories = [...new Set(products.map(p => p.category))];
-    
-    // Sort categories alphabetically
     const sortedCategories = uniqueCategories.sort((a, b) => a.localeCompare(b));
     
     return [
@@ -173,18 +153,48 @@ const ShoppingListWithDetails = ({
   // ESTIMATED SAVINGS
   // ============================================================================
   const estimatedSavings = useMemo(() => {
-    // Conservative estimate: $0.50 per cheapest item
     const cheapestCount = products.filter(p => p.cheapest).length;
     return cheapestCount * 0.50;
   }, [products]);
 
   // ============================================================================
+  // MODAL DATA
+  // ============================================================================
+  const modalProductData = useMemo(() => {
+    if (!selectedProductModal) return null;
+    
+    const product = products.find(p => p.normalizedKey === selectedProductModal);
+    if (!product) return null;
+
+    const allProducts = product.allProducts || [];
+    const selectedIndex = product.result.selectedIndex || 0;
+    const currentSelection = allProducts[selectedIndex];
+    
+    const cheapest = allProducts.reduce((best, current) => 
+      (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best, 
+      allProducts[0]
+    );
+    
+    const substitutes = allProducts
+      .filter(p => p.url !== currentSelection?.url)
+      .sort((a, b) => (a.unit_price_per_100 ?? Infinity) - (b.unit_price_per_100 ?? Infinity))
+      .slice(0, 5);
+
+    return {
+      ingredientKey: product.ingredient,
+      normalizedKey: product.normalizedKey,
+      result: product.result,
+      currentSelection,
+      absoluteCheapestProduct: cheapest,
+      substitutes,
+      currentQuantity: product.result.userQuantity || 1
+    };
+  }, [selectedProductModal, products]);
+
+  // ============================================================================
   // EVENT HANDLERS
   // ============================================================================
   
-  /**
-   * Copy shopping list to clipboard
-   */
   const handleCopyList = async () => {
     let text = `Shopping List - ${actualStoreName}\n`;
     text += `Total Cost: $${totalCost.toFixed(2)}\n`;
@@ -213,16 +223,10 @@ const ShoppingListWithDetails = ({
     }
   };
 
-  /**
-   * Print shopping list
-   */
   const handlePrint = () => {
     window.print();
   };
 
-  /**
-   * Share shopping list (native share or fallback to copy)
-   */
   const handleShare = async () => {
     if (navigator.share) {
       try {
@@ -231,13 +235,19 @@ const ShoppingListWithDetails = ({
           text: `My shopping list from Cheffy - ${products.length} items from ${actualStoreName}`,
         });
       } catch (err) {
-        // User cancelled or share failed - silently ignore
         console.log('Share cancelled or failed:', err);
       }
     } else {
-      // Fallback to copy
       handleCopyList();
     }
+  };
+
+  const handleViewProduct = (normalizedKey) => {
+    setSelectedProductModal(normalizedKey);
+  };
+
+  const handleCloseModal = () => {
+    setSelectedProductModal(null);
   };
 
   // ============================================================================
@@ -254,12 +264,8 @@ const ShoppingListWithDetails = ({
         margin: '0 auto',
         padding: '24px 16px',
       }}>
-        {/* ================================================================== */}
         {/* HEADER */}
-        {/* ================================================================== */}
-        <div style={{
-          marginBottom: '24px',
-        }}>
+        <div style={{ marginBottom: '24px' }}>
           <h1 style={{
             fontSize: '32px',
             fontWeight: '700',
@@ -271,9 +277,7 @@ const ShoppingListWithDetails = ({
           </h1>
         </div>
 
-        {/* ================================================================== */}
         {/* TOTAL COST CARD */}
-        {/* ================================================================== */}
         <div style={{
           background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
           borderRadius: '16px',
@@ -281,7 +285,6 @@ const ShoppingListWithDetails = ({
           marginBottom: '20px',
           boxShadow: '0 8px 24px rgba(102, 126, 234, 0.25)',
         }}>
-          {/* Top Section: Total Cost & Stats */}
           <div style={{
             display: 'flex',
             justifyContent: 'space-between',
@@ -308,9 +311,7 @@ const ShoppingListWithDetails = ({
                 ${totalCost.toFixed(2)}
               </div>
             </div>
-            <div style={{
-              textAlign: 'right',
-            }}>
+            <div style={{ textAlign: 'right' }}>
               <div style={{
                 fontSize: '14px',
                 color: 'rgba(255, 255, 255, 0.85)',
@@ -372,13 +373,8 @@ const ShoppingListWithDetails = ({
           </div>
         </div>
 
-        {/* ================================================================== */}
         {/* CATEGORY FILTER PILLS */}
-        {/* ================================================================== */}
-        <div style={{
-          marginBottom: '20px',
-          overflow: 'hidden',
-        }}>
+        <div style={{ marginBottom: '20px', overflow: 'hidden' }}>
           <div 
             className="shopping-category-pills"
             style={{
@@ -424,9 +420,7 @@ const ShoppingListWithDetails = ({
           </div>
         </div>
 
-        {/* ================================================================== */}
-        {/* PRODUCT LIST */}
-        {/* ================================================================== */}
+        {/* INGREDIENT CARDS */}
         <div style={{
           display: 'flex',
           flexDirection: 'column',
@@ -465,130 +459,51 @@ const ShoppingListWithDetails = ({
               </div>
             </div>
           ) : (
-            /* Product Cards */
+            /* Compact Ingredient Cards */
             filteredProducts.map((product, index) => (
-              <div
+              <IngredientCard
                 key={product.id}
-                className="shopping-product-card"
-                style={{
-                  background: '#ffffff',
-                  borderRadius: '12px',
-                  padding: '16px',
-                  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
-                  border: '1px solid #f0f0f0',
-                  transition: 'all 0.2s ease',
-                  opacity: 0,
-                  animation: `slideInProduct 0.3s ease forwards ${index * 0.03}s`,
-                }}
-              >
-                {/* Product Header */}
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'flex-start',
-                  marginBottom: '12px',
-                  gap: '12px',
-                }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{
-                      fontSize: '16px',
-                      fontWeight: '600',
-                      color: '#1a1a1a',
-                      marginBottom: '4px',
-                      lineHeight: '1.4',
-                    }}>
-                      {product.name}
-                    </div>
-                    <div style={{
-                      fontSize: '14px',
-                      color: '#718096',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      flexWrap: 'wrap',
-                    }}>
-                      <span style={{ fontWeight: '600', color: '#2d3748' }}>
-                        ${product.price.toFixed(2)}
-                      </span>
-                      {product.size && (
-                        <>
-                          <span style={{ color: '#cbd5e0' }}>•</span>
-                          <span>{product.size}</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  {product.cheapest && (
-                    <div style={{
-                      background: 'linear-gradient(135deg, #48bb78 0%, #38a169 100%)',
-                      color: '#ffffff',
-                      padding: '4px 10px',
-                      borderRadius: '12px',
-                      fontSize: '11px',
-                      fontWeight: '700',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                      boxShadow: '0 2px 8px rgba(72, 187, 120, 0.3)',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      Cheapest
-                    </div>
-                  )}
-                </div>
-                
-                {/* Product Details - IngredientResultBlock Integration */}
-                <div style={{
-                  marginTop: '12px',
-                  paddingTop: '12px',
-                  borderTop: '1px solid #f0f0f0',
-                }}>
-                  <IngredientResultBlock
-                    ingredientKey={product.ingredient}
-                    normalizedKey={product.normalizedKey}
-                    result={product.result}
-                    onSelectSubstitute={onSelectSubstitute}
-                    onQuantityChange={onQuantityChange}
-                    onFetchNutrition={onFetchNutrition}
-                    nutritionData={nutritionCache[product.selectedProduct?.url]}
-                    isLoadingNutrition={loadingNutritionFor === product.selectedProduct?.url}
-                  />
-                </div>
-              </div>
+                ingredientName={product.name}
+                price={product.price}
+                size={product.size}
+                isCheapest={product.cheapest}
+                onViewProduct={() => handleViewProduct(product.normalizedKey)}
+                index={index}
+              />
             ))
           )}
         </div>
       </div>
 
-      {/* ================================================================== */}
+      {/* PRODUCT DETAIL MODAL */}
+      {modalProductData && (
+        <ProductDetailModal
+          isOpen={!!selectedProductModal}
+          onClose={handleCloseModal}
+          ingredientKey={modalProductData.ingredientKey}
+          normalizedKey={modalProductData.normalizedKey}
+          result={modalProductData.result}
+          currentSelection={modalProductData.currentSelection}
+          absoluteCheapestProduct={modalProductData.absoluteCheapestProduct}
+          substitutes={modalProductData.substitutes}
+          currentQuantity={modalProductData.currentQuantity}
+          onSelectSubstitute={onSelectSubstitute}
+          onQuantityChange={onQuantityChange}
+        />
+      )}
+
       {/* STYLES */}
-      {/* ================================================================== */}
       <style>{`
-        /* Font Import */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
         
-        /* Global Box Sizing */
         * {
           box-sizing: border-box;
         }
-        
-        /* Slide In Animation */
-        @keyframes slideInProduct {
-          from {
-            opacity: 0;
-            transform: translateY(10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        
-        /* Hide Scrollbar for Category Pills */
+
         .shopping-category-pills::-webkit-scrollbar {
           display: none;
         }
         
-        /* Action Button Hover */
         .shopping-action-button:hover {
           background: rgba(255, 255, 255, 0.3) !important;
           transform: translateY(-1px);
@@ -598,7 +513,6 @@ const ShoppingListWithDetails = ({
           transform: translateY(0);
         }
         
-        /* Category Pill Hover (Inactive) */
         .shopping-pill:not(.active):hover {
           background: #f7fafc !important;
           border-color: #cbd5e0 !important;
@@ -608,19 +522,8 @@ const ShoppingListWithDetails = ({
         .shopping-pill:active {
           transform: scale(0.98);
         }
-        
-        /* Product Card Hover */
-        .shopping-product-card:hover {
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
-          transform: translateY(-2px);
-        }
-        
-        /* Mobile Responsive Adjustments */
+
         @media (max-width: 768px) {
-          .shopping-product-card h1 {
-            font-size: 28px !important;
-          }
-          
           .shopping-action-button span {
             display: none;
           }
@@ -631,7 +534,6 @@ const ShoppingListWithDetails = ({
           }
         }
         
-        /* Print Styles */
         @media print {
           body {
             background: white !important;
@@ -642,7 +544,7 @@ const ShoppingListWithDetails = ({
             display: none !important;
           }
           
-          .shopping-product-card {
+          .ingredient-card-compact {
             break-inside: avoid;
             page-break-inside: avoid;
           }
