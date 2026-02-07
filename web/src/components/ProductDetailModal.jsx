@@ -101,7 +101,6 @@ const ProductDetailModal = ({
           flexDirection: 'column',
           zIndex: 1001,
           animation: 'slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          maxHeight: '100vh',
           maxHeight: '100dvh',
         }}
       >
