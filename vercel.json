@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "installCommand": "npm install && cd web && npm install",
   "outputDirectory": "web/dist",
   "rewrites": [
     {
@@ -20,4 +21,3 @@
     }
   ]
 }
-
