@@ -4,7 +4,7 @@
   "description": "Unified proxy and orchestrator for Cheffy with direct macro quantification.",
   "private": true,
   "scripts": {
-    "build:web": "cd web && npm install && npm run build",
+    "build:web": "cd web && npm run build",
     "build": "npm run build:web"
   },
   "dependencies": {
