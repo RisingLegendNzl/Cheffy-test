@@ -81,8 +81,9 @@ const ProductDetailModal = ({
           right: 0,
           background: 'white',
           borderRadius: '24px 24px 0 0',
-          maxHeight: '85vh',
-          overflowY: 'auto',
+          height: '92vh',
+          display: 'flex',
+          flexDirection: 'column',
           zIndex: 1001,
           animation: 'slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
         }}
@@ -92,6 +93,7 @@ const ProductDetailModal = ({
           display: 'flex',
           justifyContent: 'center',
           padding: '12px 0 8px 0',
+          flexShrink: 0,
         }}>
           <div style={{
             width: '40px',
@@ -108,6 +110,7 @@ const ProductDetailModal = ({
           alignItems: 'center',
           padding: '16px 24px',
           borderBottom: '1px solid #e2e8f0',
+          flexShrink: 0,
         }}>
           <h2 style={{
             fontSize: '20px',
@@ -138,7 +141,12 @@ const ProductDetailModal = ({
         </div>
 
         {/* Content */}
-        <div style={{ padding: '24px' }}>
+        <div style={{ 
+          padding: '24px',
+          overflowY: 'auto',
+          flex: 1,
+          WebkitOverflowScrolling: 'touch',
+        }}>
           {/* Product Name & Badge */}
           <div style={{
             display: 'flex',
@@ -471,7 +479,8 @@ const ProductDetailModal = ({
             transform: translate(-50%, -50%) !important;
             bottom: auto !important;
             right: auto !important;
-            max-width: 600px !important;
+            width: 600px !important;
+            height: 90vh !important;
             max-height: 90vh !important;
             border-radius: 16px !important;
             animation: fadeInScale 0.2s ease !important;
