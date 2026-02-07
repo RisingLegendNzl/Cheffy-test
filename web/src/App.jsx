@@ -256,7 +256,7 @@ const App = () => {
                     logHeight={logic.logHeight}
                     setLogHeight={logic.setLogHeight}
                     isLogOpen={logic.isLogOpen}
-                    setIsLogOpen={logic.isLogOpen} 
+                    setIsLogOpen={logic.setIsLogOpen} 
                     latestLog={logic.latestLog}
                     
                     // NEW: Macro Debug Log props (with defensive defaults)
