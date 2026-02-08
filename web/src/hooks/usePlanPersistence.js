@@ -2,6 +2,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import * as planService from '../services/planPersistence';
 
+/**
+ * Custom hook for managing meal plan persistence
+ * 
+ * FIX: Added recalculateTotalCost parameter and invoke it after loading plans
+ * This fixes the bug where total cost and estimated savings show $0 after loading
+ */
 const usePlanPersistence = ({
     userId,
     isAuthReady,
@@ -14,7 +20,8 @@ const usePlanPersistence = ({
     showToast,
     setMealPlan,
     setResults,
-    setUniqueIngredients
+    setUniqueIngredients,
+    recalculateTotalCost  // FIX: New parameter to recalculate costs after loading
 }) => {
     const [savedPlans, setSavedPlans] = useState([]);
     const [activePlanId, setActivePlanId] = useState(null);
@@ -81,6 +88,15 @@ const usePlanPersistence = ({
         }
     }, [userId, db, mealPlan, results, uniqueIngredients, formData, nutritionalTargets, showToast, listPlans]);
 
+    /**
+     * FIX: Enhanced loadPlan function that recalculates totals after loading
+     * 
+     * CRITICAL CHANGE: After setting state with loaded plan data, we now call
+     * recalculateTotalCost(loadedPlan.results) to recompute the shopping total
+     * and trigger derived value recalculation (estimated savings).
+     * 
+     * This fixes the bug where total cost shows $0 when loading saved plans.
+     */
     const loadPlan = useCallback(async (planId) => {
         if (!userId || !db) {
             showToast && showToast('Please sign in to load plans', 'warning');
@@ -100,6 +116,7 @@ const usePlanPersistence = ({
                 planId
             });
 
+            // Set all state from loaded plan
             if (setMealPlan && loadedPlan.mealPlan) {
                 setMealPlan(loadedPlan.mealPlan);
             }
@@ -108,6 +125,13 @@ const usePlanPersistence = ({
             }
             if (setUniqueIngredients && loadedPlan.uniqueIngredients) {
                 setUniqueIngredients(loadedPlan.uniqueIngredients);
+            }
+
+            // FIX: Recalculate total cost from loaded results
+            // This is the critical missing piece that caused the $0 bug
+            if (recalculateTotalCost && loadedPlan.results) {
+                console.log('[PLAN_HOOK] Recalculating total cost after loading plan');
+                recalculateTotalCost(loadedPlan.results);
             }
 
             showToast && showToast(`Loaded: ${loadedPlan.name}`, 'success');
@@ -119,7 +143,7 @@ const usePlanPersistence = ({
         } finally {
             setLoadingPlan(false);
         }
-    }, [userId, db, showToast, setMealPlan, setResults, setUniqueIngredients]);
+    }, [userId, db, showToast, setMealPlan, setResults, setUniqueIngredients, recalculateTotalCost]);
 
     const deletePlan = useCallback(async (planId) => {
         if (!userId || !db) {
@@ -213,4 +237,3 @@ const usePlanPersistence = ({
 };
 
 export default usePlanPersistence;
-
