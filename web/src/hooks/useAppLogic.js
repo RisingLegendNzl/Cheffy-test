@@ -197,7 +197,8 @@ const useAppLogic = ({
         showToast: showToast || (() => {}),
         setMealPlan: setMealPlan || (() => {}),
         setResults: setResults || (() => {}),
-        setUniqueIngredients: setUniqueIngredients || (() => {})
+        setUniqueIngredients: setUniqueIngredients || (() => {}),
+        recalculateTotalCost: recalculateTotalCost || (() => {})
     });
     // --- End Plan Persistence Hook Call ---
 
