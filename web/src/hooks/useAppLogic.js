@@ -120,7 +120,12 @@ const useAppLogic = ({
     const [generationStatus, setGenerationStatus] = useState("Ready to generate plan."); 
 
     const [selectedMeal, setSelectedMeal] = useState(null);
-    const [useBatchedMode, setUseBatchedMode] = useState(true);
+    // useBatchedMode REMOVED — batched generation is now always enabled.
+
+    // --- AI Model Selection (persisted to localStorage) ---
+    const [selectedModel, setSelectedModel] = useState(
+      () => localStorage.getItem('cheffy_selected_model') || 'gpt-5.1'
+    );
 
     const [toasts, setToasts] = useState([]);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -149,6 +154,11 @@ const useAppLogic = ({
     useEffect(() => {
       localStorage.setItem('cheffy_show_macro_debug_log', JSON.stringify(showMacroDebugLog));
     }, [showMacroDebugLog]);
+
+    // Persist selected AI model
+    useEffect(() => {
+      localStorage.setItem('cheffy_selected_model', selectedModel);
+    }, [selectedModel]);
 
     // --- Base Helpers ---
     const showToast = useCallback((message, type = 'info', duration = 3000) => {
@@ -263,6 +273,7 @@ const useAppLogic = ({
                 showOrchestratorLogs: showOrchestratorLogs,
                 showFailedIngredientsLogs: showFailedIngredientsLogs,
                 showMacroDebugLog: showMacroDebugLog,
+                selectedModel: selectedModel,
                 lastUpdated: new Date().toISOString()
             };
 
@@ -272,7 +283,7 @@ const useAppLogic = ({
         } catch (error) {
             console.error("[SETTINGS] Error saving settings:", error);
         }
-    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, userId, db, isAuthReady]);
+    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, selectedModel, userId, db, isAuthReady]);
 
     const handleLoadSettings = useCallback(async () => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
@@ -288,6 +299,7 @@ const useAppLogic = ({
                 setShowOrchestratorLogs(data.showOrchestratorLogs ?? true);
                 setShowFailedIngredientsLogs(data.showFailedIngredientsLogs ?? true);
                 setShowMacroDebugLog(data.showMacroDebugLog ?? false);
+                if (data.selectedModel) setSelectedModel(data.selectedModel);
                 console.log("[SETTINGS] Settings loaded successfully");
             }
             
@@ -443,122 +455,8 @@ const useAppLogic = ({
             return;
         }
 
-        if (!useBatchedMode) {
-            setGenerationStatus("Generating plan (per-day mode)...");
-            let accumulatedResults = {}; 
-            let accumulatedMealPlan = []; 
-            let accumulatedUniqueIngredients = new Map(); 
-
-            try {
-                const numDays = parseInt(formData.days, 10);
-                for (let day = 1; day <= numDays; day++) {
-                    setGenerationStatus(`Generating plan for Day ${day}/${numDays}...`);
-                    setGenerationStepKey('planning');
-                    
-                    let dailyFailedIngredients = [];
-                    let dayFetchError = null;
-
-                    try {
-                        const dayResponse = await fetch(`${ORCHESTRATOR_DAY_API_URL}?day=${day}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                            body: JSON.stringify({ formData, nutritionalTargets: targets }),
-                            signal: signal,
-                        });
-
-                        if (!dayResponse.ok) {
-                            const errorMsg = await getResponseErrorDetails(dayResponse);
-                            throw new Error(`Day ${day} request failed: ${errorMsg}`);
-                        }
-
-                        const reader = dayResponse.body.getReader();
-                        const decoder = new TextDecoder();
-                        let buffer = '';
-                        let dayDataReceived = false;
-
-                        while (true) {
-                            const { value, done } = await reader.read();
-                            if (done) {
-                                if (!dayDataReceived && !dayFetchError) {
-                                    throw new Error(`Day ${day} stream ended unexpectedly without data.`);
-                                }
-                                break;
-                            }
-                            
-                            const { events, newBuffer } = processSseChunk(value, buffer, decoder);
-                            buffer = newBuffer;
-
-                            for (const event of events) {
-                                const eventData = event.data;
-                                switch (event.eventType) {
-                                    case 'message':
-                                    case 'log_message':
-                                        setDiagnosticLogs(prev => [...prev, eventData]);
-                                        if (eventData?.tag === 'MARKET_RUN' || eventData?.tag === 'CHECKLIST' || eventData?.tag === 'HTTP') {
-                                            setGenerationStepKey('market');
-                                        } else if (eventData?.tag === 'LLM' || eventData?.tag === 'LLM_PROMPT') {
-                                            setGenerationStepKey('planning');
-                                        }
-                                        break;
-                                    case 'error':
-                                        dayFetchError = eventData.message || 'An error occurred during generation.';
-                                        setError(prevError => prevError ? `${prevError}\nDay ${day}: ${dayFetchError}` : `Day ${day}: ${dayFetchError}`);
-                                        setGenerationStepKey('error');
-                                        break;
-                                    case 'finalData':
-                                        dayDataReceived = true;
-                                        if (eventData.mealPlanForDay) accumulatedMealPlan.push(eventData.mealPlanForDay);
-                                        if (eventData.dayResults) accumulatedResults = { ...accumulatedResults, ...eventData.dayResults };
-                                        if (eventData.dayUniqueIngredients) {
-                                            eventData.dayUniqueIngredients.forEach(ing => {
-                                                if (ing && ing.originalIngredient) accumulatedUniqueIngredients.set(ing.originalIngredient, { ...(accumulatedUniqueIngredients.get(ing.originalIngredient) || {}), ...ing });
-                                            });
-                                        }
-                                        setMealPlan([...accumulatedMealPlan]);
-                                        setResults({ ...accumulatedResults }); 
-                                        setUniqueIngredients(Array.from(accumulatedUniqueIngredients.values()));
-                                        recalculateTotalCost(accumulatedResults);
-                                        break;
-                                    case 'phase:start':
-                                    case 'ingredient:found':
-                                    case 'ingredient:failed':
-                                        setDiagnosticLogs(prev => [...prev, { timestamp: new Date().toISOString(), level: 'DEBUG', tag: 'SSE_UNHANDLED', message: `Received unhandled v2 event '${event.eventType}' in v1 loop.`}]);
-                                        break;
-                                }
-                            }
-                            if (dayFetchError) break;
-                        }
-                    } catch (dayError) {
-                        if (dayError.name === 'AbortError') {
-                            console.log(`[GENERATE] Day ${day} request aborted.`);
-                            return; // Exit gracefully
-                        }
-                        console.error(`Error processing day ${day}:`, dayError);
-                        setError(prevError => prevError ? `${prevError}\n${dayError.message}` : dayError.message); 
-                        setGenerationStepKey('error');
-                        setDiagnosticLogs(prev => [...prev, { timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND', message: dayError.message }]);
-                    } finally {
-                        if (dailyFailedIngredients.length > 0) setFailedIngredientsHistory(prev => [...prev, ...dailyFailedIngredients]);
-                    }
-                }
-
-                if (!error) {
-                    setGenerationStatus(`Plan generation finished.`);
-                    setGenerationStepKey('finalizing');
-                    setTimeout(() => setGenerationStepKey('complete'), 1500);
-                } else {
-                    setGenerationStepKey('error');
-                }
-            } catch (err) {
-                 console.error("Per-day plan generation failed critically:", err);
-                 setError(`Critical failure: ${err.message}`);
-                 setGenerationStepKey('error');
-            } finally {
-                 setTimeout(() => setLoading(false), 2000);
-            }
-
-        } else {
-            setGenerationStatus("Generating full plan (batched mode)...");
+        // --- Batched generation (always enabled) ---
+        setGenerationStatus("Generating full plan...");
             
             try {
                 // console.log('[DEBUG] Starting batched plan generation...'); // Diagnostic log removed for cleanup
@@ -571,7 +469,8 @@ const useAppLogic = ({
                     },
                     body: JSON.stringify({
                         formData,
-                        nutritionalTargets: targets
+                        nutritionalTargets: targets,
+                        preferredModel: selectedModel
                     }),
                     signal: signal,
                 });
@@ -710,8 +609,8 @@ const useAppLogic = ({
             } finally {
                  setTimeout(() => setLoading(false), 2000);
             }
-        }
-    }, [formData, isLogOpen, recalculateTotalCost, useBatchedMode, showToast, nutritionalTargets.calories, error]);
+        
+    }, [formData, isLogOpen, recalculateTotalCost, selectedModel, showToast, nutritionalTargets.calories, error]);
 
     // --- NEW HELPER FUNCTION for robust error parsing ---
     const getResponseErrorDetails = useCallback(async (response) => {
@@ -1012,7 +911,8 @@ const useAppLogic = ({
         generationStepKey,
         generationStatus,
         selectedMeal,
-        useBatchedMode,
+        // useBatchedMode REMOVED
+        selectedModel,
         toasts,
         showSuccessModal,
         planStats,
@@ -1030,7 +930,7 @@ const useAppLogic = ({
         setShowFailedIngredientsLogs,
         setShowMacroDebugLog,
         setSelectedMeal,
-        setUseBatchedMode,
+        setSelectedModel,
         setShowSuccessModal,
         
         // Handlers
