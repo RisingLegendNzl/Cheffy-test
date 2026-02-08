@@ -1,140 +1,168 @@
 // web/src/components/RecipeModal.jsx
-import React from 'react';
+// =============================================================================
+// RecipeModal — Full-screen recipe detail overlay
+//
+// FIXES APPLIED:
+// 1. z-index raised to 9999 — above Header (1020), BottomNav (1030),
+//    SettingsPanel (1050), ProductDetailModal (1001), and log bar (100).
+// 2. Overlay uses position:fixed inset:0 and the modal fills 100% of
+//    that container. No maxHeight:90vh, no alignItems:flex-end.
+//    On desktop (>=672 px) the modal is inset with margin/padding and
+//    border-radius via an injected <style> tag using 100dvh with vh fallback.
+// 3. Body scroll is locked with the iOS-safe position:fixed technique
+//    and restored (including scroll position) on unmount.
+// 4. The header (with the X button) is flexShrink:0 and pinned at the
+//    top of a flex column; the scrollable body uses flex:1 + minHeight:0
+//    so overflow is always confined to the content area.
+// 5. A 3px colored top-border, box-shadow ring, and subtle background
+//    tint give the modal clear visual separation from the backdrop.
+// =============================================================================
+
+import React, { useEffect, useRef } from 'react';
 import { X, ListChecks, ListOrdered } from 'lucide-react';
 
-/**
- * RecipeModal - Meal detail overlay with guaranteed header visibility
- *
- * FIX SUMMARY:
- * - Changed from bottom-sheet (alignItems: flex-end + maxHeight: 90vh) to a
- *   full-screen overlay that uses height: 100% within a position:fixed container.
- * - On desktop (>672px), the modal is centered with rounded corners and capped width.
- * - On mobile, the modal fills the entire viewport using inset:0 + dvh fallback,
- *   guaranteeing the close button is always reachable.
- * - Scrollable body is contained; page scroll is locked via useEffect.
- */
+const MODAL_Z = 9999; // Above everything in the app
+
 const RecipeModal = ({ meal, onClose }) => {
-    if (!meal) return null;
+    const scrollRef = useRef(null);
 
-    // Handle backdrop click
-    const handleBackdropClick = (e) => {
-        if (e.target === e.currentTarget) {
-            onClose();
-        }
-    };
+    // ── Robust body scroll lock (iOS-safe) + inject dvh helper CSS ──
+    useEffect(() => {
+        if (!meal) return;
 
-    // Prevent body scroll when modal is open & inject dvh helper style
-    React.useEffect(() => {
-        const originalOverflow = document.body.style.overflow;
-        const originalPosition = document.body.style.position;
-        const originalWidth = document.body.style.width;
-        const originalTop = document.body.style.top;
+        // Save current state
         const scrollY = window.scrollY;
+        const orig = {
+            overflow: document.body.style.overflow,
+            position: document.body.style.position,
+            width: document.body.style.width,
+            top: document.body.style.top,
+            height: document.body.style.height,
+        };
 
-        // Lock body scroll — works on iOS Safari too
+        // Lock body
         document.body.style.position = 'fixed';
         document.body.style.top = `-${scrollY}px`;
         document.body.style.width = '100%';
         document.body.style.overflow = 'hidden';
+        document.body.style.height = '100%';
 
-        // Inject a <style> tag with a CSS custom property for dynamic viewport height.
-        // This lets us use --dvh as a fallback for browsers that don't support 100dvh.
-        const styleEl = document.createElement('style');
-        styleEl.setAttribute('data-recipe-modal', '');
+        // Inject dynamic-viewport-height helper CSS
+        const id = 'recipe-modal-dvh-styles';
+        let styleEl = document.getElementById(id);
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = id;
+            document.head.appendChild(styleEl);
+        }
         styleEl.textContent = `
-            .recipe-modal-overlay {
-                /* dvh with vh fallback */
+            /* Full-viewport overlay — dvh with vh fallback */
+            .rm-overlay {
                 height: 100vh;
                 height: 100dvh;
             }
-            .recipe-modal-container {
-                max-height: 100vh;
-                max-height: 100dvh;
+
+            /* Mobile-first: modal fills the overlay entirely */
+            .rm-container {
+                height: 100%;
+                width: 100%;
+                max-width: 100%;
+                border-radius: 0;
             }
+
+            /* Desktop: centered card with breathing room */
             @media (min-width: 672px) {
-                .recipe-modal-container {
-                    max-height: min(92vh, 92dvh);
-                    border-radius: 24px !important;
-                    margin: auto;
+                .rm-container {
+                    max-width: 672px;
+                    height: auto;
+                    max-height: min(90vh, 90dvh);
+                    border-radius: 20px;
                 }
             }
         `;
-        document.head.appendChild(styleEl);
 
         return () => {
-            document.body.style.overflow = originalOverflow;
-            document.body.style.position = originalPosition;
-            document.body.style.width = originalWidth;
-            document.body.style.top = originalTop;
+            // Restore body
+            document.body.style.overflow = orig.overflow;
+            document.body.style.position = orig.position;
+            document.body.style.width = orig.width;
+            document.body.style.top = orig.top;
+            document.body.style.height = orig.height;
             window.scrollTo(0, scrollY);
-            styleEl.remove();
+
+            // Clean up style tag
+            const el = document.getElementById(id);
+            if (el) el.remove();
         };
-    }, []);
+    }, [meal]);
+
+    if (!meal) return null;
+
+    // Close on backdrop click (not on the card itself)
+    const handleBackdropClick = (e) => {
+        if (e.target === e.currentTarget) onClose();
+    };
 
     return (
+        /* ── BACKDROP ── */
         <div
-            className="recipe-modal-overlay"
+            className="rm-overlay"
+            onClick={handleBackdropClick}
             style={{
                 position: 'fixed',
                 top: 0,
                 left: 0,
                 right: 0,
                 bottom: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.6)',
-                zIndex: 200,
+                zIndex: MODAL_Z,
+                backgroundColor: 'rgba(0, 0, 0, 0.55)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                /* Pad the overlay so the centered card never touches screen edges on desktop */
                 padding: '0',
             }}
-            onClick={handleBackdropClick}
         >
-            {/* Modal Container */}
+            {/* ── MODAL CARD ── */}
             <div
-                className="recipe-modal-container"
+                className="rm-container"
+                onClick={(e) => e.stopPropagation()}
                 style={{
-                    backgroundColor: 'white',
-                    width: '100%',
-                    maxWidth: '672px',
-                    /* On mobile this stretches to full screen via the class rule;
-                       on desktop the class caps it at 92dvh with rounded corners */
-                    height: '100%',
-                    borderRadius: '0',
-                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                    backgroundColor: '#ffffff',
                     display: 'flex',
                     flexDirection: 'column',
                     overflow: 'hidden',
-                    /* Ensure the container itself never exceeds the viewport */
                     boxSizing: 'border-box',
+                    // Visual containment: colored top accent + ring shadow
+                    borderTop: '3.5px solid #6366f1',
+                    boxShadow:
+                        '0 0 0 1px rgba(99,102,241,0.12), ' +
+                        '0 24px 48px -12px rgba(0,0,0,0.3)',
                 }}
-                onClick={(e) => e.stopPropagation()}
             >
-                {/* HEADER - Always visible, never scrolls */}
+                {/* ── HEADER (pinned, never scrolls) ── */}
                 <div
                     style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '1.25rem',
+                        gap: '0.75rem',
+                        padding: '1rem 1.25rem',
                         paddingTop:
-                            'max(1.25rem, calc(env(safe-area-inset-top) + 0.5rem))',
+                            'max(1rem, calc(env(safe-area-inset-top) + 0.5rem))',
                         borderBottom: '1px solid #e5e7eb',
-                        backgroundColor: 'white',
+                        backgroundColor: '#ffffff',
                         flexShrink: 0,
-                        minHeight: '70px',
-                        /* Pin header to top of flex column so it's never scrolled away */
-                        zIndex: 1,
+                        minHeight: '64px',
+                        zIndex: 2,
                     }}
                 >
                     {/* Title */}
                     <h3
                         style={{
-                            fontSize: '1.25rem',
+                            fontSize: '1.2rem',
                             fontWeight: 700,
                             color: '#111827',
                             margin: 0,
-                            paddingRight: '0.75rem',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
@@ -145,44 +173,49 @@ const RecipeModal = ({ meal, onClose }) => {
                         {meal.name}
                     </h3>
 
-                    {/* Close Button */}
+                    {/* Close (X) Button — always visible, generous hit target */}
                     <button
                         onClick={onClose}
+                        aria-label="Close recipe"
                         style={{
-                            width: '36px',
-                            height: '36px',
+                            width: '40px',
+                            height: '40px',
+                            minWidth: '40px',
+                            minHeight: '40px',
                             borderRadius: '50%',
                             backgroundColor: '#f3f4f6',
-                            border: 'none',
+                            border: '2px solid #e5e7eb',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             cursor: 'pointer',
                             flexShrink: 0,
-                            transition: 'background-color 0.2s',
+                            transition: 'background-color 0.15s, border-color 0.15s',
+                            WebkitTapHighlightColor: 'transparent',
                         }}
-                        onMouseEnter={(e) =>
-                            (e.currentTarget.style.backgroundColor = '#e5e7eb')
-                        }
-                        onMouseLeave={(e) =>
-                            (e.currentTarget.style.backgroundColor = '#f3f4f6')
-                        }
-                        aria-label="Close"
+                        onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = '#e5e7eb';
+                            e.currentTarget.style.borderColor = '#d1d5db';
+                        }}
+                        onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = '#f3f4f6';
+                            e.currentTarget.style.borderColor = '#e5e7eb';
+                        }}
                     >
-                        <X size={20} color="#4b5563" />
+                        <X size={20} color="#374151" strokeWidth={2.5} />
                     </button>
                 </div>
 
-                {/* SCROLLABLE BODY */}
+                {/* ── SCROLLABLE BODY ── */}
                 <div
+                    ref={scrollRef}
                     style={{
                         flex: 1,
+                        minHeight: 0,
                         overflowY: 'auto',
                         overflowX: 'hidden',
                         padding: '1.5rem 1.25rem',
                         WebkitOverflowScrolling: 'touch',
-                        /* Prevent content from pushing the header off-screen */
-                        minHeight: 0,
                     }}
                 >
                     {/* Description */}
@@ -263,7 +296,7 @@ const RecipeModal = ({ meal, onClose }) => {
                                                 marginTop: '0.5rem',
                                                 flexShrink: 0,
                                             }}
-                                        ></span>
+                                        />
                                         <span
                                             style={{
                                                 flex: 1,
@@ -373,7 +406,7 @@ const RecipeModal = ({ meal, onClose }) => {
                         </div>
                     )}
 
-                    {/* Bottom safe area padding */}
+                    {/* Bottom safe-area spacer */}
                     <div
                         style={{
                             height: '2rem',
