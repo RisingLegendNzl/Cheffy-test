@@ -145,7 +145,7 @@ function _buildOpenAIRequest(modelName, geminiPayload, options = {}) {
         messages,
         temperature,
         top_p:       topP,
-        max_tokens:  resolvedMaxTokens,
+        max_completion_tokens: resolvedMaxTokens,
     };
     if (wantsJson) {
         body.response_format = { type: 'json_object' };
