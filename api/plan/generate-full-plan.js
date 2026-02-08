@@ -12,6 +12,8 @@
 
 /// ===== IMPORTS-START ===== \\
 const fetch = require('node-fetch');
+// Ensure Response is available for the fix in Change 2.5
+const Response = fetch.Response || global.Response;
 const crypto = require('crypto');
 const { createClient } = require('@vercel/kv');
 
@@ -46,7 +48,8 @@ const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v13.3-hybrid';
 const USE_SOLVER_V1 = process.env.CHEFFY_USE_SOLVER === '1'; // Default to false (use legacy reconcile)
 const ALLOW_PROTEIN_SCALING = process.env.CHEFFY_SCALE_PROTEIN === '1'; // D3: New feature flag for protein scaling
 
-const PLAN_MODEL_NAME_PRIMARY = 'gemini-3-flash-preview';
+// Change 2.1: Single stable model
+const PLAN_MODEL_NAME_PRIMARY = 'gemini-2.0-flash';
 const PLAN_MODEL_NAME_FALLBACK = 'gemini-2.0-flash';
 
 const getGeminiApiUrl = (modelName) => `https://generativelanguage
@@ -57,13 +60,27 @@ const kv = createClient({
     url: process.env.UPSTASH_REDIS_REST_URL,
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
-const kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+
+// Change 6.2: Add health check
+let kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+(async () => {
+    if (kvReady) {
+        try {
+            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('KV Ping Timeout')), 3000));
+            await Promise.race([kv.ping(), timeout]);
+        } catch (e) {
+            console.warn(`KV Connection check failed: ${e.message}`);
+            kvReady = false;
+        }
+    }
+})();
+
 const CACHE_PREFIX = `cheffy:plan:v3:t:${TRANSFORM_CONFIG_VERSION}`;
 const TTL_PLAN_MS = 1000 * 60 * 60 * 24; // 24 hours
 
 // --- Performance & API Constants ---
-const MAX_LLM_RETRIES = 3;
-const LLM_REQUEST_TIMEOUT_MS = 90000; // 90 seconds
+const MAX_LLM_RETRIES = 2; // Change 2.3
+const LLM_REQUEST_TIMEOUT_MS = 30000; // Change 2.2
 const REQUIRED_WORD_SCORE_THRESHOLD = 0.60;
 const SKIP_STRONG_MATCH_THRESHOLD = 0.80;
 const MARKET_RUN_CONCURRENCY = 6;
@@ -298,20 +315,17 @@ async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
                 // [FIX] Read as text first to check for non-JSON
                 const rawText = await response.text();
                 if (!rawText || rawText.trim() === "") {
-                    // This can happen. Treat as a retryable error.
                     throw new Error("Response was 200 OK but body was empty.");
                 }
                 
                 const trimmedText = rawText.trim();
-                // [FIX] Check if the text *looks* like JSON before parsing
+                // [FIX] Change 2.5: Reconstruct Response object
                 if (trimmedText.startsWith('{') || trimmedText.startsWith('[')) {
-                    // It looks like JSON, return a new response-like object
-                    return {
-                        ok: true,
-                        status: response.status,
-                        json: () => Promise.resolve(JSON.parse(trimmedText)), // Parse the text we already read
-                        text: () => Promise.resolve(trimmedText)
-                    };
+                    // It looks like JSON, return a new Response object
+                    return new Response(rawText, { 
+                        status: 200, 
+                        headers: { 'Content-Type': 'application/json' } 
+                    });
                 } else {
                     // This is a 200 OK with a non-JSON body (e.g., "I cannot..." safety refusal)
                     log(`${attemptPrefix} Attempt ${attempt}: 200 OK with non-JSON body. Retrying...`, 'WARN', 'HTTP', { body: trimmedText.substring(0, 100) });
@@ -349,7 +363,8 @@ async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
 
         // Wait before retrying
         if (attempt < MAX_LLM_RETRIES) {
-            const delayTime = Math.pow(2, attempt -1) * 3000 + Math.random() * 1000; // Exponential backoff
+            // Change 2.4: Reduced backoff
+            const delayTime = Math.pow(2, attempt -1) * 1000 + Math.random() * 500;
             log(`Waiting ${delayTime.toFixed(0)}ms before ${attemptPrefix} retry...`, 'DEBUG', 'HTTP');
             await delay(delayTime);
         }
@@ -820,14 +835,12 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
     const snackCal = Math.round(perMealTargets.snack.calories);
     const snackP = Math.round(perMealTargets.snack.protein);
 
-    // 1. Check Cache
-    const profileHash = hashString(JSON.stringify({ formData, nutritionalTargets, perMealTargets })); // Include targets in cache key
-    const cacheKey = `${CACHE_PREFIX}:meals:day${day}:${profileHash}`;
-    const cached = await cacheGet(cacheKey, log);
-    if (cached) {
-        return { dayNumber: day, meals: cached.meals }; // Return the full day object
-    }
-    log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
+    // Change 2.11: Removed plan caching
+    // const profileHash = hashString(JSON.stringify({ formData, nutritionalTargets, perMealTargets })); 
+    // const cacheKey = `${CACHE_PREFIX}:meals:day${day}:${profileHash}`;
+    // const cached = await cacheGet(cacheKey, log);
+    // if (cached) return { dayNumber: day, meals: cached.meals }; 
+    // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
 
     // 2. Prepare Prompt
     const mealTypesMap = {'3':['B','L','D'],'4':['B','L','D','S1'],'5':['B','L','D','S1','S2']};
@@ -858,21 +871,17 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
     // 3. Execute LLM Call
     let parsedResult;
     try {
+        // Change 2.6: Removed fallback chain
         parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
-    } catch (primaryError) {
-        log(`${logPrefix}: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM');
-        try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Meal Plan generation failed for Day ${day}: Both AI models failed. Last error: ${fallbackError.message}`);
-        }
+    } catch (error) {
+        log(`${logPrefix}: Model ${PLAN_MODEL_NAME_PRIMARY} failed after retries: ${error.message}.`, 'CRITICAL', 'LLM');
+        throw new Error(`Meal Plan generation failed for Day ${day}: AI model failed after retries. Last error: ${error.message}`);
     }
     
-    // 4. Cache and Return
-    if (parsedResult && parsedResult.meals && parsedResult.meals.length > 0) {
-        await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
-    }
+    // Change 2.11: Removed plan caching
+    // if (parsedResult && parsedResult.meals && parsedResult.meals.length > 0) {
+    //     await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
+    // }
     return { dayNumber: day, meals: parsedResult.meals || [] };
 }
 
@@ -881,13 +890,13 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
  * Generates grocery query details for the *entire* aggregated list.
  */
 async function generateGroceryQueries_Batched(aggregatedIngredients, store, log) {
-// ... (omitted)
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
     }
 
     // 1. Check Cache
+    // Change 2.13: Keep ingredient-level caching
     const keysHash = hashString(JSON.stringify(aggregatedIngredients));
     const cacheKey = `${CACHE_PREFIX}:queries-batched:${store}:${keysHash}`;
     const cached = await cacheGet(cacheKey, log);
@@ -925,15 +934,11 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log)
     // 3. Execute LLM Call
     let parsedResult;
     try {
+        // Change 2.7: Removed fallback chain
         parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
-    } catch (primaryError) {
-        log(`${logPrefix}: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM');
-        try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Grocery Query generation failed: Both AI models failed. Last error: ${fallbackError.message}`);
-        }
+    } catch (error) {
+        log(`${logPrefix}: Model ${PLAN_MODEL_NAME_PRIMARY} failed after retries: ${error.message}.`, 'CRITICAL', 'LLM');
+        throw new Error(`Grocery Query generation failed: AI model failed after retries. Last error: ${error.message}`);
     }
     
     // 4. Post-process and Cache
@@ -951,6 +956,7 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log)
         });
         // --- End Sanity Check ---
         
+        // Change 2.13: Keep ingredient-level caching
         await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
     }
     
@@ -1009,12 +1015,12 @@ async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
 async function generateChefInstructions(meal, store, log) {
     const mealName = meal.name || 'Unnamed Meal';
     try {
-        // 1. Check Cache
-        const mealHash = hashString(JSON.stringify(meal.items || []));
-        const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
-        const cached = await cacheGet(cacheKey, log);
-        if (cached) return { ...meal, ...cached }; // Return merged object
-        log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
+        // Change 2.12: Removed chef caching
+        // const mealHash = hashString(JSON.stringify(meal.items || []));
+        // const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
+        // const cached = await cacheGet(cacheKey, log);
+        // if (cached) return { ...meal, ...cached }; 
+        // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
 
         // 2. Prepare Prompt
         const systemPrompt = CHEF_SYSTEM_PROMPT(store);
@@ -1037,22 +1043,17 @@ async function generateChefInstructions(meal, store, log) {
         // 3. Execute LLM Call
         let recipeResult;
         try {
+            // Change 2.8: Removed fallback chain
             recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_PRIMARY, payload, mealName, log);
-        } catch (primaryError) {
-            log(`Chef AI [${mealName}]: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM_CHEF');
-            try {
-                recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_FALLBACK, payload, mealName, log);
-            } catch (fallbackError) {
-                log(`Chef AI [${mealName}]: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM_CHEF');
-                // Don't throw; return mock data
-                recipeResult = MOCK_RECIPE_FALLBACK;
-            }
+        } catch (error) {
+            log(`Chef AI [${mealName}]: Model ${PLAN_MODEL_NAME_PRIMARY} failed after retries: ${error.message}.`, 'CRITICAL', 'LLM_CHEF');
+            recipeResult = MOCK_RECIPE_FALLBACK;
         }
         
-        // 4. Cache and Return
-        if (recipeResult && recipeResult.description) {
-            await cacheSet(cacheKey, recipeResult, TTL_PLAN_MS, log);
-        }
+        // Change 2.12: Removed chef caching
+        // if (recipeResult && recipeResult.description) {
+        //     await cacheSet(cacheKey, recipeResult, TTL_PLAN_MS, log);
+        // }
         return { ...meal, ...recipeResult }; // Return the modified meal object
     } catch (error) {
         log(`CRITICAL Error in generateChefInstructions for [${mealName}]: ${error.message}`, 'CRITICAL', 'LLM_CHEF');
@@ -1178,34 +1179,43 @@ module.exports = async (request, response) => {
         };
 
 
-        // --- Phase 1: Generate ALL Meals (Sequentially) ---
+        // --- Phase 1: Generate ALL Meals (Parallelized - Change 2.10) ---
         sendEvent('phase:start', { name: 'meals', description: `Generating ${numDays}-day meal plan...` });
         const dietitianStartTime = Date.now();
         const fullMealPlan = []; // This is the master list of day objects
         
+        sendEvent('plan:progress', { pct: 10, message: `Generating ${numDays} days in parallel...` });
+        const dayPromises = [];
+        
         for (let day = 1; day <= numDays; day++) {
-            try {
-                // Send progress *before* starting the call
-                sendEvent('plan:progress', { pct: (day / numDays) * 25, message: `Generating meal plan for Day ${day}...` });
-                // Step A1: Pass the new meal targets
-                const dayPlan = await generateMealPlan_Single(day, formData, nutritionalTargets, log, targetsPerMealType);
-                if (!dayPlan || !dayPlan.meals || dayPlan.meals.length === 0) {
-                    throw new Error(`Meal Planner AI returned no meals for Day ${day}.`);
-                }
-                fullMealPlan.push(dayPlan);
-            } catch (dayError) {
-                 log(`Failed to generate meals for Day ${day}: ${dayError.message}`, 'ERROR', 'LLM');
-                 // If one day fails, we can't continue.
-                 throw new Error(`Meal plan generation failed: ${dayError.message}`);
-            }
+            dayPromises.push(
+                generateMealPlan_Single(day, formData, nutritionalTargets, log, targetsPerMealType)
+                .then(dayPlan => {
+                    sendEvent('plan:progress', { message: `Day ${day} generated.` });
+                    return dayPlan;
+                })
+                .catch(dayError => {
+                    log(`Failed to generate meals for Day ${day}: ${dayError.message}`, 'ERROR', 'LLM');
+                    throw new Error(`Meal plan generation failed for Day ${day}: ${dayError.message}`);
+                })
+            );
         }
         
+        const results = await Promise.all(dayPromises);
+        results.forEach(dayPlan => {
+            if (!dayPlan || !dayPlan.meals || dayPlan.meals.length === 0) {
+                 throw new Error(`Meal Planner AI returned no meals.`);
+            }
+            fullMealPlan.push(dayPlan);
+        });
+        // Sort by day number to ensure correct order
+        fullMealPlan.sort((a, b) => a.dayNumber - b.dayNumber);
+
         dietitian_ms = Date.now() - dietitianStartTime;
         sendEvent('phase:end', { name: 'meals', duration_ms: dietitian_ms, mealCount: fullMealPlan.reduce((acc, day) => acc + day.meals.length, 0) });
         
-        // This check is now robust
         if (fullMealPlan.length !== numDays) {
-            throw new Error(`Meal Planner AI failed: Expected ${numDays} days, but only received ${fullMealPlan.length}.`);
+            throw new Error(`Meal Planner AI failed: Expected ${numDays} days, but processed ${fullMealPlan.length}.`);
         }
 
         // --- Phase 2: Aggregate Ingredients ---
