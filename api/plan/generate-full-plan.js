@@ -877,7 +877,7 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
 /**
  * Generates grocery query details for the *entire* aggregated list.
  */
-async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
+async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gemini-2.5-flash-lite', fallbackModel = null) {
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
@@ -914,24 +914,19 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log,
         contents: [{ parts: [{ text: userQuery }] }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
         generationConfig: {
-            temperature: 0.1, topK: 32, topP: 0.9, responseMimeType: "application/json",
+            temperature: 0.05, topK: 20, topP: 0.85, responseMimeType: "application/json",
         }
     };
     const expectedShape = { "ingredients": [] };
 
     // 3. Execute LLM Call (Change 2.7: Added Fallback)
     let parsedResult;
-    try {
-        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
-    } catch (primaryError) {
-        log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
-        try {
-            parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Grocery Query generation failed: All models failed. Last error: ${fallbackError.message}`);
-        }
-    }
+   try {
+       parsedResult = await tryGenerateLLMPlan('gemini-2.5-flash-lite', payload, log, logPrefix, expectedShape);
+   } catch (error) {
+       log(`${logPrefix}: gemini-2.5-flash-lite failed: ${error.message}. NO FALLBACK for Grocery Optimiser.`, 'CRITICAL', 'LLM');
+       throw new Error(`Grocery Query generation failed: gemini-2.5-flash-lite failed. ${error.message}`);
+   }
     
     // 4. Post-process and Cache
     if (parsedResult && parsedResult.ingredients && parsedResult.ingredients.length > 0) {
