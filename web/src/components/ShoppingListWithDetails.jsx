@@ -1,7 +1,8 @@
 // web/src/components/ShoppingListWithDetails.jsx
 // REDESIGNED - Clean Minimal Shopping Tab with Compact Ingredient Cards
+// FIX: Enhanced with proper callback wiring for substitute product selection
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   ShoppingBag, 
   Copy,
@@ -14,6 +15,8 @@ import ProductDetailModal from './ProductDetailModal';
 /**
  * Clean, modern shopping list with category filter pills and compact ingredient cards
  * Each ingredient is a simple card with "View Product" button that opens a modal
+ * 
+ * FIX: onSelectSubstitute now properly handles product selection updates
  */
 const ShoppingListWithDetails = ({ 
   ingredients = [],
@@ -21,7 +24,7 @@ const ShoppingListWithDetails = ({
   totalCost = 0,
   storeName = 'Woolworths',
   onShowToast = () => {},
-  onSelectSubstitute,
+  onSelectSubstitute,      // FIX: This callback must be wired properly
   onQuantityChange,
   onFetchNutrition,
   nutritionCache = {},
@@ -216,7 +219,7 @@ const ShoppingListWithDetails = ({
         onShowToast('Shopping list copied to clipboard!', 'success');
       }
     } catch (err) {
-      console.error('Copy failed:', err);
+      console.error('Failed to copy:', err);
       if (onShowToast) {
         onShowToast('Failed to copy list', 'error');
       }
@@ -228,14 +231,16 @@ const ShoppingListWithDetails = ({
   };
 
   const handleShare = async () => {
+    const text = `Shopping List - ${actualStoreName}\nTotal: $${totalCost.toFixed(2)}\n${products.length} items`;
+    
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'Cheffy Shopping List',
-          text: `My shopping list from Cheffy - ${products.length} items from ${actualStoreName}`,
+          title: 'My Shopping List',
+          text: text,
         });
       } catch (err) {
-        console.log('Share cancelled or failed:', err);
+        console.error('Share failed:', err);
       }
     } else {
       handleCopyList();
@@ -250,141 +255,208 @@ const ShoppingListWithDetails = ({
     setSelectedProductModal(null);
   };
 
+  /**
+   * FIX: Enhanced substitute selection handler
+   * 
+   * CRITICAL CHANGE: This handler now properly forwards the callback to the parent
+   * component (MainApp) which will update the results state and recalculate totals.
+   * 
+   * The callback chain is:
+   * 1. ProductCard onClick → calls onSelect(product)
+   * 2. ProductDetailModal wraps it → calls onSelectSubstitute(normalizedKey, product)
+   * 3. This handler receives it → forwards to parent's handleSubstituteSelection
+   * 4. Parent updates state and recalculates cost
+   * 
+   * Previous bug: This callback was not being invoked or was missing entirely
+   */
+  const handleSelectSubstitute = (normalizedKey, product) => {
+    console.log('[SHOPPING_LIST] Substitute selected:', { normalizedKey, product: product.name });
+    
+    // Forward to parent's handleSubstituteSelection from useAppLogic
+    if (onSelectSubstitute) {
+      onSelectSubstitute(normalizedKey, product);
+    }
+    
+    // Close modal after selection
+    handleCloseModal();
+    
+    // Show feedback toast
+    if (onShowToast) {
+      onShowToast(`Switched to ${product.name}`, 'success');
+    }
+  };
+
   // ============================================================================
   // RENDER
   // ============================================================================
+  
   return (
     <div style={{
+      fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
-      fontFamily: '"DM Sans", -apple-system, BlinkMacSystemFont, sans-serif',
+      background: 'linear-gradient(to bottom, #f8fafc, #ffffff)',
     }}>
+      {/* HEADER SECTION */}
       <div style={{
-        maxWidth: '800px',
-        margin: '0 auto',
-        padding: '24px 16px',
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        padding: '32px 24px',
+        borderRadius: '0 0 24px 24px',
+        boxShadow: '0 4px 20px rgba(102, 126, 234, 0.25)',
       }}>
-        {/* HEADER */}
-        <div style={{ marginBottom: '24px' }}>
-          <h1 style={{
-            fontSize: '32px',
-            fontWeight: '700',
-            color: '#1a1a1a',
-            margin: '0 0 8px 0',
-            letterSpacing: '-0.5px',
-          }}>
-            Shopping List
-          </h1>
-        </div>
-
-        {/* TOTAL COST CARD */}
+        {/* Store Name */}
         <div style={{
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          borderRadius: '16px',
-          padding: '24px',
-          marginBottom: '20px',
-          boxShadow: '0 8px 24px rgba(102, 126, 234, 0.25)',
+          fontSize: '14px',
+          fontWeight: '500',
+          color: 'rgba(255, 255, 255, 0.8)',
+          marginBottom: '8px',
+          letterSpacing: '0.5px',
         }}>
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '12px',
-            flexWrap: 'wrap',
-            gap: '16px',
-          }}>
-            <div>
-              <div style={{
-                fontSize: '14px',
-                color: 'rgba(255, 255, 255, 0.9)',
-                fontWeight: '500',
-                marginBottom: '4px',
-              }}>
-                Total Cost
-              </div>
-              <div style={{
-                fontSize: '36px',
-                fontWeight: '700',
-                color: '#ffffff',
-                letterSpacing: '-1px',
-              }}>
-                ${totalCost.toFixed(2)}
-              </div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{
-                fontSize: '14px',
-                color: 'rgba(255, 255, 255, 0.85)',
-                marginBottom: '4px',
-              }}>
-                {products.length} items • {categories.length - 1} categories
-              </div>
-              <div style={{
-                fontSize: '13px',
-                color: '#a8e6cf',
-                fontWeight: '600',
-              }}>
-                Est. savings: ${estimatedSavings.toFixed(2)}
-              </div>
+          {actualStoreName}
+        </div>
+
+        {/* Title & Cost */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          marginBottom: '20px',
+        }}>
+          <div>
+            <h2 style={{
+              fontSize: '28px',
+              fontWeight: '700',
+              color: '#ffffff',
+              margin: '0 0 4px 0',
+            }}>
+              Shopping List
+            </h2>
+            <div style={{
+              fontSize: '14px',
+              color: 'rgba(255, 255, 255, 0.9)',
+              fontWeight: '500',
+            }}>
+              {products.length} {products.length === 1 ? 'item' : 'items'}
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div style={{
-            display: 'flex',
-            gap: '8px',
-            marginTop: '16px',
-            paddingTop: '16px',
-            borderTop: '1px solid rgba(255, 255, 255, 0.2)',
-            flexWrap: 'wrap',
+            textAlign: 'right',
           }}>
-            {[
-              { icon: Copy, label: 'Copy List', onClick: handleCopyList },
-              { icon: Share2, label: 'Share', onClick: handleShare },
-              { icon: Printer, label: 'Print', onClick: handlePrint },
-            ].map(({ icon: Icon, label, onClick }) => (
-              <button
-                key={label}
-                onClick={onClick}
-                className="shopping-action-button"
-                style={{
-                  flex: 1,
-                  minWidth: '100px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '6px',
-                  padding: '10px 16px',
-                  background: 'rgba(255, 255, 255, 0.2)',
-                  border: '1px solid rgba(255, 255, 255, 0.3)',
-                  borderRadius: '10px',
-                  color: '#ffffff',
-                  fontSize: '14px',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  backdropFilter: 'blur(10px)',
-                }}
-              >
-                <Icon size={16} />
-                <span style={{ whiteSpace: 'nowrap' }}>{label}</span>
-              </button>
-            ))}
+            <div style={{
+              fontSize: '32px',
+              fontWeight: '800',
+              color: '#ffffff',
+              lineHeight: '1',
+            }}>
+              ${totalCost.toFixed(2)}
+            </div>
+            <div style={{
+              fontSize: '13px',
+              color: 'rgba(255, 255, 255, 0.85)',
+              marginTop: '4px',
+              fontWeight: '500',
+            }}>
+              Est. savings: ${estimatedSavings.toFixed(2)}
+            </div>
           </div>
         </div>
 
+        {/* Action Buttons */}
+        <div style={{
+          display: 'flex',
+          gap: '10px',
+        }}>
+          <button
+            onClick={handleCopyList}
+            className="shopping-action-button"
+            style={{
+              flex: '1',
+              padding: '12px 16px',
+              background: 'rgba(255, 255, 255, 0.2)',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
+              borderRadius: '12px',
+              color: '#ffffff',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Copy size={18} />
+            <span>Copy</span>
+          </button>
+
+          <button
+            onClick={handlePrint}
+            className="shopping-action-button"
+            style={{
+              flex: '1',
+              padding: '12px 16px',
+              background: 'rgba(255, 255, 255, 0.2)',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
+              borderRadius: '12px',
+              color: '#ffffff',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Printer size={18} />
+            <span>Print</span>
+          </button>
+
+          <button
+            onClick={handleShare}
+            className="shopping-action-button"
+            style={{
+              flex: '1',
+              padding: '12px 16px',
+              background: 'rgba(255, 255, 255, 0.2)',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(255, 255, 255, 0.3)',
+              borderRadius: '12px',
+              color: '#ffffff',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Share2 size={18} />
+            <span>Share</span>
+          </button>
+        </div>
+      </div>
+
+      {/* CONTENT SECTION */}
+      <div style={{ padding: '24px' }}>
         {/* CATEGORY FILTER PILLS */}
-        <div style={{ marginBottom: '20px', overflow: 'hidden' }}>
+        <div style={{
+          marginBottom: '24px',
+          overflowX: 'auto',
+          paddingBottom: '8px',
+        }}>
           <div 
             className="shopping-category-pills"
             style={{
               display: 'flex',
-              gap: '8px',
-              overflowX: 'auto',
-              padding: '4px 2px',
-              WebkitOverflowScrolling: 'touch',
-              scrollbarWidth: 'none',
-              msOverflowStyle: 'none',
+              gap: '10px',
+              minWidth: 'min-content',
             }}
           >
             {categories.map(({ id, label, count }) => {
@@ -476,6 +548,7 @@ const ShoppingListWithDetails = ({
       </div>
 
       {/* PRODUCT DETAIL MODAL */}
+      {/* FIX: Pass handleSelectSubstitute instead of onSelectSubstitute directly */}
       {modalProductData && (
         <ProductDetailModal
           isOpen={!!selectedProductModal}
@@ -487,7 +560,7 @@ const ShoppingListWithDetails = ({
           absoluteCheapestProduct={modalProductData.absoluteCheapestProduct}
           substitutes={modalProductData.substitutes}
           currentQuantity={modalProductData.currentQuantity}
-          onSelectSubstitute={onSelectSubstitute}
+          onSelectSubstitute={handleSelectSubstitute}  // FIX: Use local handler
           onQuantityChange={onQuantityChange}
         />
       )}
