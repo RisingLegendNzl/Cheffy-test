@@ -37,6 +37,13 @@ const DEFAULT_MAX_TOKENS = {
     default:        4096,
 };
 
+// Supported models that the frontend is allowed to select.
+// Used by API handlers to validate the `preferredModel` field.
+const SUPPORTED_MODELS = {
+    'gpt-5.1':           { provider: 'openai',  label: 'GPT-5.1 (Primary)' },
+    'gemini-2.0-flash':  { provider: 'gemini',  label: 'Gemini 2.0 Flash' },
+};
+
 // ============================================================
 // 2. PROVIDER DETECTION
 // ============================================================
@@ -488,6 +495,7 @@ module.exports = {
     // --- Config (readable by consumers for logging / diagnostics) ---
     PRIMARY_MODEL,
     FALLBACK_MODEL,
+    SUPPORTED_MODELS,
     DEFAULT_MAX_TOKENS,
     OPENAI_BASE_URL,
     getGeminiApiUrl,
