@@ -29,14 +29,14 @@ try {
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
     // Change 2.1: Import LLM provider (Primary path)
-    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL } = require('../utils/llm-provider.js');
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../utils/llm-provider.js');
 } catch (e) {
     console.error("CRITICAL: Failed to import utils. Using local fallbacks.", e.message);
     var { normalizeKey } = require('../../scripts/normalize.js');
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
     // Change 2.1: Import LLM provider (Fallback path)
-    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL } = require('../../utils/llm-provider.js');
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../../utils/llm-provider.js');
 }
 
 // --- [NEW] Import validation helper (Task 1) ---
@@ -810,7 +810,7 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
  * Generates a meal plan for a *single* day.
  * (Step A1, A4: Update signature and user query)
  */
-async function generateMealPlan_Single(day, formData, nutritionalTargets, log, perMealTargets) {
+async function generateMealPlan_Single(day, formData, nutritionalTargets, log, perMealTargets, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
     const { name, height, weight, age, gender, goal, dietary, store, eatingOccasions, costPriority, mealVariety, cuisine } = formData;
     const { calories, protein, fat, carbs } = nutritionalTargets;
     
@@ -855,13 +855,13 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
     // 3. Execute LLM Call (Change 2.6: Added Fallback)
     let parsedResult;
     try {
-        parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
+        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
     } catch (primaryError) {
-        log(`${logPrefix}: Primary model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Falling back to ${PLAN_MODEL_NAME_FALLBACK}.`, 'WARN', 'LLM_FALLBACK');
+        log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
         try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
+            parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
         } catch (fallbackError) {
-            log(`${logPrefix}: Fallback model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+            log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
             throw new Error(`Meal Plan generation failed for Day ${day}: All models failed. Last error: ${fallbackError.message}`);
         }
     }
@@ -877,7 +877,7 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
 /**
  * Generates grocery query details for the *entire* aggregated list.
  */
-async function generateGroceryQueries_Batched(aggregatedIngredients, store, log) {
+async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
@@ -922,13 +922,13 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log)
     // 3. Execute LLM Call (Change 2.7: Added Fallback)
     let parsedResult;
     try {
-        parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
+        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
     } catch (primaryError) {
-        log(`${logPrefix}: Primary model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Falling back to ${PLAN_MODEL_NAME_FALLBACK}.`, 'WARN', 'LLM_FALLBACK');
+        log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
         try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
+            parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
         } catch (fallbackError) {
-            log(`${logPrefix}: Fallback model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+            log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
             throw new Error(`Grocery Query generation failed: All models failed. Last error: ${fallbackError.message}`);
         }
     }
@@ -993,7 +993,7 @@ async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
     }
 }
 
-async function generateChefInstructions(meal, store, log) {
+async function generateChefInstructions(meal, store, log, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
     const mealName = meal.name || 'Unnamed Meal';
     try {
         // Change 2.12: Removed chef caching
@@ -1024,13 +1024,13 @@ async function generateChefInstructions(meal, store, log) {
         // 3. Execute LLM Call (Change 2.8: Added Fallback)
         let recipeResult;
         try {
-            recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_PRIMARY, payload, mealName, log);
+            recipeResult = await tryGenerateChefRecipe(primaryModel, payload, mealName, log);
         } catch (primaryError) {
-            log(`Chef AI [${mealName}]: Primary model failed: ${primaryError.message}. Falling back to ${PLAN_MODEL_NAME_FALLBACK}.`, 'WARN', 'LLM_FALLBACK');
+            log(`Chef AI [${mealName}]: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
             try {
-                recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_FALLBACK, payload, mealName, log);
+                recipeResult = await tryGenerateChefRecipe(fallbackModel, payload, mealName, log);
             } catch (fallbackError) {
-                log(`Chef AI [${mealName}]: Fallback model also failed: ${fallbackError.message}. Using mock recipe.`, 'CRITICAL', 'LLM_CHEF');
+                log(`Chef AI [${mealName}]: Fallback model ${fallbackModel} also failed: ${fallbackError.message}. Using mock recipe.`, 'CRITICAL', 'LLM_CHEF');
                 recipeResult = MOCK_RECIPE_FALLBACK;
             }
         }
@@ -1105,10 +1105,25 @@ module.exports = async (request, response) => {
     let store = ''; // Must be defined outside try block for market run logic scope
 
     try {
-        const { formData, nutritionalTargets } = request.body;
+        const { formData, nutritionalTargets, preferredModel } = request.body;
         const numDays = parseInt(formData.days, 10) || 7;
+
+        // --- Model Selection: honour user's preferred model if valid ---
+        let requestPrimary = PLAN_MODEL_NAME_PRIMARY;   // default from env / llm-provider
+        let requestFallback = PLAN_MODEL_NAME_FALLBACK;
+        if (preferredModel && typeof preferredModel === 'string') {
+            if (SUPPORTED_MODELS && SUPPORTED_MODELS[preferredModel]) {
+                requestPrimary = preferredModel;
+                // Set fallback to the "other" model
+                requestFallback = (preferredModel === PRIMARY_MODEL) ? FALLBACK_MODEL : PRIMARY_MODEL;
+                log(`User selected model: ${preferredModel} (fallback: ${requestFallback})`, 'INFO', 'MODEL_SELECT');
+            } else {
+                log(`Ignoring unknown preferredModel: "${preferredModel}". Using default: ${requestPrimary}`, 'WARN', 'MODEL_SELECT');
+            }
+        }
+
         log(`Plan generation starting for ${numDays} days.`, 'INFO', 'SYSTEM');
-        sendEvent('plan:start', { days: numDays, formData: getSanitizedFormData(formData) });
+        sendEvent('plan:start', { days: numDays, formData: getSanitizedFormData(formData), model: requestPrimary });
 
         // --- Input Validation ---
         if (!formData || typeof formData !== 'object' || Object.keys(formData).length < 5) {
@@ -1174,7 +1189,7 @@ module.exports = async (request, response) => {
         
         for (let day = 1; day <= numDays; day++) {
             dayPromises.push(
-                generateMealPlan_Single(day, formData, nutritionalTargets, log, targetsPerMealType)
+                generateMealPlan_Single(day, formData, nutritionalTargets, log, targetsPerMealType, requestPrimary, requestFallback)
                 .then(dayPlan => {
                     sendEvent('plan:progress', { message: `Day ${day} generated.` });
                     return dayPlan;
@@ -1249,7 +1264,7 @@ module.exports = async (request, response) => {
         const marketStartTime = Date.now();
 
         // 3a. Generate Queries (LLM call)
-        const groceryQueryData = await generateGroceryQueries_Batched(aggregatedIngredients, store, log);
+        const groceryQueryData = await generateGroceryQueries_Batched(aggregatedIngredients, store, log, requestPrimary, requestFallback);
         const { ingredients: ingredientPlan } = groceryQueryData;
         if (!ingredientPlan || ingredientPlan.length === 0) {
              throw new Error(`Grocery Optimizer AI returned empty ingredients.`);
@@ -1907,7 +1922,7 @@ module.exports = async (request, response) => {
         const allMeals = finalMealPlan.flatMap(day => day.meals);
         // Run recipe generation in parallel for all meals across all days
         // Change 2.9: Concurrency 6 -> 4
-        const recipeResults = await concurrentlyMap(allMeals, 4, (meal) => generateChefInstructions(meal, store, log));
+        const recipeResults = await concurrentlyMap(allMeals, 4, (meal) => generateChefInstructions(meal, store, log, requestPrimary, requestFallback));
         
         // Create a map to re-assemble the plan
         const recipeMap = new Map();
