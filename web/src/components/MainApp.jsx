@@ -7,7 +7,7 @@ import MacroRing from './MacroRing';
 import MacroBar from './MacroBar';
 import InputField from './InputField';
 import DaySlider from './DaySlider';
-import DaySidebar from './DaySidebar';
+import DayTabBar from './DayTabBar';
 import ProductCard from './ProductCard';
 import CollapsibleSection from './CollapsibleSection';
 import SubstituteMenu from './SubstituteMenu';
@@ -244,54 +244,56 @@ const MainApp = ({
     );
     
     // Fix 1: Removed p-4 from the outer wrapper
+// ─────────────────────────────────────────────────────────
+    // MEAL PLAN CONTENT — Option A: Sticky Top Tab Bar
+    // ─────────────────────────────────────────────────────────
+    // Old layout:  sidebar card (DaySidebar + Save/Load) | meal content
+    // New layout:  DayTabBar (full-width sticky strip)
+    //              meal content (full-width)
+    //
+    // Save/Load live inside the DayTabBar kebab menu.
+    // For single-day plans (tab bar hidden), compact buttons
+    // appear inline in the meal header area.
+    // ─────────────────────────────────────────────────────────
     const mealPlanContent = (
-        <div className="flex flex-col md:flex-row gap-6">
+        <div className="flex flex-col">
+            {/* ── Day Tab Bar (auto-hidden for single-day plans) ── */}
             {mealPlan && mealPlan.length > 0 && (
-                // This wrapper previously had p-5, now has selective padding wrappers inside
-                <div className="sticky top-4 z-20 self-start w-full md:w-auto mb-4 md:mb-0 bg-white/90 backdrop-blur-md rounded-2xl border border-gray-100/50 shadow-lg">
-                    
-                    {/* DaySidebar Section - Top padding only */}
-                    <div className="pt-5">
-                        <DaySidebar 
-                            days={Math.max(1, mealPlan.length)} 
-                            selectedDay={selectedDay} 
-                            onSelect={setSelectedDay} 
-                        />
-                    </div>
-                    
-                    {/* Buttons Section - Full padding (px-5 pb-5) */}
-                    <div className="px-5 pb-5">
-                        {/* Save Plan Button */}
-                        <div className="mt-4 pt-4 border-t border-gray-200">
-                            <button
-                                onClick={handleSavePlanClick}
-                                disabled={savingPlan || loading}
-                                className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-indigo-600 text-white"
-                            >
-                                <Save size={18} />
-                                <span>{savingPlan ? 'Saving...' : 'Save Plan'}</span>
-                            </button>
-                        </div>
-                        
-                        {/* Load Plans Button */}
-                        <div className="mt-2">
-                            <button
-                                onClick={handleOpenSavedPlans}
-                                disabled={loading}
-                                className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-gray-200 text-gray-800"
-                            >
-                                <FolderDown size={18} />
-                                <span>Load Plans</span>
-                            </button>
-                        </div>
-                    </div>
-                    
+                <DayTabBar
+                    totalDays={Math.max(1, mealPlan.length)}
+                    selectedDay={selectedDay}
+                    onSelectDay={setSelectedDay}
+                    onSavePlan={handleSavePlanClick}
+                    onLoadPlans={handleOpenSavedPlans}
+                    savingPlan={savingPlan}
+                    loading={loading}
+                />
+            )}
+
+            {/* ── Single-day inline action buttons (shown only when tab bar is hidden) ── */}
+            {mealPlan && mealPlan.length === 1 && (
+                <div className="flex items-center justify-end gap-2 px-4 pt-3">
+                    <button
+                        onClick={handleSavePlanClick}
+                        disabled={savingPlan || loading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-indigo-600 text-white"
+                    >
+                        <Save size={14} />
+                        <span>{savingPlan ? 'Saving…' : 'Save'}</span>
+                    </button>
+                    <button
+                        onClick={handleOpenSavedPlans}
+                        disabled={loading}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-gray-200 text-gray-800"
+                    >
+                        <FolderDown size={14} />
+                        <span>Load</span>
+                    </button>
                 </div>
             )}
-            
+
+            {/* ── Meal Content ── */}
             {mealPlan && mealPlan.length > 0 && selectedDay >= 1 && selectedDay <= mealPlan.length ? (
-                // --- MEAL PLAN DISPLAY CONTENT ---
-                // Fix 2: Wrapped MealPlanDisplay in p-4 div
                 <div className="p-4">
                     <MealPlanDisplay
                         key={selectedDay}
@@ -300,22 +302,22 @@ const MainApp = ({
                         nutritionalTargets={nutritionalTargets}
                         eatenMeals={eatenMeals}
                         onToggleMealEaten={onToggleMealEaten}
-                        onViewRecipe={setSelectedMeal} 
-                         showToast={showToast}
+                        onViewRecipe={setSelectedMeal}
+                        showToast={showToast}
                     />
                 </div>
             ) : (
                 <div className="flex-1 text-center p-8 text-gray-500">
                     {error && !loading ? (
-                         <div className="p-4 bg-red-50 text-red-800 rounded-lg">
-                             <AlertTriangle className="inline w-6 h-6 mr-2" />
-                             <strong>Error generating plan. Check logs for details.</strong>
-                             <pre className="mt-2 whitespace-pre-wrap text-sm">{error}</pre>
-                         </div>
+                        <div className="p-4 bg-red-50 text-red-800 rounded-lg">
+                            <AlertTriangle className="inline w-6 h-6 mr-2" />
+                            <strong>Error generating plan. Check logs for details.</strong>
+                            <pre className="mt-2 whitespace-pre-wrap text-sm">{error}</pre>
+                        </div>
                     ) : mealPlan?.length === 0 && !loading ? (
-                         'Generate a plan to see your meals.'
+                        'Generate a plan to see your meals.'
                     ) : (
-                         !loading && 'Select a valid day to view meals.'
+                        !loading && 'Select a valid day to view meals.'
                     )}
                 </div>
             )}
