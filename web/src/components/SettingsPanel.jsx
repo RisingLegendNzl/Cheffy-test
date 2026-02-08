@@ -14,7 +14,8 @@ import {
   EyeOff,
   Terminal,
   ListX,
-  Target
+  Target,
+  Cpu
 } from 'lucide-react';
 import { COLORS, Z_INDEX, SHADOWS } from '../constants';
 import { APP_CONFIG } from '../constants';
@@ -36,6 +37,9 @@ const SettingsPanel = ({
   // NEW: Macro Debug Log props with defensive defaults
   showMacroDebugLog = false,
   onToggleMacroDebugLog = () => {},
+  // AI Model selection
+  selectedModel = 'gpt-5.1',
+  onModelChange = () => {},
 }) => {
   const [selectedStore, setSelectedStore] = useState(currentStore);
 
@@ -45,6 +49,8 @@ const SettingsPanel = ({
     if (onStoreChange) {
       onStoreChange(selectedStore);
     }
+    // Model change is already live (onChange fires immediately),
+    // but we call onClose to dismiss the panel.
     onClose();
   };
 
@@ -140,6 +146,42 @@ const SettingsPanel = ({
                 <option value="metric">Metric (kg, g)</option>
                 <option value="imperial">Imperial (lb, oz)</option>
               </select>
+            </div>
+          </div>
+
+          {/* AI Model Section */}
+          <div>
+            <div className="flex items-center mb-4">
+              <Cpu size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
+              <h3 className="font-bold" style={{ color: COLORS.gray[900] }}>
+                AI Model
+              </h3>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-semibold mb-2" style={{ color: COLORS.gray[700] }}>
+                Generation Model
+              </label>
+              <select
+                value={selectedModel}
+                onChange={(e) => onModelChange(e.target.value)}
+                className="w-full p-3 border rounded-lg"
+                style={{
+                  borderColor: COLORS.gray[300],
+                  color: COLORS.gray[900],
+                }}
+              >
+                <option value="gpt-5.1">GPT-5.1 (Primary — Recommended)</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash (Faster)</option>
+              </select>
+            </div>
+
+            <div className="flex items-center p-3 rounded-lg" style={{ backgroundColor: COLORS.primary[50] }}>
+              <Info size={14} className="mr-2 flex-shrink-0" style={{ color: COLORS.primary[600] }} />
+              <p className="text-xs" style={{ color: COLORS.primary[700] }}>
+                <strong>Current:</strong> {selectedModel === 'gpt-5.1' ? 'GPT-5.1' : 'Gemini 2.0 Flash'}.
+                {' '}The selected model is used for meal plan generation. If it fails, the other model is used as a fallback automatically.
+              </p>
             </div>
           </div>
 
@@ -290,3 +332,4 @@ const SettingsPanel = ({
 };
 
 export default SettingsPanel;
+
