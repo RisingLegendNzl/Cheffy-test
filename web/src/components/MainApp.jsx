@@ -140,8 +140,10 @@ const MainApp = ({
     // Settings
     isSettingsOpen,
     setIsSettingsOpen,
-    useBatchedMode,
-    setUseBatchedMode,
+    
+    // AI Model
+    selectedModel,
+    setSelectedModel,
     
     // Toasts
     toasts,
@@ -412,20 +414,6 @@ const MainApp = ({
                                         <InputField label="Cuisine Profile (Optional)" name="cuisine" value={formData.cuisine} onChange={handleChange} placeholder="e.g., Spicy Thai" />
                                     </FormSection>
     
-                                    <div className="flex items-center justify-center mt-4 pt-4 border-t">
-                                        <input
-                                            type="checkbox"
-                                            id="batchModeToggle"
-                                            name="batchModeToggle"
-                                            checked={useBatchedMode}
-                                            onChange={(e) => setUseBatchedMode(e.target.checked)}
-                                            className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
-                                        />
-                                        <label htmlFor="batchModeToggle" className="ml-2 block text-sm text-gray-900" title="Use the new batched endpoint (v2) instead of the per-day loop (v1)">
-                                            Use Batched Generation (v2)
-                                        </label>
-                                    </div>
-    
                                     <button type="submit" disabled={loading || !isAuthReady || !firebaseConfig} className={`w-full flex items-center justify-center py-3 mt-6 text-lg font-bold rounded-xl shadow-lg ${loading || !isAuthReady || !firebaseConfig ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>
                                         {loading ? <><RefreshCw className="w-5 h-5 mr-3 animate-spin" /> Processing...</> : <><Zap className="w-5 h-5 mr-3" /> Generate Plan</>}
                                     </button>
@@ -547,6 +535,9 @@ const MainApp = ({
                 // CHANGE 3: Add new props
                 showMacroDebugLog={showMacroDebugLog}
                 onToggleMacroDebugLog={setShowMacroDebugLog}
+                // AI Model selection
+                selectedModel={selectedModel}
+                onModelChange={setSelectedModel}
                 settings={{
                     showOrchestratorLogs,
                     showFailedIngredientsLogs,
