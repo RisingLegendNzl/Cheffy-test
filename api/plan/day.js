@@ -29,9 +29,9 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 // Use TRANSFORM_VERSION imported from transforms.js
 const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v12.2-commonjs'; // Use updated version
 
-// --- Using gemini-2.5-flash as the primary model ---
-const PLAN_MODEL_NAME_PRIMARY = 'gemini-3-flash-preview';
-// --- Using gemini-2.5-pro as the fallback ---
+// --- Using gemini-2.0-flash as the primary model (Change 1.1) ---
+const PLAN_MODEL_NAME_PRIMARY = 'gemini-2.0-flash';
+// --- Using gemini-2.0-flash as the fallback (Change 1.1) ---
 const PLAN_MODEL_NAME_FALLBACK = 'gemini-2.0-flash'; // Fallback model
 
 // --- Create a function to get the URL ---
@@ -43,13 +43,27 @@ const kv = createClient({
     url: process.env.UPSTASH_REDIS_REST_URL,
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
-const kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+
+// --- [Change 6.2] Add startup health check ---
+let kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+(async () => {
+    if (kvReady) {
+        try {
+            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('KV Ping Timeout')), 3000));
+            await Promise.race([kv.ping(), timeout]);
+        } catch (e) {
+            console.warn(`KV Connection check failed: ${e.message}`);
+            kvReady = false;
+        }
+    }
+})();
+
 // [MODIFIED] Bump cache version to account for new transforms
 const CACHE_PREFIX = `cheffy:plan:v2:t:${TRANSFORM_CONFIG_VERSION}`;
 const TTL_PLAN_MS = 1000 * 60 * 60 * 24; // 24 hours
 
-const MAX_LLM_RETRIES = 3; // Retries specifically for the LLM call
-const LLM_REQUEST_TIMEOUT_MS = 90000; // 90 seconds
+const MAX_LLM_RETRIES = 2; // (Change 1.3) Retries specifically for the LLM call
+const LLM_REQUEST_TIMEOUT_MS = 30000; // (Change 1.2) 30 seconds
 
 // --- [PERF] Add new performance constants ---
 const REQUIRED_WORD_SCORE_THRESHOLD = 0.60;
@@ -272,7 +286,7 @@ async function concurrentlyMap(array, limit, asyncMapper) {
     return Promise.all(results).then(res => res.filter(r => r != null));
 }
 
-// --- fetchLLMWithRetry (Unchanged) ---
+// --- fetchLLMWithRetry (Modified V12.2) ---
 async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
     for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
         const controller = new AbortController();
@@ -304,7 +318,8 @@ async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
         }
 
         if (attempt < MAX_LLM_RETRIES) {
-            const delayTime = Math.pow(2, attempt -1) * 3000 + Math.random() * 1000;
+            // (Change 1.4) Reduce backoff
+            const delayTime = Math.pow(2, attempt -1) * 1000 + Math.random() * 500;
             log(`Waiting ${delayTime.toFixed(0)}ms before ${attemptPrefix} retry...`, 'DEBUG', 'HTTP');
             await delay(delayTime);
         }
@@ -689,7 +704,7 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
     }
 }
 
-// --- generateMealPlan (MODIFIED to call stateHint normalization) ---
+// --- generateMealPlan (MODIFIED to remove fallback chain and caching) ---
 async function generateMealPlan(day, formData, nutritionalTargets, log) {
     const { name, height, weight, age, gender, goal, dietary, store, eatingOccasions, costPriority, mealVariety, cuisine } = formData;
     const { calories, protein, fat, carbs } = nutritionalTargets;
@@ -701,11 +716,12 @@ async function generateMealPlan(day, formData, nutritionalTargets, log) {
         throw new Error("Invalid or missing 'nutritionalTargets' provided.");
     }
 
-    const profileHash = hashString(JSON.stringify({ formData, nutritionalTargets }));
-    const cacheKey = `${CACHE_PREFIX}:meals:day${day}:${profileHash}`;
-    const cached = await cacheGet(cacheKey, log);
-    if (cached) return cached;
-    log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
+    // (Change 1.9) Removed plan caching
+    // const profileHash = hashString(JSON.stringify({ formData, nutritionalTargets }));
+    // const cacheKey = `${CACHE_PREFIX}:meals:day${day}:${profileHash}`;
+    // const cached = await cacheGet(cacheKey, log);
+    // if (cached) return cached;
+    // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
 
     const mealTypesMap = {'3':['B','L','D'],'4':['B','L','D','S1'],'5':['B','L','D','S1','S2']};
     const requiredMeals = mealTypesMap[eatingOccasions]||mealTypesMap['3'];
@@ -735,15 +751,11 @@ async function generateMealPlan(day, formData, nutritionalTargets, log) {
     const expectedShape = { "meals": [] };
     let parsedResult;
     try {
+        // (Change 1.5) Remove fallback try-catch chain
         parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
-    } catch (primaryError) {
-        log(`${logPrefix}: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM');
-        try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Meal Plan generation failed for Day ${day}: Both AI models failed. Last error: ${fallbackError.message}`);
-        }
+    } catch (error) {
+        log(`${logPrefix}: Model ${PLAN_MODEL_NAME_PRIMARY} failed after retries: ${error.message}.`, 'CRITICAL', 'LLM');
+        throw new Error(`Meal Plan generation failed for Day ${day}: AI model failed after retries. Last error: ${error.message}`);
     }
     
     // --- [NEW] Post-LLM stateHint normalization (Task 2) ---
@@ -759,19 +771,21 @@ async function generateMealPlan(day, formData, nutritionalTargets, log) {
     }
     // --- [END NEW] ---
 
-    if (parsedResult && parsedResult.meals && parsedResult.meals.length > 0) {
-        await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
-    }
+    // (Change 1.9) Removed plan caching
+    // if (parsedResult && parsedResult.meals && parsedResult.meals.length > 0) {
+    //     await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
+    // }
     return parsedResult;
 }
 
-// --- generateGroceryQueries (Unchanged) ---
+// --- generateGroceryQueries (MODIFIED to remove fallback chain) ---
 async function generateGroceryQueries(uniqueIngredientKeys, store, log) {
     if (!uniqueIngredientKeys || uniqueIngredientKeys.length === 0) {
         log("generateGroceryQueries called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
     }
 
+    // (Change 1.11) Keep ingredient-level caching
     const keysHash = hashString(JSON.stringify(uniqueIngredientKeys));
     const cacheKey = `${CACHE_PREFIX}:queries:${store}:${keysHash}`;
     const cached = await cacheGet(cacheKey, log);
@@ -800,15 +814,11 @@ async function generateGroceryQueries(uniqueIngredientKeys, store, log) {
     const expectedShape = { "ingredients": [] };
     let parsedResult;
     try {
+        // (Change 1.6) Remove fallback try-catch chain
         parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
-    } catch (primaryError) {
-        log(`${logPrefix}: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM');
-        try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Grocery Query generation failed: Both AI models failed. Last error: ${fallbackError.message}`);
-        }
+    } catch (error) {
+        log(`${logPrefix}: Model ${PLAN_MODEL_NAME_PRIMARY} failed after retries: ${error.message}.`, 'CRITICAL', 'LLM');
+        throw new Error(`Grocery Query generation failed: AI model failed after retries. Last error: ${error.message}`);
     }
     if (parsedResult && parsedResult.ingredients && parsedResult.ingredients.length > 0) {
         await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
@@ -879,15 +889,16 @@ async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
     }
 }
 
-// --- generateChefInstructions (Unchanged) ---
+// --- generateChefInstructions (MODIFIED to remove fallback chain and caching) ---
 async function generateChefInstructions(meal, store, log) {
     const mealName = meal.name || 'Unnamed Meal';
     try {
-        const mealHash = hashString(JSON.stringify(meal.items || []));
-        const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
-        const cached = await cacheGet(cacheKey, log);
-        if (cached) return cached;
-        log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
+        // (Change 1.10) Removed chef caching
+        // const mealHash = hashString(JSON.stringify(meal.items || []));
+        // const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
+        // const cached = await cacheGet(cacheKey, log);
+        // if (cached) return cached;
+        // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
 
         const systemPrompt = CHEF_SYSTEM_PROMPT(store);
         const ingredientList = meal.items.map(item => `- ${item.qty_value}${item.qty_unit} ${item.key}`).join('\n');
@@ -907,20 +918,13 @@ async function generateChefInstructions(meal, store, log) {
         };
 
         let recipeResult;
-        try {
-            recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_PRIMARY, payload, mealName, log);
-        } catch (primaryError) {
-            log(`Chef AI [${mealName}]: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM_CHEF');
-            try {
-                recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_FALLBACK, payload, mealName, log);
-            } catch (fallbackError) {
-                log(`Chef AI [${mealName}]: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM_CHEF');
-                throw new Error(`Recipe generation failed for [${mealName}]: Both AI models failed. Last error: ${fallbackError.message}`);
-            }
-        }
-        if (recipeResult && recipeResult.description) {
-            await cacheSet(cacheKey, recipeResult, TTL_PLAN_MS, log);
-        }
+        // (Change 1.7 & 1.8) Remove fallback try-catch chain
+        recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_PRIMARY, payload, mealName, log);
+        
+        // (Change 1.10) Removed chef caching
+        // if (recipeResult && recipeResult.description) {
+        //     await cacheSet(cacheKey, recipeResult, TTL_PLAN_MS, log);
+        // }
         return recipeResult;
     } catch (error) {
         log(`CRITICAL Error in generateChefInstructions for [${mealName}]: ${error.message}`, 'CRITICAL', 'LLM_CHEF');
