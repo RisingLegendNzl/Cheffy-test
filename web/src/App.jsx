@@ -283,8 +283,9 @@ const App = () => {
                     // Settings
                     isSettingsOpen={isSettingsOpen}
                     setIsSettingsOpen={setIsSettingsOpen}
-                    useBatchedMode={logic.useBatchedMode}
-                    setUseBatchedMode={logic.setUseBatchedMode}
+                    // AI Model
+                    selectedModel={logic.selectedModel}
+                    setSelectedModel={logic.setSelectedModel}
                     
                     // Toasts
                     toasts={logic.toasts}
