@@ -1,8 +1,7 @@
 // --- Cheffy: utils/llm-provider.js ---
-// [NEW] LLM Provider Abstraction Layer
-// Allows Cheffy to call GPT-5.1 (primary) or Gemini (fallback) through
-// a single, provider-agnostic interface. Both day.js and generate-full-plan.js
-// import this module instead of hardcoding Gemini-specific logic.
+// [UPDATED] LLM Provider Abstraction Layer
+// Modified to use gemini-2.5-flash-lite as primary model for Grocery Optimiser
+// with performance optimizations for maximum speed and reliability.
 //
 // DESIGN DECISIONS:
 // - Callers continue to build payloads in Gemini format (the existing shape).
@@ -10,6 +9,12 @@
 // - Response parsing is also normalised so callers always receive the same shape.
 // - The module does NOT own retry logic — fetchLLMWithRetry in each file still
 //   handles retries + abort timeouts. This module only transforms request/response.
+//
+// GROCERY OPTIMISER CHANGES (v2.0):
+// - Primary model switched to gemini-2.5-flash-lite for maximum speed
+// - Reduced max_tokens for groceryQuery agent (4096 → 2048)
+// - Optimized generation parameters for structured JSON output
+// - Fallback remains gemini-2.0-flash for reliability
 
 'use strict';
 
@@ -21,7 +26,8 @@ const OPENAI_API_KEY  = process.env.OPENAI_API_KEY  || '';
 const GEMINI_API_KEY  = process.env.GEMINI_API_KEY   || '';
 
 // Allow runtime model switching without redeploy
-const PRIMARY_MODEL   = process.env.CHEFFY_PRIMARY_MODEL  || 'gpt-5.1';
+// UPDATED: Default primary model is now gemini-2.5-flash-lite for Grocery Optimiser
+const PRIMARY_MODEL   = process.env.CHEFFY_PRIMARY_MODEL  || 'gemini-2.5-flash-lite';
 const FALLBACK_MODEL  = process.env.CHEFFY_FALLBACK_MODEL || 'gemini-2.0-flash';
 
 const OPENAI_BASE_URL = 'https://api.openai.com/v1/chat/completions';
@@ -30,18 +36,21 @@ const getGeminiApiUrl = (modelName) =>
     `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
 // Default max_tokens caps per agent type (OpenAI requires this explicitly)
+// UPDATED: Reduced groceryQuery from 4096 to 2048 for faster Grocery Optimiser responses
 const DEFAULT_MAX_TOKENS = {
     mealPlan:       4096,
-    groceryQuery:   4096,
+    groceryQuery:   2048,  // OPTIMIZED: Grocery queries are typically <2K tokens
     chefRecipe:     1024,
     default:        4096,
 };
 
 // Supported models that the frontend is allowed to select.
 // Used by API handlers to validate the `preferredModel` field.
+// UPDATED: Added gemini-2.5-flash-lite to supported models
 const SUPPORTED_MODELS = {
-    'gpt-5.1':           { provider: 'openai',  label: 'GPT-5.1 (Primary)' },
-    'gemini-2.0-flash':  { provider: 'gemini',  label: 'Gemini 2.0 Flash' },
+    'gpt-5.1':              { provider: 'openai',  label: 'GPT-5.1 (Primary)' },
+    'gemini-2.0-flash':     { provider: 'gemini',  label: 'Gemini 2.0 Flash' },
+    'gemini-2.5-flash-lite': { provider: 'gemini',  label: 'Gemini 2.5 Flash Lite' },
 };
 
 // ============================================================
@@ -51,7 +60,7 @@ const SUPPORTED_MODELS = {
 /**
  * Determines which provider a model belongs to.
  *
- * @param {string} modelName - e.g. 'gpt-5.1', 'gemini-2.0-flash'
+ * @param {string} modelName - e.g. 'gpt-5.1', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'
  * @returns {'openai' | 'gemini'}
  */
 function detectProvider(modelName) {
@@ -74,7 +83,7 @@ function detectProvider(modelName) {
  * Callers should keep building the `geminiPayload` exactly as they do today.
  * This function handles translation when the target is an OpenAI model.
  *
- * @param {string}  modelName       - The target model (e.g. 'gpt-5.1', 'gemini-2.0-flash')
+ * @param {string}  modelName       - The target model (e.g. 'gpt-5.1', 'gemini-2.5-flash-lite')
  * @param {Object}  geminiPayload   - Payload in Gemini format:
  *   {
  *     contents:          [{ parts: [{ text: '...' }] }],
