@@ -28,11 +28,15 @@ try {
     var { normalizeKey } = require('../scripts/normalize.js');
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
+    // Change 2.1: Import LLM provider (Primary path)
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL } = require('../utils/llm-provider.js');
 } catch (e) {
     console.error("CRITICAL: Failed to import utils. Using local fallbacks.", e.message);
     var { normalizeKey } = require('../../scripts/normalize.js');
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
+    // Change 2.1: Import LLM provider (Fallback path)
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL } = require('../../utils/llm-provider.js');
 }
 
 // --- [NEW] Import validation helper (Task 1) ---
@@ -48,12 +52,9 @@ const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v13.3-hybrid';
 const USE_SOLVER_V1 = process.env.CHEFFY_USE_SOLVER === '1'; // Default to false (use legacy reconcile)
 const ALLOW_PROTEIN_SCALING = process.env.CHEFFY_SCALE_PROTEIN === '1'; // D3: New feature flag for protein scaling
 
-// Change 2.1: Single stable model
-const PLAN_MODEL_NAME_PRIMARY = 'gemini-2.0-flash';
-const PLAN_MODEL_NAME_FALLBACK = 'gemini-2.0-flash';
-
-const getGeminiApiUrl = (modelName) => `https://generativelanguage
-.googleapis.com/v1beta/models/${modelName}:generateContent`;
+// Change 2.2: GPT-5.1 as primary, Gemini as fallback (from llm-provider.js)
+const PLAN_MODEL_NAME_PRIMARY = PRIMARY_MODEL;
+const PLAN_MODEL_NAME_FALLBACK = FALLBACK_MODEL;
 
 // --- Vercel KV Client ---
 const kv = createClient({
@@ -80,7 +81,7 @@ const TTL_PLAN_MS = 1000 * 60 * 60 * 24; // 24 hours
 
 // --- Performance & API Constants ---
 const MAX_LLM_RETRIES = 2; // Change 2.3
-const LLM_REQUEST_TIMEOUT_MS = 30000; // Change 2.2
+const LLM_REQUEST_TIMEOUT_MS = 45000; // Change 2.3: Increased for GPT-5.1 JSON mode latency
 const REQUIRED_WORD_SCORE_THRESHOLD = 0.60;
 const SKIP_STRONG_MATCH_THRESHOLD = 0.80;
 const MARKET_RUN_CONCURRENCY = 6;
@@ -758,51 +759,36 @@ JSON Structure:
 
 /**
  * Tries to generate a plan from an LLM, retrying on failure.
- * Includes a guard against non-JSON responses.
+ * Change 2.4: Rewrite to use provider helpers
  */
 async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJsonShape) {
-    log(`${logPrefix}: Attempting model: ${modelName}`, 'INFO', 'LLM');
-    const apiUrl = getGeminiApiUrl(modelName);
+    log(`${logPrefix}: Attempting model: ${modelName} (${detectProvider(modelName)})`, 'INFO', 'LLM');
 
-    const response = await fetchLLMWithRetry(apiUrl, {
+    const req = buildLLMRequest(modelName, payload, { agentType: logPrefix.includes('Grocery') ? 'groceryQuery' : 'mealPlan' });
+
+    const response = await fetchLLMWithRetry(req.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-        body: JSON.stringify(payload)
-    }, log, logPrefix); // FIX: Passed logPrefix instead of undefined attemptPrefix
+        headers: req.headers,
+        body: req.body,
+    }, log, logPrefix);
 
-    const result = await response.json(); // Safe to call .json() because of the guard in fetchLLMWithRetry
-    const candidate = result.candidates?.[0];
-    const finishReason = candidate?.finishReason;
+    const result = await response.json();
+    const { text: jsonText, finishReason } = parseLLMResponse(modelName, result);
 
-    // These checks are now for *after* a successful, JSON-parsed response
     if (finishReason === 'MAX_TOKENS') {
-        log(`${logPrefix}: Model ${modelName} failed with finishReason: MAX_TOKENS.`, 'WARN', 'LLM'); // FIX: Used logPrefix
+        log(`${logPrefix}: Model ${modelName} failed with finishReason: MAX_TOKENS.`, 'WARN', 'LLM');
         throw new Error(`Model ${modelName} failed: MAX_TOKENS.`);
     }
     if (finishReason !== 'STOP') {
-         log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result }); // FIX: Used logPrefix
-         throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
+        log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result });
+        throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
     }
 
-    const content = candidate?.content;
-    if (!content || !content.parts || content.parts.length === 0 || !content.parts[0].text) {
-        log(`${logPrefix}: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM', { result }); // FIX: Used logPrefix
-        throw new Error(`Model ${modelName} failed: Response missing content.`);
-    }
-
-    // At this point, content.parts[0].text *is* the JSON string (already parsed once in fetchLLMWithRetry)
-    const jsonText = content.parts[0].text;
-    log(`${logPrefix} Raw JSON Text`, 'DEBUG', 'LLM', { raw: jsonText.substring(0, 300) + '...' }); // FIX: Used logPrefix
+    log(`${logPrefix} Raw JSON Text`, 'DEBUG', 'LLM', { raw: jsonText.substring(0, 300) + '...' });
 
     try {
-        // Re-parse (this is cheap) to validate shape
         const parsed = JSON.parse(jsonText.trim());
-        
-        if (!parsed || typeof parsed !== 'object') {
-            throw new Error("Parsed response is not a valid object.");
-        }
-        
-        // Check if the parsed object matches the expected structure
+        if (!parsed || typeof parsed !== 'object') throw new Error("Parsed response is not a valid object.");
         for (const key in expectedJsonShape) {
             if (!parsed.hasOwnProperty(key)) {
                 throw new Error(`Parsed JSON missing required top-level key: '${key}'.`);
@@ -811,12 +797,10 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
                 throw new Error(`Parsed JSON key '${key}' was not an array.`);
             }
         }
-        
-        log(`${logPrefix}: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM'); // FIX: Used logPrefix
-        return parsed; // Return the parsed object
-
+        log(`${logPrefix}: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM');
+        return parsed;
     } catch (parseError) {
-        log(`Failed to parse/validate ${logPrefix} JSON from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM', { jsonText: jsonText.substring(0, 300) }); // FIX: Used logPrefix
+        log(`Failed to parse/validate ${logPrefix} JSON from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM', { jsonText: jsonText.substring(0, 300) });
         throw new Error(`Model ${modelName} failed: Invalid JSON response. ${parseError.message}`);
     }
 }
@@ -868,14 +852,18 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
     };
     const expectedShape = { "meals": [] };
     
-    // 3. Execute LLM Call
+    // 3. Execute LLM Call (Change 2.6: Added Fallback)
     let parsedResult;
     try {
-        // Change 2.6: Removed fallback chain
         parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
-    } catch (error) {
-        log(`${logPrefix}: Model ${PLAN_MODEL_NAME_PRIMARY} failed after retries: ${error.message}.`, 'CRITICAL', 'LLM');
-        throw new Error(`Meal Plan generation failed for Day ${day}: AI model failed after retries. Last error: ${error.message}`);
+    } catch (primaryError) {
+        log(`${logPrefix}: Primary model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Falling back to ${PLAN_MODEL_NAME_FALLBACK}.`, 'WARN', 'LLM_FALLBACK');
+        try {
+            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
+        } catch (fallbackError) {
+            log(`${logPrefix}: Fallback model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+            throw new Error(`Meal Plan generation failed for Day ${day}: All models failed. Last error: ${fallbackError.message}`);
+        }
     }
     
     // Change 2.11: Removed plan caching
@@ -931,14 +919,18 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log)
     };
     const expectedShape = { "ingredients": [] };
 
-    // 3. Execute LLM Call
+    // 3. Execute LLM Call (Change 2.7: Added Fallback)
     let parsedResult;
     try {
-        // Change 2.7: Removed fallback chain
         parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
-    } catch (error) {
-        log(`${logPrefix}: Model ${PLAN_MODEL_NAME_PRIMARY} failed after retries: ${error.message}.`, 'CRITICAL', 'LLM');
-        throw new Error(`Grocery Query generation failed: AI model failed after retries. Last error: ${error.message}`);
+    } catch (primaryError) {
+        log(`${logPrefix}: Primary model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Falling back to ${PLAN_MODEL_NAME_FALLBACK}.`, 'WARN', 'LLM_FALLBACK');
+        try {
+            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
+        } catch (fallbackError) {
+            log(`${logPrefix}: Fallback model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+            throw new Error(`Grocery Query generation failed: All models failed. Last error: ${fallbackError.message}`);
+        }
     }
     
     // 4. Post-process and Cache
@@ -965,45 +957,34 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log)
 
 /**
  * Tries to generate a recipe from an LLM, retrying on failure.
- * Includes a guard against non-JSON responses.
+ * Change 2.5: Rewrite to use provider helpers
  */
 async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
-    log(`Chef AI [${mealName}]: Attempting model: ${modelName}`, 'INFO', 'LLM_CHEF');
-    const apiUrl = getGeminiApiUrl(modelName);
+    log(`Chef AI [${mealName}]: Attempting model: ${modelName} (${detectProvider(modelName)})`, 'INFO', 'LLM_CHEF');
 
-    const response = await fetchLLMWithRetry(apiUrl, {
+    const req = buildLLMRequest(modelName, payload, { agentType: 'chefRecipe' });
+
+    const response = await fetchLLMWithRetry(req.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-        body: JSON.stringify(payload)
+        headers: req.headers,
+        body: req.body,
     }, log, `Chef-${mealName}`);
 
-    const result = await response.json(); // Safe due to guard
-    const candidate = result.candidates?.[0];
-    const finishReason = candidate?.finishReason;
+    const result = await response.json();
+    const { text: jsonText, finishReason } = parseLLMResponse(modelName, result);
 
     if (finishReason !== 'STOP') {
         log(`Chef AI [${mealName}]: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM_CHEF', { result });
         throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
     }
 
-    const content = candidate?.content;
-    if (!content || !content.parts || !content.parts.length === 0 || !content.parts[0].text) {
-        log(`Chef AI [${mealName}]: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM_CHEF', { result });
-        throw new Error(`Model ${modelName} failed: Response missing content.`);
-    }
-
-    const jsonText = content.parts[0].text;
     try {
-        // [FIX] Add JSON guard
         const trimmedText = jsonText.trim();
         if (!trimmedText.startsWith('{') || !trimmedText.endsWith('}')) {
-             throw new Error(`Response text was not a JSON object. (Likely a safety refusal)`);
+            throw new Error(`Response text was not a JSON object. (Likely a safety refusal)`);
         }
-        
-        const parsed = JSON.parse(trimmedText); 
-        if (!parsed || typeof parsed.description !== 'string' || !Array.isArray(parsed.instructions) || parsed.instructions.length === 0) {
-             throw new Error("Invalid JSON structure: 'description' (string) or 'instructions' (array) missing/empty.");
-        }
+        const parsed = JSON.parse(trimmedText);
+        validateChefRecipeShape(parsed);
         log(`Chef AI [${mealName}]: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM_CHEF');
         return parsed;
     } catch (parseError) {
@@ -1040,14 +1021,18 @@ async function generateChefInstructions(meal, store, log) {
             }
         };
 
-        // 3. Execute LLM Call
+        // 3. Execute LLM Call (Change 2.8: Added Fallback)
         let recipeResult;
         try {
-            // Change 2.8: Removed fallback chain
             recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_PRIMARY, payload, mealName, log);
-        } catch (error) {
-            log(`Chef AI [${mealName}]: Model ${PLAN_MODEL_NAME_PRIMARY} failed after retries: ${error.message}.`, 'CRITICAL', 'LLM_CHEF');
-            recipeResult = MOCK_RECIPE_FALLBACK;
+        } catch (primaryError) {
+            log(`Chef AI [${mealName}]: Primary model failed: ${primaryError.message}. Falling back to ${PLAN_MODEL_NAME_FALLBACK}.`, 'WARN', 'LLM_FALLBACK');
+            try {
+                recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_FALLBACK, payload, mealName, log);
+            } catch (fallbackError) {
+                log(`Chef AI [${mealName}]: Fallback model also failed: ${fallbackError.message}. Using mock recipe.`, 'CRITICAL', 'LLM_CHEF');
+                recipeResult = MOCK_RECIPE_FALLBACK;
+            }
         }
         
         // Change 2.12: Removed chef caching
@@ -1921,7 +1906,8 @@ module.exports = async (request, response) => {
         
         const allMeals = finalMealPlan.flatMap(day => day.meals);
         // Run recipe generation in parallel for all meals across all days
-        const recipeResults = await concurrentlyMap(allMeals, 6, (meal) => generateChefInstructions(meal, store, log));
+        // Change 2.9: Concurrency 6 -> 4
+        const recipeResults = await concurrentlyMap(allMeals, 4, (meal) => generateChefInstructions(meal, store, log));
         
         // Create a map to re-assemble the plan
         const recipeMap = new Map();
