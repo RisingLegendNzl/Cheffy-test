@@ -7,7 +7,7 @@ import MacroRing from './MacroRing';
 import MacroBar from './MacroBar';
 import InputField from './InputField';
 import DaySlider from './DaySlider';
-import DayTabBar from './DayTabBar';          // ← NEW: replaces DaySidebar
+import DaySidebar from './DaySidebar';
 import ProductCard from './ProductCard';
 import CollapsibleSection from './CollapsibleSection';
 import SubstituteMenu from './SubstituteMenu';
@@ -19,7 +19,7 @@ import MealPlanDisplay from './MealPlanDisplay';
 import LogEntry from './LogEntry';
 import DiagnosticLogViewer from './DiagnosticLogViewer';
 import FailedIngredientLogViewer from './FailedIngredientLogViewer';
-import MacroDebugLogViewer from './MacroDebugLogViewer';
+import MacroDebugLogViewer from './MacroDebugLogViewer'; // CHANGE 1
 import RecipeModal from './RecipeModal';
 import EmojiIcon from './EmojiIcon';
 import ProfileTab from './ProfileTab';
@@ -59,7 +59,8 @@ const categoryIconMap = {
     'condiments': <EmojiIcon code="1f9c2" alt="condiments" />,
     'bakery': <EmojiIcon code="1f370" alt="bakery" />,
     'frozen': <EmojiIcon code="2744" alt="frozen" />,
-    'snacks': <EmojiIcon code="1f36b" alt="snacks" />,
+    'snacks': <EmojiIcon code="1f36b" alt="snacks" />, 
+    'misc': <EmojiIcon code="1f36b" alt="snacks" />,
     'uncategorized': <EmojiIcon code="1f6cd" alt="shopping" />,
     'default': <EmojiIcon code="1f6cd" alt="shopping" />
 };
@@ -116,7 +117,7 @@ const MainApp = ({
     setIsLogOpen,
     latestLog,
     
-    // Macro Debug
+    // CHANGE 2: Add new props to the MainApp component signature
     macroDebug = {},
     showMacroDebugLog = false,
     setShowMacroDebugLog = () => {},
@@ -164,7 +165,7 @@ const MainApp = ({
     handleSignOut,
     showToast,
     
-    // Plan Persistence
+    // Plan Persistence - NEW
     savedPlans,
     activePlanId,
     handleSavePlan,
@@ -180,9 +181,11 @@ const MainApp = ({
     
     // Create a wrapped handler that closes meal when changing tabs
     const handleTabChange = (newTab) => {
+        // Close meal detail if open
         if (selectedMeal) {
             setSelectedMeal(null);
         }
+        // Change the tab
         setContentView(newTab);
     };
     
@@ -199,10 +202,12 @@ const MainApp = ({
         </div>
     );
 
+    // Handler for opening saved plans modal
     const handleOpenSavedPlans = () => {
         setShowSavedPlansModal(true);
     };
 
+    // Handler for save plan button click
     const handleSavePlanClick = () => {
         if (!mealPlan || mealPlan.length === 0) {
             showToast('No meal plan to save', 'warning');
@@ -211,6 +216,7 @@ const MainApp = ({
         setShowSavePlanPrompt(true);
     };
 
+    // Handler for confirming save with name
     const handleConfirmSave = async () => {
         const name = savePlanName.trim() || `Plan ${new Date().toLocaleDateString()}`;
         await handleSavePlan(name);
@@ -218,7 +224,7 @@ const MainApp = ({
         setSavePlanName('');
     };
 
-    // --- Shopping List Content ---
+    // --- Shopping List Content Definition ---
     const shoppingListContent = (
         <div className="p-4">
             <ShoppingListWithDetails
@@ -237,56 +243,55 @@ const MainApp = ({
         </div>
     );
     
-    // ─────────────────────────────────────────────────────────
-    // MEAL PLAN CONTENT — Option A: Sticky Top Tab Bar
-    // ─────────────────────────────────────────────────────────
-    // Old layout:  sidebar card (DaySidebar + Save/Load) | meal content
-    // New layout:  DayTabBar (full-width sticky strip)
-    //              meal content (full-width)
-    //
-    // Save/Load live inside the DayTabBar kebab menu.
-    // For single-day plans (tab bar hidden), compact buttons
-    // appear inline in the meal header area.
-    // ─────────────────────────────────────────────────────────
+    // Fix 1: Removed p-4 from the outer wrapper
     const mealPlanContent = (
-        <div className="flex flex-col">
-            {/* ── Day Tab Bar (auto-hidden for single-day plans) ── */}
+        <div className="flex flex-col md:flex-row gap-6">
             {mealPlan && mealPlan.length > 0 && (
-                <DayTabBar
-                    totalDays={Math.max(1, mealPlan.length)}
-                    selectedDay={selectedDay}
-                    onSelectDay={setSelectedDay}
-                    onSavePlan={handleSavePlanClick}
-                    onLoadPlans={handleOpenSavedPlans}
-                    savingPlan={savingPlan}
-                    loading={loading}
-                />
-            )}
-
-            {/* ── Single-day inline action buttons (tab bar is hidden) ── */}
-            {mealPlan && mealPlan.length === 1 && (
-                <div className="flex items-center justify-end gap-2 px-4 pt-3">
-                    <button
-                        onClick={handleSavePlanClick}
-                        disabled={savingPlan || loading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-indigo-600 text-white"
-                    >
-                        <Save size={14} />
-                        <span>{savingPlan ? 'Saving…' : 'Save'}</span>
-                    </button>
-                    <button
-                        onClick={handleOpenSavedPlans}
-                        disabled={loading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-gray-200 text-gray-800"
-                    >
-                        <FolderDown size={14} />
-                        <span>Load</span>
-                    </button>
+                // This wrapper previously had p-5, now has selective padding wrappers inside
+                <div className="sticky top-4 z-20 self-start w-full md:w-auto mb-4 md:mb-0 bg-white/90 backdrop-blur-md rounded-2xl border border-gray-100/50 shadow-lg">
+                    
+                    {/* DaySidebar Section - Top padding only */}
+                    <div className="pt-5">
+                        <DaySidebar 
+                            days={Math.max(1, mealPlan.length)} 
+                            selectedDay={selectedDay} 
+                            onSelect={setSelectedDay} 
+                        />
+                    </div>
+                    
+                    {/* Buttons Section - Full padding (px-5 pb-5) */}
+                    <div className="px-5 pb-5">
+                        {/* Save Plan Button */}
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                            <button
+                                onClick={handleSavePlanClick}
+                                disabled={savingPlan || loading}
+                                className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-indigo-600 text-white"
+                            >
+                                <Save size={18} />
+                                <span>{savingPlan ? 'Saving...' : 'Save Plan'}</span>
+                            </button>
+                        </div>
+                        
+                        {/* Load Plans Button */}
+                        <div className="mt-2">
+                            <button
+                                onClick={handleOpenSavedPlans}
+                                disabled={loading}
+                                className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-gray-200 text-gray-800"
+                            >
+                                <FolderDown size={18} />
+                                <span>Load Plans</span>
+                            </button>
+                        </div>
+                    </div>
+                    
                 </div>
             )}
-
-            {/* ── Meal Content ── */}
+            
             {mealPlan && mealPlan.length > 0 && selectedDay >= 1 && selectedDay <= mealPlan.length ? (
+                // --- MEAL PLAN DISPLAY CONTENT ---
+                // Fix 2: Wrapped MealPlanDisplay in p-4 div
                 <div className="p-4">
                     <MealPlanDisplay
                         key={selectedDay}
@@ -295,22 +300,22 @@ const MainApp = ({
                         nutritionalTargets={nutritionalTargets}
                         eatenMeals={eatenMeals}
                         onToggleMealEaten={onToggleMealEaten}
-                        onViewRecipe={setSelectedMeal}
-                        showToast={showToast}
+                        onViewRecipe={setSelectedMeal} 
+                         showToast={showToast}
                     />
                 </div>
             ) : (
                 <div className="flex-1 text-center p-8 text-gray-500">
                     {error && !loading ? (
-                        <div className="p-4 bg-red-50 text-red-800 rounded-lg">
-                            <AlertTriangle className="inline w-6 h-6 mr-2" />
-                            <strong>Error generating plan. Check logs for details.</strong>
-                            <pre className="mt-2 whitespace-pre-wrap text-sm">{error}</pre>
-                        </div>
+                         <div className="p-4 bg-red-50 text-red-800 rounded-lg">
+                             <AlertTriangle className="inline w-6 h-6 mr-2" />
+                             <strong>Error generating plan. Check logs for details.</strong>
+                             <pre className="mt-2 whitespace-pre-wrap text-sm">{error}</pre>
+                         </div>
                     ) : mealPlan?.length === 0 && !loading ? (
-                        'Generate a plan to see your meals.'
+                         'Generate a plan to see your meals.'
                     ) : (
-                        !loading && 'Select a valid day to view meals.'
+                         !loading && 'Select a valid day to view meals.'
                     )}
                 </div>
             )}
@@ -325,7 +330,7 @@ const MainApp = ({
                 userId={userId}
                 onOpenSettings={() => setIsSettingsOpen(true)}
                 onNavigateToProfile={() => {
-                    handleTabChange('profile');
+                    handleTabChange('profile'); // Updated to use handleTabChange
                     setIsMenuOpen(true);
                 }}
                 onSignOut={handleSignOut}
@@ -343,31 +348,68 @@ const MainApp = ({
                     <div className="max-w-7xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden">
                         <div className="flex flex-col md:flex-row">
                             {/* --- SETUP FORM (LEFT COLUMN) --- */}
-                            <div className={`p-6 md:p-8 w-full md:w-1/2 border-b md:border-r ${isMenuOpen ? 'hidden md:block' : 'block'}`}>
-                                <form onSubmit={handleGeneratePlan} className="space-y-2">
-                                    <FormSection title="Personal Details" defaultOpen={true}>
-                                        <InputField label="Name" name="name" value={formData.name} onChange={handleChange} placeholder="e.g., John" />
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <InputField label="Height (cm)" name="height" type="number" value={formData.height} onChange={handleChange} />
-                                            <InputField label="Weight (kg)" name="weight" type="number" value={formData.weight} onChange={handleChange} />
+                            <div className={`p-6 md:p-8 w-full md:w-1/2 border-b md:border-r ${isMenuOpen ? 'block' : 'hidden md:block'}`}>
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-2xl font-bold text-indigo-700">Plan Setup</h2>
+                                    <div className="flex space-x-2">
+                                        <button
+                                            onClick={() => handleLoadProfile(false)} 
+                                            disabled={!isAuthReady || !userId || userId.startsWith('local_')} 
+                                            className="flex items-center px-3 py-1.5 bg-blue-500 text-white text-xs font-semibold rounded-lg shadow hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Load Saved Profile"
+                                        >
+                                            <FolderDown size={14} className="mr-1" /> Load
+                                        </button>
+                                         <button
+                                            onClick={() => handleSaveProfile(false)}
+                                            disabled={!isAuthReady || !userId || userId.startsWith('local_')} 
+                                            className="flex items-center px-3 py-1.5 bg-green-500 text-white text-xs font-semibold rounded-lg shadow hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Save Current Profile"
+                                        >
+                                            <Save size={14} className="mr-1" /> Save
+                                        </button>
+                                        <button className="md:hidden p-1.5" onClick={() => setIsMenuOpen(false)}><X /></button>
+                                    </div>
+                                </div>
+                                
+                                <form onSubmit={handleGeneratePlan}>
+                                    <FormSection 
+                                        title="Personal Information" 
+                                        icon={User}
+                                        description="Tell us about yourself"
+                                    >
+                                        <InputField label="Name" name="name" value={formData.name} onChange={handleChange} />
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            <InputField label="Height (cm)" name="height" type="number" value={formData.height} onChange={handleChange} required />
+                                            <InputField label="Weight (kg)" name="weight" type="number" value={formData.weight} onChange={handleChange} required />
                                         </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <InputField label="Age" name="age" type="number" value={formData.age} onChange={handleChange} />
-                                            <InputField label="Gender" name="gender" type="select" value={formData.gender} onChange={handleChange} options={[ { value: 'male', label: 'Male' }, { value: 'female', label: 'Female' } ]} />
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            <InputField label="Age" name="age" type="number" value={formData.age} onChange={handleChange} required />
+                                            <InputField label="Body Fat % (Optional)" name="bodyFat" type="number" value={formData.bodyFat} onChange={handleChange} placeholder="e.g., 15" />
                                         </div>
-                                        <InputField label="Body Fat % (Optional)" name="bodyFat" type="number" value={formData.bodyFat} onChange={handleChange} placeholder="e.g., 20" />
+                                        <InputField label="Gender" name="gender" type="select" value={formData.gender} onChange={handleChange} options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }]} required />
                                     </FormSection>
     
-                                    <FormSection title="Activity & Goals" defaultOpen={true}>
-                                        <InputField label="Activity Level" name="activityLevel" type="select" value={formData.activityLevel} onChange={handleChange} options={[ { value: 'sedentary', label: 'Sedentary' }, { value: 'light', label: 'Lightly Active' }, { value: 'moderate', label: 'Moderately Active' }, { value: 'active', label: 'Very Active' }, { value: 'veryActive', label: 'Extremely Active' } ]} />
-                                        <InputField label="Goal" name="goal" type="select" value={formData.goal} onChange={handleChange} options={[ { value: 'maintain', label: 'Maintain Weight' }, { value: 'cut_moderate', label: 'Moderate Cut (-15%)' }, { value: 'cut_aggressive', label: 'Aggressive Cut (-25%)' }, { value: 'bulk_lean', label: 'Lean Bulk (+15%)' }, { value: 'bulk_aggressive', label: 'Aggressive Bulk (+25%)' } ]} />
-                                        <InputField label="Dietary Preference" name="dietary" type="select" value={formData.dietary} onChange={handleChange} options={[ { value: 'None', label: 'No Preference' }, { value: 'Vegetarian', label: 'Vegetarian' }, { value: 'Vegan', label: 'Vegan' }, { value: 'Pescatarian', label: 'Pescatarian' }, { value: 'Keto', label: 'Keto' }, { value: 'Paleo', label: 'Paleo' }, { value: 'Mediterranean', label: 'Mediterranean' }, { value: 'Halal', label: 'Halal' } ]} />
+                                    <FormSection 
+                                        title="Fitness Goals" 
+                                        icon={Target}
+                                        description="What are you trying to achieve?"
+                                    >
+                                        <InputField label="Activity Level" name="activityLevel" type="select" value={formData.activityLevel} onChange={handleChange} options={[ { value: 'sedentary', label: 'Sedentary' }, { value: 'light', label: 'Light Activity' }, { value: 'moderate', label: 'Moderate Activity' }, { value: 'active', label: 'Active' }, { value: 'veryActive', label: 'Very Active' } ]} required />
+                                        <InputField label="Fitness Goal" name="goal" type="select" value={formData.goal} onChange={handleChange} options={[ { value: 'maintain', label: 'Maintain' }, { value: 'cut_moderate', label: 'Moderate Cut (~15% Deficit)' }, { value: 'cut_aggressive', label: 'Aggressive Cut (~25% Deficit)' }, { value: 'bulk_lean', label: 'Lean Bulk (~15% Surplus)' }, { value: 'bulk_aggressive', label: 'Aggressive Bulk (~25% Surplus)' } ]} />
+                                        <InputField label="Dietary Preference" name="dietary" type="select" value={formData.dietary} onChange={handleChange} options={[{ value: 'None', label: 'None' }, { value: 'Vegetarian', label: 'Vegetarian' }]} />
+                                        <DaySlider label="Plan Days" name="days" value={formData.days} onChange={handleSliderChange} />
                                     </FormSection>
     
-                                    <FormSection title="Plan Settings" defaultOpen={false}>
-                                        <DaySlider value={formData.days} onChange={handleSliderChange} />
-                                        <InputField label="Daily Eating Occasions" name="eatingOccasions" type="select" value={formData.eatingOccasions} onChange={handleChange} options={[ { value: '3', label: '3 (B, L, D)' }, { value: '4', label: '4 (B, L, D + 1 Snack)' }, { value: '5', label: '5 (B, L, D + 2 Snacks)' } ]} />
-                                        <InputField label="Store" name="store" type="select" value={formData.store} onChange={handleChange} options={[ { value: 'Woolworths', label: 'Woolworths' }, { value: 'Coles', label: 'Coles' } ]} />
+                                    <FormSection 
+                                        title="Meal Preferences" 
+                                        icon={Utensils}
+                                        description="Customize your meal plan"
+                                        collapsible={true}
+                                        defaultOpen={false}
+                                    >
+                                        <InputField label="Store" name="store" type="select" value={formData.store} onChange={handleChange} options={[{ value: 'Coles', label: 'Coles' }, { value: 'Woolworths', label: 'Woolworths' }]} />
+                                        <InputField label="Meals Per Day" name="eatingOccasions" type="select" value={formData.eatingOccasions} onChange={handleChange} options={[ { value: '3', label: '3 Meals' }, { value: '4', label: '4 Meals' }, { value: '5', label: '5 Meals' } ]} />
                                         <InputField label="Spending Priority" name="costPriority" type="select" value={formData.costPriority} onChange={handleChange} options={[ { value: 'Extreme Budget', label: 'Extreme Budget' }, { value: 'Best Value', label: 'Best Value' }, { value: 'Quality Focus', label: 'Quality Focus' } ]} />
                                         <InputField label="Meal Variety" name="mealVariety" type="select" value={formData.mealVariety} onChange={handleChange} options={[ { value: 'High Repetition', label: 'High' }, { value: 'Balanced Variety', label: 'Balanced' }, { value: 'Low Repetition', label: 'Low' } ]} />
                                         <InputField label="Cuisine Profile (Optional)" name="cuisine" value={formData.cuisine} onChange={handleChange} placeholder="e.g., Spicy Thai" />
@@ -386,10 +428,10 @@ const MainApp = ({
                             <div className={`w-full md:w-1/2 ${isMenuOpen ? 'hidden md:block' : 'block'}`}>
                                 <div className="border-b">
                                     <div className="p-6 md:p-8">
-                                        {/* Navigation Tabs (Summary / Meals / Shopping) */}
+                                        {/* Added Navigation Tabs */}
                                         <div className="flex space-x-4 border-b">
                                             <button
-                                                onClick={() => handleTabChange('profile')}
+                                                onClick={() => handleTabChange('profile')} // UPDATED
                                                 className={`pb-2 text-lg font-semibold ${contentView === 'profile' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
                                             >
                                                 <LayoutDashboard className="inline w-5 h-5 mr-2" /> Summary
@@ -397,13 +439,13 @@ const MainApp = ({
                                             {results && Object.keys(results).length > 0 && (
                                                 <>
                                                     <button
-                                                        onClick={() => handleTabChange('meals')}
+                                                        onClick={() => handleTabChange('meals')} // UPDATED
                                                         className={`pb-2 text-lg font-semibold ${contentView === 'meals' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
                                                     >
                                                         <Utensils className="inline w-5 h-5 mr-2" /> Meals
                                                     </button>
                                                     <button
-                                                        onClick={() => handleTabChange('ingredients')}
+                                                        onClick={() => handleTabChange('ingredients')} // UPDATED
                                                         className={`pb-2 text-lg font-semibold ${contentView === 'ingredients' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
                                                     >
                                                         <ShoppingBag className="inline w-5 h-5 mr-2" /> Shopping
@@ -424,8 +466,11 @@ const MainApp = ({
              activeStepKey={generationStepKey}
             errorMsg={error}
             latestLog={latestLog}
+
               formData={formData}
+
             nutritionalTargets={nutritionalTargets}
+
              results={results}
              mealPlan={mealPlan}
         />
@@ -441,6 +486,7 @@ const MainApp = ({
                                         
                                         {contentView === 'meals' && mealPlan?.length > 0 && mealPlanContent}
                                         
+                                        {/* STEP 3: Update Render Call */}
                                         {contentView === 'ingredients' && Object.keys(results)?.length > 0 && shoppingListContent}
                                         
                                         {(contentView === 'meals' || contentView === 'ingredients') && (!results || Object.keys(results).length === 0) && !loading && (
@@ -459,7 +505,7 @@ const MainApp = ({
             {isMobile && results && Object.keys(results).length > 0 && (
                 <BottomNav
                     activeTab={contentView}
-                    onTabChange={handleTabChange}
+                    onTabChange={handleTabChange} // UPDATED
                     showPlanButton={false}
                 />
             )}
@@ -469,111 +515,127 @@ const MainApp = ({
             <SuccessModal
                 isVisible={showSuccessModal}
                 title="Your Plan is Ready!"
-                subtitle={`${planStats?.totalMeals || 0} meals across ${planStats?.totalDays || 0} days`}
+                message={`We've created ${formData.days} days of meals optimized for your goals`}
                 stats={planStats}
-                onDismiss={() => {
+                onClose={() => setShowSuccessModal(false)}
+                onViewPlan={() => {
                     setShowSuccessModal(false);
-                    handleTabChange('meals');
+                    handleTabChange('meals'); // Using handleTabChange here for consistency
                 }}
             />
-    
-            {selectedMeal && (
-                <RecipeModal
-                    meal={selectedMeal}
-                    onClose={() => setSelectedMeal(null)}
-                />
-            )}
     
             <SettingsPanel
                 isOpen={isSettingsOpen}
                 onClose={() => setIsSettingsOpen(false)}
+                currentStore={formData.store}
+                onStoreChange={(store) => {
+                    handleChange({ target: { name: 'store', value: store } });
+                    showToast(`Store changed to ${store}`, 'success');
+                }}
+                onClearData={() => {
+                    showToast('All data cleared', 'success');
+                }}
+                onEditProfile={handleEditProfile}
+                showOrchestratorLogs={showOrchestratorLogs}
+                onToggleOrchestratorLogs={setShowOrchestratorLogs}
+                showFailedIngredientsLogs={showFailedIngredientsLogs}
+                onToggleFailedIngredientsLogs={setShowFailedIngredientsLogs}
+                // CHANGE 3: Add new props
+                showMacroDebugLog={showMacroDebugLog}
+                onToggleMacroDebugLog={setShowMacroDebugLog}
+                // AI Model selection
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
-                onLoadProfile={handleLoadProfile}
-                onSaveProfile={() => handleSaveProfile(formData)}
-                formData={formData}
+                settings={{
+                    showOrchestratorLogs,
+                    showFailedIngredientsLogs,
+                    showMacroDebugLog, // Also ensure it's in the settings object
+                }}
+                onToggleSetting={(key) => {
+                    if (key === 'showOrchestratorLogs') {
+                        setShowOrchestratorLogs(!showOrchestratorLogs);
+                    } else if (key === 'showFailedIngredientsLogs') {
+                        setShowFailedIngredientsLogs(!showFailedIngredientsLogs);
+                    } else if (key === 'showMacroDebugLog') { // Add macro debug toggle logic
+                        setShowMacroDebugLog(!showMacroDebugLog);
+                    }
+                }}
             />
-    
+
             {/* Save Plan Name Prompt */}
             {showSavePlanPrompt && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
-                        <h3 className="text-lg font-bold mb-4">Name Your Plan</h3>
-                        <input
-                            type="text"
-                            value={savePlanName}
-                            onChange={(e) => setSavePlanName(e.target.value)}
-                            placeholder={`Plan ${new Date().toLocaleDateString()}`}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-2 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            autoFocus
-                            onKeyDown={(e) => e.key === 'Enter' && handleConfirmSave()}
-                        />
-                        <div className="flex gap-3">
-                            <button
-                                onClick={() => {
-                                    setShowSavePlanPrompt(false);
-                                    setSavePlanName('');
-                                }}
-                                className="flex-1 py-2 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleConfirmSave}
-                                disabled={savingPlan}
-                                className="flex-1 py-2 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
-                            >
-                                {savingPlan ? 'Saving...' : 'Save'}
-                            </button>
+                <>
+                    <div
+                        className="fixed inset-0 bg-black bg-opacity-50 z-[1000]"
+                        onClick={() => setShowSavePlanPrompt(false)}
+                    />
+                    <div className="fixed inset-0 z-[1001] flex items-center justify-center p-4">
+                        <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+                            <h3 className="text-xl font-bold mb-4 text-gray-900">
+                                Save Meal Plan
+                            </h3>
+                            <input
+                                type="text"
+                                value={savePlanName}
+                                onChange={(e) => setSavePlanName(e.target.value)}
+                                placeholder={`Plan ${new Date().toLocaleDateString()}`}
+                                className="w-full px-4 py-2 border rounded-lg mb-4 border-gray-300"
+                            />
+                            <div className="flex space-x-3">
+                                <button
+                                    onClick={() => setShowSavePlanPrompt(false)}
+                                    className="flex-1 py-2 px-4 rounded-lg font-semibold bg-gray-200 text-gray-700"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleConfirmSave}
+                                    disabled={savingPlan}
+                                    className="flex-1 py-2 px-4 rounded-lg font-semibold text-white disabled:opacity-50 bg-indigo-600"
+                                >
+                                    {savingPlan ? 'Saving...' : 'Save'}
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-    
-            {/* Saved Plans Modal */}
-            {showSavedPlansModal && (
-                <SavedPlansModal
-                    isOpen={showSavedPlansModal}
-                    onClose={() => setShowSavedPlansModal(false)}
-                    savedPlans={savedPlans}
-                    activePlanId={activePlanId}
-                    onLoadPlan={handleLoadPlan}
-                    onDeletePlan={handleDeletePlan}
-                    loadingPlan={loadingPlan}
-                />
-            )}
-    
-            {/* Diagnostic Logs */}
-            {diagnosticLogs && diagnosticLogs.length > 0 && (
-                <DiagnosticLogViewer
-                    logs={diagnosticLogs}
-                    isOpen={isLogOpen}
-                    onToggle={() => setIsLogOpen(!isLogOpen)}
-                    logHeight={logHeight}
-                    onHeightChange={setLogHeight}
-                    onDownload={handleDownloadLogs}
-                    showOrchestratorLogs={showOrchestratorLogs}
-                    onToggleOrchestratorLogs={() => setShowOrchestratorLogs(!showOrchestratorLogs)}
-                />
-            )}
-    
-            {/* Failed Ingredients Log */}
-            {failedIngredientsHistory && failedIngredientsHistory.length > 0 && (
-                <FailedIngredientLogViewer
-                    history={failedIngredientsHistory}
-                    isOpen={showFailedIngredientsLogs}
-                    onToggle={() => setShowFailedIngredientsLogs(!showFailedIngredientsLogs)}
-                    onDownload={handleDownloadFailedLogs}
-                />
+                </>
             )}
 
-            {/* Macro Debug Log Viewer */}
-            {macroDebug && Object.keys(macroDebug).length > 0 && (
-                <MacroDebugLogViewer
-                    data={macroDebug}
-                    isOpen={showMacroDebugLog}
-                    onToggle={() => setShowMacroDebugLog(!showMacroDebugLog)}
-                    onDownload={handleDownloadMacroDebugLogs}
+            {/* Saved Plans Modal */}
+            <SavedPlansModal
+                isOpen={showSavedPlansModal}
+                onClose={() => setShowSavedPlansModal(false)}
+                savedPlans={savedPlans || []}
+                activePlanId={activePlanId}
+                onLoadPlan={handleLoadPlan}
+                onDeletePlan={handleDeletePlan}
+                loadingPlan={loadingPlan}
+            />
+    
+            {/* CHANGE 4: Update the fixed bottom log area */}
+            <div className="fixed bottom-0 left-0 right-0 z-[100] flex flex-col-reverse">
+                {showOrchestratorLogs && (
+                    <DiagnosticLogViewer logs={diagnosticLogs} height={logHeight} setHeight={setLogHeight} isOpen={isLogOpen} setIsOpen={setIsLogOpen} onDownloadLogs={handleDownloadLogs} />
+                )}
+                {showFailedIngredientsLogs && (
+                    <FailedIngredientLogViewer failedHistory={failedIngredientsHistory} onDownload={handleDownloadFailedLogs} />
+                )}
+                {/* NEW: Macro Debug Log Viewer */}
+                {showMacroDebugLog && (
+                    <MacroDebugLogViewer macroDebug={macroDebug} onDownload={handleDownloadMacroDebugLogs} />
+                )}
+                {/* Updated condition to include macro debug log */}
+                {!showOrchestratorLogs && !showFailedIngredientsLogs && !showMacroDebugLog && (
+                    <div className="bg-gray-800 text-white p-2 text-xs text-center cursor-pointer hover:bg-gray-700" onClick={() => { setShowOrchestratorLogs(true); setShowFailedIngredientsLogs(true); setShowMacroDebugLog(true); }}>
+                        📋 Show Logs
+                    </div>
+                )}
+            </div>
+    
+            {selectedMeal && (
+                <RecipeModal 
+                    meal={selectedMeal} 
+                    onClose={() => setSelectedMeal(null)} 
                 />
             )}
         </>
@@ -581,3 +643,4 @@ const MainApp = ({
 };
 
 export default MainApp;
+
