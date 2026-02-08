@@ -12,6 +12,7 @@ import ProductCard from './ProductCard';
 import CollapsibleSection from './CollapsibleSection';
 import SubstituteMenu from './SubstituteMenu';
 import GenerationProgressDisplay from './GenerationProgressDisplay';
+import StoryModeGeneration from './StoryModeGeneration';
 import NutritionalInfo from './NutritionalInfo';
 import IngredientResultBlock from './IngredientResultBlock';
 import MealPlanDisplay from './MealPlanDisplay';
@@ -460,14 +461,21 @@ const MainApp = ({
                                 ) : (
                                     <div className="p-0">
                                         {loading && (
-                                            <div className="p-4 md:p-6">
-                                                <GenerationProgressDisplay
-                                                    activeStepKey={generationStepKey}
-                                                    errorMsg={error}
-                                                    latestLog={latestLog} 
-                                                />
-                                            </div>
-                                        )}
+     <div className="p-4 md:p-6">
+          <StoryModeGeneration
+             activeStepKey={generationStepKey}
+            errorMsg={error}
+            latestLog={latestLog}
+
+              formData={formData}
+
+            nutritionalTargets={nutritionalTargets}
+
+             results={results}
+             mealPlan={mealPlan}
+        />
+      </div>
+   )}
                                 
                                         {contentView === 'profile' && (
                                             <ProfileTab 
