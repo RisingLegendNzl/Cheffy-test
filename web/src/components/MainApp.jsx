@@ -24,6 +24,7 @@ import RecipeModal from './RecipeModal';
 import EmojiIcon from './EmojiIcon';
 import ProfileTab from './ProfileTab';
 import SavedPlansModal from './SavedPlansModal';
+import PlanSetupWizard from './wizard/PlanSetupWizard';
 
 // Phase 2 imports
 import Header from './Header';
@@ -351,79 +352,21 @@ const MainApp = ({
                         <div className="flex flex-col md:flex-row">
                             {/* --- SETUP FORM (LEFT COLUMN) --- */}
                             <div className={`p-6 md:p-8 w-full md:w-1/2 border-b md:border-r ${isMenuOpen ? 'block' : 'hidden md:block'}`}>
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-2xl font-bold text-indigo-700">Plan Setup</h2>
-                                    <div className="flex space-x-2">
-                                        <button
-                                            onClick={() => handleLoadProfile(false)} 
-                                            disabled={!isAuthReady || !userId || userId.startsWith('local_')} 
-                                            className="flex items-center px-3 py-1.5 bg-blue-500 text-white text-xs font-semibold rounded-lg shadow hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                                            title="Load Saved Profile"
-                                        >
-                                            <FolderDown size={14} className="mr-1" /> Load
-                                        </button>
-                                         <button
-                                            onClick={() => handleSaveProfile(false)}
-                                            disabled={!isAuthReady || !userId || userId.startsWith('local_')} 
-                                            className="flex items-center px-3 py-1.5 bg-green-500 text-white text-xs font-semibold rounded-lg shadow hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                                            title="Save Current Profile"
-                                        >
-                                            <Save size={14} className="mr-1" /> Save
-                                        </button>
-                                        <button className="md:hidden p-1.5" onClick={() => setIsMenuOpen(false)}><X /></button>
-                                    </div>
-                                </div>
-                                
-                                <form onSubmit={handleGeneratePlan}>
-                                    <FormSection 
-                                        title="Personal Information" 
-                                        icon={User}
-                                        description="Tell us about yourself"
-                                    >
-                                        <InputField label="Name" name="name" value={formData.name} onChange={handleChange} />
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                            <InputField label="Height (cm)" name="height" type="number" value={formData.height} onChange={handleChange} required />
-                                            <InputField label="Weight (kg)" name="weight" type="number" value={formData.weight} onChange={handleChange} required />
-                                        </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                            <InputField label="Age" name="age" type="number" value={formData.age} onChange={handleChange} required />
-                                            <InputField label="Body Fat % (Optional)" name="bodyFat" type="number" value={formData.bodyFat} onChange={handleChange} placeholder="e.g., 15" />
-                                        </div>
-                                        <InputField label="Gender" name="gender" type="select" value={formData.gender} onChange={handleChange} options={[{ value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }]} required />
-                                    </FormSection>
-    
-                                    <FormSection 
-                                        title="Fitness Goals" 
-                                        icon={Target}
-                                        description="What are you trying to achieve?"
-                                    >
-                                        <InputField label="Activity Level" name="activityLevel" type="select" value={formData.activityLevel} onChange={handleChange} options={[ { value: 'sedentary', label: 'Sedentary' }, { value: 'light', label: 'Light Activity' }, { value: 'moderate', label: 'Moderate Activity' }, { value: 'active', label: 'Active' }, { value: 'veryActive', label: 'Very Active' } ]} required />
-                                        <InputField label="Fitness Goal" name="goal" type="select" value={formData.goal} onChange={handleChange} options={[ { value: 'maintain', label: 'Maintain' }, { value: 'cut_moderate', label: 'Moderate Cut (~15% Deficit)' }, { value: 'cut_aggressive', label: 'Aggressive Cut (~25% Deficit)' }, { value: 'bulk_lean', label: 'Lean Bulk (~15% Surplus)' }, { value: 'bulk_aggressive', label: 'Aggressive Bulk (~25% Surplus)' } ]} />
-                                        <InputField label="Dietary Preference" name="dietary" type="select" value={formData.dietary} onChange={handleChange} options={[{ value: 'None', label: 'None' }, { value: 'Vegetarian', label: 'Vegetarian' }]} />
-                                        <DaySlider label="Plan Days" name="days" value={formData.days} onChange={handleSliderChange} />
-                                    </FormSection>
-    
-                                    <FormSection 
-                                        title="Meal Preferences" 
-                                        icon={Utensils}
-                                        description="Customize your meal plan"
-                                        collapsible={true}
-                                        defaultOpen={false}
-                                    >
-                                        <InputField label="Store" name="store" type="select" value={formData.store} onChange={handleChange} options={[{ value: 'Coles', label: 'Coles' }, { value: 'Woolworths', label: 'Woolworths' }]} />
-                                        <InputField label="Meals Per Day" name="eatingOccasions" type="select" value={formData.eatingOccasions} onChange={handleChange} options={[ { value: '3', label: '3 Meals' }, { value: '4', label: '4 Meals' }, { value: '5', label: '5 Meals' } ]} />
-                                        <InputField label="Spending Priority" name="costPriority" type="select" value={formData.costPriority} onChange={handleChange} options={[ { value: 'Extreme Budget', label: 'Extreme Budget' }, { value: 'Best Value', label: 'Best Value' }, { value: 'Quality Focus', label: 'Quality Focus' } ]} />
-                                        <InputField label="Meal Variety" name="mealVariety" type="select" value={formData.mealVariety} onChange={handleChange} options={[ { value: 'High Repetition', label: 'High' }, { value: 'Balanced Variety', label: 'Balanced' }, { value: 'Low Repetition', label: 'Low' } ]} />
-                                        <InputField label="Cuisine Profile (Optional)" name="cuisine" value={formData.cuisine} onChange={handleChange} placeholder="e.g., Spicy Thai" />
-                                    </FormSection>
-    
-                                    <button type="submit" disabled={loading || !isAuthReady || !firebaseConfig} className={`w-full flex items-center justify-center py-3 mt-6 text-lg font-bold rounded-xl shadow-lg ${loading || !isAuthReady || !firebaseConfig ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>
-                                        {loading ? <><RefreshCw className="w-5 h-5 mr-3 animate-spin" /> Processing...</> : <><Zap className="w-5 h-5 mr-3" /> Generate Plan</>}
-                                    </button>
-                                    {(!isAuthReady || !firebaseConfig) && <p className="text-xs text-center text-red-600 mt-2">
-                                        {firebaseInitializationError ? firebaseInitializationError : 'Initializing Firebase auth...'}
-                                    </p>}
-                                </form>
+                                <PlanSetupWizard
+                                    formData={formData}
+                                    onChange={handleChange}
+                                    onSliderChange={handleSliderChange}
+                                    onSubmit={handleGeneratePlan}
+                                    onLoadProfile={() => handleLoadProfile(false)}
+                                    onSaveProfile={() => handleSaveProfile(false)}
+                                    loading={loading}
+                                    isAuthReady={isAuthReady}
+                                    userId={userId}
+                                    firebaseConfig={firebaseConfig}
+                                    firebaseInitializationError={firebaseInitializationError}
+                                    onClose={() => setIsMenuOpen(false)}
+                                    isMobile={isMobile}
+                                />
                             </div>
     
                             {/* --- RESULTS VIEW (RIGHT COLUMN) --- */}
