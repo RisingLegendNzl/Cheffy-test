@@ -1,7 +1,7 @@
 // web/src/components/MainApp.jsx
 import React, { useState } from 'react';
 import { LayoutDashboard, Utensils, ShoppingBag, AlertTriangle, Save, FolderDown } from 'lucide-react';
-import PlanSetupWizard from './PlanSetupWizard';
+import PlanSetupWizard from './wizards/PlanSetupWizard';
 import ProfileTab from './ProfileTab';
 import MealPlanDisplay from './MealPlanDisplay';
 import ShoppingListWithDetails from './ShoppingListWithDetails';
