@@ -138,6 +138,31 @@ async function cacheSet(key, val, ttl, log) {
 function hashString(str) {
   return crypto.createHash('sha256').update(str).digest('hex').substring(0, 16);
 }
+
+async function setRunStatus(runId, status, payload, log) {
+    if (!kvReady) return;
+    const key = `cheffy:run:${runId}`;
+    const ttl = 1000 * 60 * 60; // 1 hour
+    try {
+        await kv.set(key, JSON.stringify({ status, payload, updatedAt: new Date().toISOString() }), { px: ttl });
+        log(`Run status SET: ${key} → ${status}`, 'DEBUG', 'RUN_STATUS');
+    } catch (e) {
+        log(`Run status SET Error: ${e.message}`, 'ERROR', 'RUN_STATUS');
+    }
+}
+
+async function getRunStatus(runId, log) {
+    if (!kvReady) return null;
+    const key = `cheffy:run:${runId}`;
+    try {
+        const raw = await kv.get(key);
+        if (!raw) return null;
+        return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (e) {
+        if (log) log(`Run status GET Error: ${e.message}`, 'ERROR', 'RUN_STATUS');
+        return null;
+    }
+}
 // --- End Cache Helpers ---
 
 
@@ -1092,6 +1117,9 @@ module.exports = async (request, response) => {
     
     // [FIX] Pass `run_id` to logger
     const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, sendEvent } = createLogger(run_id, response);
+    
+    await setRunStatus(run_id, 'running', null, log);
+
     // --- End SSE Setup ---
 
     log(`Plan generation request received.`, 'INFO', 'HTTP');
@@ -1118,7 +1146,7 @@ module.exports = async (request, response) => {
         }
 
         log(`Plan generation starting for ${numDays} days.`, 'INFO', 'SYSTEM');
-        sendEvent('plan:start', { days: numDays, formData: getSanitizedFormData(formData), model: requestPrimary });
+        sendEvent('plan:start', { run_id, days: numDays, formData: getSanitizedFormData(formData), model: requestPrimary });
 
         // --- Input Validation ---
         if (!formData || typeof formData !== 'object' || Object.keys(formData).length < 5) {
@@ -2045,6 +2073,7 @@ module.exports = async (request, response) => {
             solver_path_live: USE_SOLVER_V1 ? 'SOLVER_V1' : 'RECONCILER_V0'
         });
 
+        await setRunStatus(run_id, 'complete', responseData, log);
         sendFinalDataAndClose(responseData);
 
     } catch (error) {
@@ -2054,6 +2083,7 @@ module.exports = async (request, response) => {
         const isPlanError = error.message.startsWith('Meal Planner AI failed');
         const errorCode = isPlanError ? "PLAN_INVALID" : "SERVER_FAULT_PLAN";
 
+        await setRunStatus(run_id, 'failed', { error: error.message, code: errorCode }, log).catch(() => {});
         logErrorAndClose(error.message, errorCode);
         return; 
     }
@@ -2065,6 +2095,8 @@ module.exports = async (request, response) => {
         }
     }
 };
+
+module.exports.getRunStatus = getRunStatus;
 
 /// ===== MAIN-HANDLER-END ===== ////
 
