@@ -1,17 +1,17 @@
 // web/src/services/planPersistence.js
-// Service layer for meal plan persistence
-// Handles API validation calls and Firestore operations
+// Service layer for meal plan persistence.
+// Handles API validation calls and Firestore operations.
 
 import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, orderBy } from 'firebase/firestore';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 /**
- * Validate request with backend before performing Firestore operation
+ * Validate request with backend before performing Firestore operation.
  * @param {string} action - Action to validate
  * @param {string} userId - User ID
  * @param {object} payload - Additional data for validation
- * @returns {Promise<boolean>} - Whether validation succeeded
+ * @returns {Promise<boolean>} Whether validation succeeded
  */
 const validateWithBackend = async (action, userId, payload = {}) => {
     try {
@@ -39,17 +39,8 @@ const validateWithBackend = async (action, userId, payload = {}) => {
 };
 
 /**
- * Save a meal plan to Firestore
- * @param {object} params - Save parameters
- * @param {string} params.userId - User ID
- * @param {object} params.db - Firestore instance
- * @param {string} params.planName - Name for the plan
- * @param {array} params.mealPlan - Meal plan data
- * @param {object} params.results - Product results
- * @param {array} params.uniqueIngredients - Shopping list
- * @param {object} params.formData - Generation parameters
- * @param {object} params.nutritionalTargets - Nutritional targets
- * @returns {Promise<object>} - Saved plan with ID
+ * Save a meal plan to Firestore (manual, user-triggered).
+ * Includes backend validation before writing.
  */
 export const savePlan = async ({
     userId,
@@ -107,18 +98,10 @@ export const savePlan = async ({
 /**
  * Auto-save a meal plan to Firestore without backend validation.
  * Used programmatically after generation completes or after recovery.
- * Skips the validation call to /api/plans since the plan was just generated.
- * 
- * @param {object} params - Save parameters
- * @param {string} params.userId - User ID
- * @param {object} params.db - Firestore instance
- * @param {string} params.planName - Name for the plan
- * @param {array} params.mealPlan - Meal plan data
- * @param {object} params.results - Product results
- * @param {array} params.uniqueIngredients - Shopping list
- * @param {object} params.formData - Generation parameters
- * @param {object} params.nutritionalTargets - Nutritional targets
- * @returns {Promise<object>} - Saved plan with ID
+ * Skips the validation round-trip since the plan was just generated.
+ *
+ * All data fields are passed explicitly by the caller — this function
+ * does NOT read from React state or closures.
  */
 export const autoSavePlan = async ({
     userId,
@@ -165,12 +148,7 @@ export const autoSavePlan = async ({
 };
 
 /**
- * Load a meal plan from Firestore
- * @param {object} params - Load parameters
- * @param {string} params.userId - User ID
- * @param {object} params.db - Firestore instance
- * @param {string} params.planId - Plan ID to load
- * @returns {Promise<object>} - Loaded plan data
+ * Load a meal plan from Firestore.
  */
 export const loadPlan = async ({ userId, db, planId }) => {
     if (!userId || !db || !planId) {
@@ -196,11 +174,7 @@ export const loadPlan = async ({ userId, db, planId }) => {
 };
 
 /**
- * List all saved plans for a user
- * @param {object} params - List parameters
- * @param {string} params.userId - User ID
- * @param {object} params.db - Firestore instance
- * @returns {Promise<array>} - Array of saved plans
+ * List all saved plans for a user.
  */
 export const listPlans = async ({ userId, db }) => {
     if (!userId || !db) {
@@ -219,8 +193,8 @@ export const listPlans = async ({ userId, db }) => {
     const querySnapshot = await getDocs(q);
 
     const plans = [];
-    querySnapshot.forEach((doc) => {
-        plans.push(doc.data());
+    querySnapshot.forEach((docSnap) => {
+        plans.push(docSnap.data());
     });
 
     console.log('[PLAN_SERVICE] Plans listed:', plans.length);
@@ -228,12 +202,7 @@ export const listPlans = async ({ userId, db }) => {
 };
 
 /**
- * Delete a saved plan
- * @param {object} params - Delete parameters
- * @param {string} params.userId - User ID
- * @param {object} params.db - Firestore instance
- * @param {string} params.planId - Plan ID to delete
- * @returns {Promise<void>}
+ * Delete a saved plan.
  */
 export const deletePlan = async ({ userId, db, planId }) => {
     if (!userId || !db || !planId) {
@@ -254,12 +223,7 @@ export const deletePlan = async ({ userId, db, planId }) => {
 };
 
 /**
- * Set a plan as active
- * @param {object} params - Set active parameters
- * @param {string} params.userId - User ID
- * @param {object} params.db - Firestore instance
- * @param {string} params.planId - Plan ID to set as active
- * @returns {Promise<void>}
+ * Set a plan as active. Clears the isActive flag on all other plans.
  */
 export const setActivePlan = async ({ userId, db, planId }) => {
     if (!userId || !db) {
@@ -295,11 +259,7 @@ export const setActivePlan = async ({ userId, db, planId }) => {
 };
 
 /**
- * Get the currently active plan
- * @param {object} params - Get active parameters
- * @param {string} params.userId - User ID
- * @param {object} params.db - Firestore instance
- * @returns {Promise<object|null>} - Active plan or null
+ * Get the currently active plan.
  */
 export const getActivePlan = async ({ userId, db }) => {
     if (!userId || !db) {
@@ -311,8 +271,8 @@ export const getActivePlan = async ({ userId, db }) => {
         const querySnapshot = await getDocs(plansRef);
 
         let activePlan = null;
-        querySnapshot.forEach((doc) => {
-            const data = doc.data();
+        querySnapshot.forEach((docSnap) => {
+            const data = docSnap.data();
             if (data.isActive) {
                 activePlan = data;
             }
