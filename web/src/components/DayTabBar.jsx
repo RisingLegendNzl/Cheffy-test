@@ -1,5 +1,5 @@
 // web/src/components/DayTabBar.jsx
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useMemo } from 'react';
 import { Save, FolderDown, MoreVertical, X } from 'lucide-react';
 import { COLORS } from '../constants';
 
@@ -12,6 +12,12 @@ import { COLORS } from '../constants';
  *   • Active tab: gradient underline + bold text; inactive: muted.
  *   • On desktop (≤7 days): all tabs visible without scrolling.
  *   • Integrated kebab menu for Save / Load actions (top-right).
+ *
+ * WHITE-SCREEN FIX (v14.1):
+ *   • Uses useMemo to derive stable day list, preventing unnecessary
+ *     re-renders when totalDays hasn't actually changed.
+ *   • Clamps selectedDay to valid bounds before rendering active state,
+ *     preventing a brief flash of no-active-tab during plan transitions.
  */
 const DayTabBar = ({
     totalDays,
@@ -31,6 +37,23 @@ const DayTabBar = ({
     // ── Hide for single-day plans ──
     if (totalDays <= 1) return null;
 
+    // ── WHITE-SCREEN FIX: Derive a stable day list ──
+    // useMemo ensures we don't create a new array on every render unless
+    // totalDays actually changes. This stabilises React's reconciliation.
+    const dayNumbers = useMemo(
+        () => Array.from({ length: totalDays }, (_, i) => i + 1),
+        [totalDays]
+    );
+
+    // ── WHITE-SCREEN FIX: Clamp selectedDay for rendering ──
+    // During plan transitions, selectedDay might momentarily be > totalDays.
+    // Clamp it so we always highlight a valid tab (or none if truly invalid).
+    const clampedSelectedDay = useMemo(() => {
+        if (selectedDay < 1) return 1;
+        if (selectedDay > totalDays) return 1;
+        return selectedDay;
+    }, [selectedDay, totalDays]);
+
     // ── Auto-scroll active tab into view on mount / day change ──
     useEffect(() => {
         if (activeTabRef.current && scrollContainerRef.current) {
@@ -48,7 +71,7 @@ const DayTabBar = ({
                 });
             }
         }
-    }, [selectedDay]);
+    }, [clampedSelectedDay]);
 
     // ── Close kebab menu on outside click ──
     useEffect(() => {
@@ -78,12 +101,12 @@ const DayTabBar = ({
                         msOverflowStyle: 'none',
                     }}
                 >
-                    {Array.from({ length: totalDays }, (_, i) => i + 1).map((day) => {
-                        const isActive = day === selectedDay;
+                    {dayNumbers.map((day) => {
+                        const isActive = day === clampedSelectedDay;
 
                         return (
                             <button
-                                key={day}
+                                key={`day-tab-${day}`}
                                 ref={isActive ? activeTabRef : null}
                                 onClick={() => onSelectDay(day)}
                                 className="relative flex-shrink-0 px-5 py-3.5 text-sm font-semibold transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-1"
