@@ -1,5 +1,6 @@
 // web/src/index.jsx
 import './animations.css';
+import './dashboard-enhancements.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
@@ -16,4 +17,3 @@ const root = ReactDOM.createRoot(rootElement);
 root.render(
     <App />
 );
-
