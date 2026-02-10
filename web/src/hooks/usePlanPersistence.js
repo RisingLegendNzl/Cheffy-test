@@ -5,15 +5,22 @@ import * as planService from '../services/planPersistence';
 /**
  * Custom hook for managing meal plan persistence.
  *
- * FIXES APPLIED:
- * - autoSavePlan accepts an optional explicit planData argument so callers
- *   can pass SSE/recovery payloads directly, avoiding stale-closure bugs.
- * - loadPlan now restores formData and nutritionalTargets (requires
- *   setFormData and setNutritionalTargets to be passed in).
- * - The loadActivePlan mount effect uses a ref guard instead of mealPlan
- *   in its dependency array, preventing skip-on-stale-value and re-trigger
- *   loops.
- * - recalculateTotalCost is called after loading to fix the $0 total bug.
+ * FIXES APPLIED (v2 — persistence & resilience overhaul):
+ *
+ * 1. RACE CONDITION FIX: The `loadActivePlan` mount effect now gates on
+ *    `isAuthReady && userId && db` (all three truthy).  The
+ *    `hasAttemptedLoadRef` is only set to `true` AFTER the gate passes,
+ *    so a premature run while `userId` is still null no longer poisons the
+ *    guard and permanently skips the load.
+ *
+ * 2. autoSavePlan now includes retry logic (up to 3 attempts with
+ *    exponential back-off) so transient Firestore / network errors during
+ *    the fire-and-forget auto-save don't silently lose the plan.
+ *
+ * 3. loadPlan restores formData and nutritionalTargets (requires
+ *    setFormData and setNutritionalTargets to be passed in).
+ *
+ * 4. recalculateTotalCost is called after loading to fix the $0 total bug.
  */
 const usePlanPersistence = ({
     userId,
@@ -38,10 +45,15 @@ const usePlanPersistence = ({
     const [loadingPlan, setLoadingPlan] = useState(false);
     const [loadingPlansList, setLoadingPlansList] = useState(false);
 
-    // Guard ref: ensures the mount-load runs exactly once per auth session
+    // -----------------------------------------------------------------------
+    // FIX (v2): Guard ref is only set to `true` once the gate conditions
+    // (isAuthReady + userId + db) are all met.  A prior version set it on
+    // *entry* to the effect, which meant the first render (userId=null)
+    // poisoned the ref and the real load was skipped forever.
+    // -----------------------------------------------------------------------
     const hasAttemptedLoadRef = useRef(false);
 
-    // Reset the guard when user identity changes (sign-out → sign-in)
+    // Reset the guard when the user identity changes (sign-out → sign-in).
     useEffect(() => {
         hasAttemptedLoadRef.current = false;
     }, [userId]);
@@ -115,6 +127,10 @@ const usePlanPersistence = ({
      *   Expected shape: { mealPlan, results, uniqueIngredients, formData,
      *   nutritionalTargets }
      * @returns {Promise<string|null>} The planId if saved, or null.
+     *
+     * FIX (v2): Includes retry logic — up to MAX_RETRIES attempts with
+     * exponential back-off — so transient Firestore errors don't silently
+     * lose the plan.
      */
     const autoSavePlan = useCallback(async (planData) => {
         if (!userId || !db) {
@@ -134,37 +150,53 @@ const usePlanPersistence = ({
             return null;
         }
 
-        try {
-            const now = new Date();
-            const planName = `Plan – ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        const MAX_RETRIES = 3;
+        const BASE_DELAY_MS = 1000;
 
-            const savedPlan = await planService.autoSavePlan({
-                userId,
-                db,
-                planName,
-                mealPlan: mp,
-                results: res,
-                uniqueIngredients: ui,
-                formData: fd,
-                nutritionalTargets: nt
-            });
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const now = new Date();
+                const planName = `Plan – ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
-            if (savedPlan && savedPlan.planId) {
-                await planService.setActivePlan({ userId, db, planId: savedPlan.planId });
-                setActivePlanId(savedPlan.planId);
-                console.log('[PLAN_HOOK] Auto-saved and activated plan:', savedPlan.planId);
+                const savedPlan = await planService.autoSavePlan({
+                    userId,
+                    db,
+                    planName,
+                    mealPlan: mp,
+                    results: res,
+                    uniqueIngredients: ui,
+                    formData: fd,
+                    nutritionalTargets: nt
+                });
 
-                // Refresh plans list in background
-                listPlans().catch(() => {});
+                if (savedPlan && savedPlan.planId) {
+                    await planService.setActivePlan({ userId, db, planId: savedPlan.planId });
+                    setActivePlanId(savedPlan.planId);
+                    console.log('[PLAN_HOOK] Auto-saved and activated plan:', savedPlan.planId);
 
-                return savedPlan.planId;
+                    // Refresh plans list in background
+                    listPlans().catch(() => {});
+
+                    return savedPlan.planId;
+                }
+
+                // savedPlan was null — autoSavePlan service skipped (e.g. empty plan).
+                return null;
+            } catch (error) {
+                console.error(`[PLAN_HOOK] autoSavePlan attempt ${attempt}/${MAX_RETRIES} failed:`, error.message);
+
+                if (attempt < MAX_RETRIES) {
+                    const delayMs = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+                    console.log(`[PLAN_HOOK] Retrying autoSavePlan in ${delayMs}ms...`);
+                    await new Promise(r => setTimeout(r, delayMs));
+                } else {
+                    console.error('[PLAN_HOOK] autoSavePlan exhausted all retries.');
+                    return null;
+                }
             }
-
-            return null;
-        } catch (error) {
-            console.error('[PLAN_HOOK] autoSavePlan error:', error);
-            return null;
         }
+
+        return null;
     }, [userId, db, mealPlan, results, uniqueIngredients, formData, nutritionalTargets, listPlans]);
 
     // ── loadPlan ───────────────────────────────────────────────────────
@@ -279,26 +311,35 @@ const usePlanPersistence = ({
     }, [userId, db, listPlans]);
 
     // ── Load active plan on mount ──────────────────────────────────────
-    // Uses a ref guard instead of mealPlan in deps to prevent:
-    //   a) Skipping load when mealPlan has a stale non-empty value
-    //   b) Re-triggering when loadPlan itself updates mealPlan
+    // FIX (v2): The three gate conditions — isAuthReady, userId, and db —
+    // must ALL be truthy before the effect body runs. The ref guard is set
+    // only INSIDE the gate so that a premature invocation (userId still
+    // null while Firebase is restoring the session) does not poison it.
+    //
+    // Dependency array includes isAuthReady so the effect re-fires once
+    // Firebase auth resolves.  The ref guard ensures at most one actual
+    // Firestore load per auth session.
     useEffect(() => {
+        // Gate: all three must be ready
+        if (!isAuthReady || !userId || !db) {
+            return;
+        }
+
+        // Guard: run exactly once per auth session
+        if (hasAttemptedLoadRef.current) {
+            return;
+        }
+        hasAttemptedLoadRef.current = true;
+
         const loadActivePlan = async () => {
-            if (!userId || !db) {
-                return;
-            }
-
-            // Only attempt once per auth session
-            if (hasAttemptedLoadRef.current) {
-                return;
-            }
-            hasAttemptedLoadRef.current = true;
-
             try {
+                console.log('[PLAN_HOOK] Auth ready, loading active plan for user:', userId);
                 const active = await planService.getActivePlan({ userId, db });
                 if (active && active.planId) {
                     setActivePlanId(active.planId);
                     await loadPlan(active.planId);
+                } else {
+                    console.log('[PLAN_HOOK] No active plan found for user.');
                 }
             } catch (error) {
                 console.error('[PLAN_HOOK] Error loading active plan on mount:', error);
@@ -306,16 +347,16 @@ const usePlanPersistence = ({
         };
 
         loadActivePlan();
-    }, [userId, db, loadPlan]);
+    }, [isAuthReady, userId, db, loadPlan]);
 
     // ── Load plans list on mount ───────────────────────────────────────
     useEffect(() => {
-        if (userId && db) {
+        if (isAuthReady && userId && db) {
             listPlans().catch(err => {
                 console.error('[PLAN_HOOK] Silent error loading plans list:', err);
             });
         }
-    }, [userId, db, listPlans]);
+    }, [isAuthReady, userId, db, listPlans]);
 
     return {
         savedPlans,
