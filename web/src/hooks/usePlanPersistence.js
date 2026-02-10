@@ -7,6 +7,8 @@ import * as planService from '../services/planPersistence';
  * 
  * FIX: Added recalculateTotalCost parameter and invoke it after loading plans
  * This fixes the bug where total cost and estimated savings show $0 after loading
+ * 
+ * FIX: Added autoSavePlan method for automatic persistence after generation/recovery
  */
 const usePlanPersistence = ({
     userId,
@@ -87,6 +89,59 @@ const usePlanPersistence = ({
             setSavingPlan(false);
         }
     }, [userId, db, mealPlan, results, uniqueIngredients, formData, nutritionalTargets, showToast, listPlans]);
+
+    /**
+     * autoSavePlan — Automatically saves the current plan and marks it active.
+     * Called programmatically after plan generation completes or after recovery.
+     * Does NOT show toast notifications (silent operation).
+     * Skips backend validation (unnecessary for a freshly generated plan).
+     * 
+     * @returns {Promise<string|null>} The planId if saved, or null on failure.
+     */
+    const autoSavePlan = useCallback(async () => {
+        if (!userId || !db) {
+            console.warn('[PLAN_HOOK] autoSavePlan skipped: no userId or db');
+            return null;
+        }
+
+        if (!mealPlan || mealPlan.length === 0) {
+            console.warn('[PLAN_HOOK] autoSavePlan skipped: no meal plan data');
+            return null;
+        }
+
+        try {
+            const now = new Date();
+            const planName = `Plan – ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+            const savedPlan = await planService.autoSavePlan({
+                userId,
+                db,
+                planName,
+                mealPlan,
+                results,
+                uniqueIngredients,
+                formData,
+                nutritionalTargets
+            });
+
+            if (savedPlan && savedPlan.planId) {
+                // Mark as active so it auto-loads on next mount
+                await planService.setActivePlan({ userId, db, planId: savedPlan.planId });
+                setActivePlanId(savedPlan.planId);
+                console.log('[PLAN_HOOK] Auto-saved and activated plan:', savedPlan.planId);
+
+                // Refresh the plans list in the background
+                listPlans().catch(() => {});
+
+                return savedPlan.planId;
+            }
+
+            return null;
+        } catch (error) {
+            console.error('[PLAN_HOOK] autoSavePlan error:', error);
+            return null;
+        }
+    }, [userId, db, mealPlan, results, uniqueIngredients, formData, nutritionalTargets, listPlans]);
 
     /**
      * FIX: Enhanced loadPlan function that recalculates totals after loading
@@ -232,7 +287,8 @@ const usePlanPersistence = ({
         loadPlan,
         listPlans,
         deletePlan,
-        setActivePlan: setActivePlanHandler
+        setActivePlan: setActivePlanHandler,
+        autoSavePlan
     };
 };
 
