@@ -1,66 +1,42 @@
 // web/src/components/MainApp.jsx
 import React, { useState } from 'react';
-import { RefreshCw, Zap, AlertTriangle, CheckCircle, Package, DollarSign, ExternalLink, Calendar, Users, Menu, X, ChevronsDown, ChevronsUp, ShoppingBag, BookOpen, ChefHat, Tag, Soup, Replace, Target, FileText, LayoutDashboard, Terminal, Loader, ChevronRight, GripVertical, Flame, Droplet, Wheat, ChevronDown, ChevronUp, Download, ListX, Save, FolderDown, User, Check, ListChecks, ListOrdered, Utensils } from 'lucide-react';
-
-// --- Component Imports ---
-import MacroRing from './MacroRing';
-import MacroBar from './MacroBar';
-import InputField from './InputField';
-import DaySlider from './DaySlider';
-import DayTabBar from './DayTabBar';
-import ProductCard from './ProductCard';
-import CollapsibleSection from './CollapsibleSection';
-import SubstituteMenu from './SubstituteMenu';
-import GenerationProgressDisplay from './GenerationProgressDisplay';
-import StoryModeGeneration from './StoryModeGeneration';
-import NutritionalInfo from './NutritionalInfo';
-import IngredientResultBlock from './IngredientResultBlock';
+import { LayoutDashboard, Utensils, ShoppingBag, AlertTriangle, Save, FolderDown } from 'lucide-react';
+import PlanSetupWizard from './PlanSetupWizard';
+import ProfileTab from './ProfileTab';
 import MealPlanDisplay from './MealPlanDisplay';
-import LogEntry from './LogEntry';
+import ShoppingListWithDetails from './ShoppingListWithDetails';
+import Header from './Header';
+import BottomNav from './BottomNav';
+import ToastContainer from './ToastContainer';
 import DiagnosticLogViewer from './DiagnosticLogViewer';
 import FailedIngredientLogViewer from './FailedIngredientLogViewer';
-import MacroDebugLogViewer from './MacroDebugLogViewer'; // CHANGE 1
-import RecipeModal from './RecipeModal';
-import EmojiIcon from './EmojiIcon';
-import ProfileTab from './ProfileTab';
-import SavedPlansModal from './SavedPlansModal';
-import PlanSetupWizard from './wizard/PlanSetupWizard';
-
-// Phase 2 imports
-import Header from './Header';
-import { ToastContainer } from './Toast';
-import EmptyState from './EmptyState';
-import LoadingOverlay from './LoadingOverlay';
+import MacroDebugLogViewer from './MacroDebugLogViewer';
+import StoryModeGeneration from './StoryModeGeneration';
 import SuccessModal from './SuccessModal';
-import MealCard from './MealCard';
-import DayNavigator from './DayNavigator';
-import ShoppingListWithDetails from './ShoppingListWithDetails';
-import FormSection from './FormSection';
 import SettingsPanel from './SettingsPanel';
-import BottomNav from './BottomNav';
-import { MealCardSkeleton, ProfileCardSkeleton, ShoppingListSkeleton } from './SkeletonLoader';
+import SavedPlansModal from './SavedPlansModal';
+import RecipeModal from './RecipeModal';
+import DayTabBar from './DayTabBar';
 import PullToRefresh from './PullToRefresh';
 
-// --- Category Icon Map ---
-const categoryIconMap = {
-    'produce': <EmojiIcon code="1f966" alt="produce" />,
-    'fruit': <EmojiIcon code="1f353" alt="fruit" />,
-    'veg': <EmojiIcon code="1f955" alt="veg" />,
-    'grains': <EmojiIcon code="1f33e" alt="grains" />,
-    'carb': <EmojiIcon code="1f33e" alt="grains" />,
-    'meat': <EmojiIcon code="1f969" alt="meat" />,
-    'protein': <EmojiIcon code="1f969" alt="meat" />,
-    'seafood': <EmojiIcon code="1f41f" alt="seafood" />,
-    'dairy': <EmojiIcon code="1f95b" alt="dairy" />,
-    'fat': <EmojiIcon code="1f951" alt="fat" />,
-    'drinks': <EmojiIcon code="1f9c3" alt="drinks" />,
-    'pantry': <EmojiIcon code="1f968" alt="pantry" />,
-    'canned': <EmojiIcon code="1f96b" alt="canned" />,
-    'spreads': <EmojiIcon code="1f95c" alt="spreads" />,
-    'condiments': <EmojiIcon code="1f9c2" alt="condiments" />,
-    'bakery': <EmojiIcon code="1f370" alt="bakery" />,
-    'frozen': <EmojiIcon code="2744" alt="frozen" />,
-    'snacks': <EmojiIcon code="1f36b" alt="snacks" />, 
+/**
+ * Emoji Icon Component
+ */
+const EmojiIcon = ({ code, alt }) => (
+    <span role="img" aria-label={alt} className="text-xl">
+        {String.fromCodePoint(parseInt(code, 16))}
+    </span>
+);
+
+/**
+ * Category Icon Map
+ */
+const categoryIcons = {
+    'fruits_vegetables': <EmojiIcon code="1f34e" alt="fruits" />, 
+    'meat_seafood': <EmojiIcon code="1f357" alt="meat" />, 
+    'dairy_eggs': <EmojiIcon code="1f9c0" alt="dairy" />,
+    'grains_bread': <EmojiIcon code="1f35e" alt="bread" />,
+    'pantry': <EmojiIcon code="1f3fa" alt="pantry" />, 
     'misc': <EmojiIcon code="1f36b" alt="snacks" />,
     'uncategorized': <EmojiIcon code="1f6cd" alt="shopping" />,
     'default': <EmojiIcon code="1f6cd" alt="shopping" />
@@ -118,7 +94,7 @@ const MainApp = ({
     setIsLogOpen,
     latestLog,
     
-    // CHANGE 2: Add new props to the MainApp component signature
+    // Macro Debug Log props
     macroDebug = {},
     showMacroDebugLog = false,
     setShowMacroDebugLog = () => {},
@@ -166,7 +142,7 @@ const MainApp = ({
     handleSignOut,
     showToast,
     
-    // Plan Persistence - NEW
+    // Plan Persistence
     savedPlans,
     activePlanId,
     handleSavePlan,
@@ -244,8 +220,7 @@ const MainApp = ({
         </div>
     );
     
-    // Fix 1: Removed p-4 from the outer wrapper
-// ─────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────
     // MEAL PLAN CONTENT — Option A: Sticky Top Tab Bar
     // ─────────────────────────────────────────────────────────
     // Old layout:  sidebar card (DaySidebar + Save/Load) | meal content
@@ -256,6 +231,23 @@ const MainApp = ({
     // For single-day plans (tab bar hidden), compact buttons
     // appear inline in the meal header area.
     // ─────────────────────────────────────────────────────────
+    
+    // ── CRITICAL: Validate selectedDay before rendering ──
+    // This prevents white screen crashes when selectedDay is out of bounds
+    const isValidDaySelection = mealPlan && 
+                                 mealPlan.length > 0 && 
+                                 selectedDay >= 1 && 
+                                 selectedDay <= mealPlan.length;
+
+    // Auto-correct invalid selectedDay to prevent crashes
+    // This is a safety fallback - primary fix is in loadPlan
+    React.useEffect(() => {
+        if (mealPlan && mealPlan.length > 0 && selectedDay > mealPlan.length) {
+            console.warn(`[MainApp] Auto-correcting selectedDay from ${selectedDay} to 1 (plan has ${mealPlan.length} days)`);
+            setSelectedDay(1);
+        }
+    }, [mealPlan, selectedDay, setSelectedDay]);
+
     const mealPlanContent = (
         <div className="flex flex-col">
             {/* ── Day Tab Bar (auto-hidden for single-day plans) ── */}
@@ -293,8 +285,8 @@ const MainApp = ({
                 </div>
             )}
 
-            {/* ── Meal Content ── */}
-            {mealPlan && mealPlan.length > 0 && selectedDay >= 1 && selectedDay <= mealPlan.length ? (
+            {/* ── Meal Content with Bounds Validation ── */}
+            {isValidDaySelection ? (
                 <div className="p-4">
                     <MealPlanDisplay
                         key={selectedDay}
@@ -333,7 +325,7 @@ const MainApp = ({
                 userId={userId}
                 onOpenSettings={() => setIsSettingsOpen(true)}
                 onNavigateToProfile={() => {
-                    handleTabChange('profile'); // Updated to use handleTabChange
+                    handleTabChange('profile');
                     setIsMenuOpen(true);
                 }}
                 onSignOut={handleSignOut}
@@ -376,7 +368,7 @@ const MainApp = ({
                                         {/* Added Navigation Tabs */}
                                         <div className="flex space-x-4 border-b">
                                             <button
-                                                onClick={() => handleTabChange('profile')} // UPDATED
+                                                onClick={() => handleTabChange('profile')}
                                                 className={`pb-2 text-lg font-semibold ${contentView === 'profile' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
                                             >
                                                 <LayoutDashboard className="inline w-5 h-5 mr-2" /> Summary
@@ -384,13 +376,13 @@ const MainApp = ({
                                             {results && Object.keys(results).length > 0 && (
                                                 <>
                                                     <button
-                                                        onClick={() => handleTabChange('meals')} // UPDATED
+                                                        onClick={() => handleTabChange('meals')}
                                                         className={`pb-2 text-lg font-semibold ${contentView === 'meals' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
                                                     >
                                                         <Utensils className="inline w-5 h-5 mr-2" /> Meals
                                                     </button>
                                                     <button
-                                                        onClick={() => handleTabChange('ingredients')} // UPDATED
+                                                        onClick={() => handleTabChange('ingredients')}
                                                         className={`pb-2 text-lg font-semibold ${contentView === 'ingredients' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
                                                     >
                                                         <ShoppingBag className="inline w-5 h-5 mr-2" /> Shopping
@@ -406,21 +398,18 @@ const MainApp = ({
                                 ) : (
                                     <div className="p-0">
                                         {loading && (
-     <div className="p-4 md:p-6">
-          <StoryModeGeneration
-             activeStepKey={generationStepKey}
-            errorMsg={error}
-            latestLog={latestLog}
-
-              formData={formData}
-
-            nutritionalTargets={nutritionalTargets}
-
-             results={results}
-             mealPlan={mealPlan}
-        />
-      </div>
-   )}
+                                            <div className="p-4 md:p-6">
+                                                <StoryModeGeneration
+                                                    activeStepKey={generationStepKey}
+                                                    errorMsg={error}
+                                                    latestLog={latestLog}
+                                                    formData={formData}
+                                                    nutritionalTargets={nutritionalTargets}
+                                                    results={results}
+                                                    mealPlan={mealPlan}
+                                                />
+                                            </div>
+                                        )}
                                 
                                         {contentView === 'profile' && (
                                             <ProfileTab 
@@ -431,7 +420,6 @@ const MainApp = ({
                                         
                                         {contentView === 'meals' && mealPlan?.length > 0 && mealPlanContent}
                                         
-                                        {/* STEP 3: Update Render Call */}
                                         {contentView === 'ingredients' && Object.keys(results)?.length > 0 && shoppingListContent}
                                         
                                         {(contentView === 'meals' || contentView === 'ingredients') && (!results || Object.keys(results).length === 0) && !loading && (
@@ -450,7 +438,7 @@ const MainApp = ({
             {isMobile && results && Object.keys(results).length > 0 && (
                 <BottomNav
                     activeTab={contentView}
-                    onTabChange={handleTabChange} // UPDATED
+                    onTabChange={handleTabChange}
                     showPlanButton={false}
                 />
             )}
@@ -465,7 +453,7 @@ const MainApp = ({
                 onClose={() => setShowSuccessModal(false)}
                 onViewPlan={() => {
                     setShowSuccessModal(false);
-                    handleTabChange('meals'); // Using handleTabChange here for consistency
+                    handleTabChange('meals');
                 }}
             />
     
@@ -485,23 +473,21 @@ const MainApp = ({
                 onToggleOrchestratorLogs={setShowOrchestratorLogs}
                 showFailedIngredientsLogs={showFailedIngredientsLogs}
                 onToggleFailedIngredientsLogs={setShowFailedIngredientsLogs}
-                // CHANGE 3: Add new props
                 showMacroDebugLog={showMacroDebugLog}
                 onToggleMacroDebugLog={setShowMacroDebugLog}
-                // AI Model selection
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
                 settings={{
                     showOrchestratorLogs,
                     showFailedIngredientsLogs,
-                    showMacroDebugLog, // Also ensure it's in the settings object
+                    showMacroDebugLog,
                 }}
                 onToggleSetting={(key) => {
                     if (key === 'showOrchestratorLogs') {
                         setShowOrchestratorLogs(!showOrchestratorLogs);
                     } else if (key === 'showFailedIngredientsLogs') {
                         setShowFailedIngredientsLogs(!showFailedIngredientsLogs);
-                    } else if (key === 'showMacroDebugLog') { // Add macro debug toggle logic
+                    } else if (key === 'showMacroDebugLog') {
                         setShowMacroDebugLog(!showMacroDebugLog);
                     }
                 }}
@@ -557,7 +543,7 @@ const MainApp = ({
                 loadingPlan={loadingPlan}
             />
     
-            {/* CHANGE 4: Update the fixed bottom log area */}
+            {/* Fixed bottom log area */}
             <div className="fixed bottom-0 left-0 right-0 z-[100] flex flex-col-reverse">
                 {showOrchestratorLogs && (
                     <DiagnosticLogViewer logs={diagnosticLogs} height={logHeight} setHeight={setLogHeight} isOpen={isLogOpen} setIsOpen={setIsLogOpen} onDownloadLogs={handleDownloadLogs} />
@@ -565,11 +551,9 @@ const MainApp = ({
                 {showFailedIngredientsLogs && (
                     <FailedIngredientLogViewer failedHistory={failedIngredientsHistory} onDownload={handleDownloadFailedLogs} />
                 )}
-                {/* NEW: Macro Debug Log Viewer */}
                 {showMacroDebugLog && (
                     <MacroDebugLogViewer macroDebug={macroDebug} onDownload={handleDownloadMacroDebugLogs} />
                 )}
-                {/* Updated condition to include macro debug log */}
                 {!showOrchestratorLogs && !showFailedIngredientsLogs && !showMacroDebugLog && (
                     <div className="bg-gray-800 text-white p-2 text-xs text-center cursor-pointer hover:bg-gray-700" onClick={() => { setShowOrchestratorLogs(true); setShowFailedIngredientsLogs(true); setShowMacroDebugLog(true); }}>
                         📋 Show Logs
@@ -588,4 +572,3 @@ const MainApp = ({
 };
 
 export default MainApp;
-
