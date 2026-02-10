@@ -1136,24 +1136,38 @@ module.exports = async (request, response) => {
     response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS'); 
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); 
     
+    // ── PERSISTENCE FIX: Send run_id as a header so the frontend gets it
+    // even if the SSE stream hasn't been parsed yet (e.g. on slow connections
+    // or if the browser buffers the initial SSE frames). ──
+    response.setHeader('X-Cheffy-Run-Id', run_id);
+
+    // Expose this custom header to the browser (CORS)
+    response.setHeader('Access-Control-Expose-Headers', 'X-Cheffy-Run-Id');
+
     // [FIX] Pass `run_id` to logger
     const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, sendEvent } = createLogger(run_id, response);
-
-    // --- FIX (v2): Track client disconnection ---
-    // When the browser tab is closed/refreshed, the TCP connection drops.
-    // Node/Vercel emits 'close' on the request.  We set a flag but do NOT
-    // abort processing — the pipeline must run to completion so the result
-    // is persisted to KV and recoverable via polling.
-    let clientDisconnected = false;
-
-    request.on('close', () => {
-        if (!response.writableEnded) {
-            clientDisconnected = true;
-            log('Client disconnected — continuing server-side processing.', 'WARN', 'SSE');
-        }
-    });
     
     await setRunStatus(run_id, 'running', null, log);
+
+    // ── PERSISTENCE FIX: Detect client disconnect ──
+    // When the browser tab closes, refreshes, or the SSE connection drops,
+    // this fires.  We set a flag so the pipeline continues to run but
+    // SSE writes are skipped (they already are via the writableEnded check
+    // in writeSseEvent, but this avoids noisy error logs and lets us
+    // update the KV status).
+    let clientDisconnected = false;
+
+    response.on('close', () => {
+        if (!response.writableEnded) {
+            clientDisconnected = true;
+            console.log(`[SSE] Client disconnected for run ${run_id}. Pipeline will continue.`);
+            // Update KV so the poller can distinguish "still running, client left"
+            setRunStatus(run_id, 'running_detached', null, (...args) => {
+                // Use a no-op SSE logger since the stream is dead
+                console.log('[DETACHED]', args[0]);
+            }).catch(() => {});
+        }
+    });
 
     // --- End SSE Setup ---
 
@@ -2137,7 +2151,35 @@ module.exports = async (request, response) => {
             solver_path_live: USE_SOLVER_V1 ? 'SOLVER_V1' : 'RECONCILER_V0'
         });
 
-        await setRunStatus(run_id, 'complete', responseData, log);
+        // ── PERSISTENCE FIX: Guard against KV payload size limits ──
+        // Upstash KV has a ~1 MB value limit.  A full 7-day plan with recipes
+        // and macroDebug can exceed this.  If so, store a trimmed version.
+        const fullPayloadStr = JSON.stringify({ status: 'complete', payload: responseData, updatedAt: new Date().toISOString() });
+        const payloadSizeBytes = Buffer.byteLength(fullPayloadStr, 'utf-8');
+        const MAX_KV_PAYLOAD_BYTES = 900 * 1024; // 900 KB safety margin
+
+        if (payloadSizeBytes > MAX_KV_PAYLOAD_BYTES) {
+            log(`Payload too large for KV (${(payloadSizeBytes / 1024).toFixed(0)} KB). Storing trimmed version.`, 'WARN', 'RUN_STATUS');
+            
+            // Create a trimmed copy — strip macroDebug and truncate recipe instructions
+            const trimmedData = {
+                ...responseData,
+                macroDebug: { _trimmed: true, reason: 'payload_size_limit' },
+                mealPlan: responseData.mealPlan.map(day => ({
+                    ...day,
+                    meals: day.meals.map(meal => ({
+                        ...meal,
+                        instructions: meal.instructions
+                            ? [meal.instructions[0] || 'See full plan for instructions.']
+                            : ['See full plan for instructions.']
+                    }))
+                }))
+            };
+            await setRunStatus(run_id, 'complete', trimmedData, log);
+        } else {
+            await setRunStatus(run_id, 'complete', responseData, log);
+        }
+
         sendFinalDataAndClose(responseData);
 
     } catch (error) {
