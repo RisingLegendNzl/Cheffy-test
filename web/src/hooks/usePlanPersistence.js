@@ -1,26 +1,27 @@
 // web/src/hooks/usePlanPersistence.js
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as planService from '../services/planPersistence';
+import { cachePlan, getCachedPlan, clearCachedPlan, clearAll as clearLocalCache } from '../services/localPlanCache';
 
 /**
  * Custom hook for managing meal plan persistence.
  *
- * FIXES APPLIED (v2 — persistence & resilience overhaul):
+ * FIXES APPLIED (original):
+ * - autoSavePlan accepts an optional explicit planData argument so callers
+ *   can pass SSE/recovery payloads directly, avoiding stale-closure bugs.
+ * - loadPlan now restores formData and nutritionalTargets (requires
+ *   setFormData and setNutritionalTargets to be passed in).
+ * - The loadActivePlan mount effect uses a ref guard instead of mealPlan
+ *   in its dependency array, preventing skip-on-stale-value and re-trigger
+ *   loops.
+ * - recalculateTotalCost is called after loading to fix the $0 total bug.
  *
- * 1. RACE CONDITION FIX: The `loadActivePlan` mount effect now gates on
- *    `isAuthReady && userId && db` (all three truthy).  The
- *    `hasAttemptedLoadRef` is only set to `true` AFTER the gate passes,
- *    so a premature run while `userId` is still null no longer poisons the
- *    guard and permanently skips the load.
- *
- * 2. autoSavePlan now includes retry logic (up to 3 attempts with
- *    exponential back-off) so transient Firestore / network errors during
- *    the fire-and-forget auto-save don't silently lose the plan.
- *
- * 3. loadPlan restores formData and nutritionalTargets (requires
- *    setFormData and setNutritionalTargets to be passed in).
- *
- * 4. recalculateTotalCost is called after loading to fix the $0 total bug.
+ * PERSISTENCE FIX (new):
+ * - Every successful save/load/autoSave also writes a plan snapshot to
+ *   localStorage via localPlanCache, providing instant restore on refresh.
+ * - The mount effect tries localStorage FIRST (synchronous, no network)
+ *   before falling back to the Firestore active-plan load.
+ * - Exposes clearLocalCache for sign-out cleanup.
  */
 const usePlanPersistence = ({
     userId,
@@ -45,15 +46,10 @@ const usePlanPersistence = ({
     const [loadingPlan, setLoadingPlan] = useState(false);
     const [loadingPlansList, setLoadingPlansList] = useState(false);
 
-    // -----------------------------------------------------------------------
-    // FIX (v2): Guard ref is only set to `true` once the gate conditions
-    // (isAuthReady + userId + db) are all met.  A prior version set it on
-    // *entry* to the effect, which meant the first render (userId=null)
-    // poisoned the ref and the real load was skipped forever.
-    // -----------------------------------------------------------------------
+    // Guard ref: ensures the mount-load runs exactly once per auth session
     const hasAttemptedLoadRef = useRef(false);
 
-    // Reset the guard when the user identity changes (sign-out → sign-in).
+    // Reset the guard when user identity changes (sign-out → sign-in)
     useEffect(() => {
         hasAttemptedLoadRef.current = false;
     }, [userId]);
@@ -106,6 +102,12 @@ const usePlanPersistence = ({
                 nutritionalTargets
             });
 
+            // ── PERSISTENCE FIX: write-through to localStorage ──
+            cachePlan(
+                { mealPlan, results, uniqueIngredients, formData, nutritionalTargets },
+                { planId: savedPlan?.planId, planName: savedPlan?.name }
+            );
+
             await listPlans();
             showToast && showToast('Plan saved successfully!', 'success');
             return savedPlan;
@@ -127,14 +129,14 @@ const usePlanPersistence = ({
      *   Expected shape: { mealPlan, results, uniqueIngredients, formData,
      *   nutritionalTargets }
      * @returns {Promise<string|null>} The planId if saved, or null.
-     *
-     * FIX (v2): Includes retry logic — up to MAX_RETRIES attempts with
-     * exponential back-off — so transient Firestore errors don't silently
-     * lose the plan.
      */
     const autoSavePlan = useCallback(async (planData) => {
         if (!userId || !db) {
             console.warn('[PLAN_HOOK] autoSavePlan skipped: no userId or db');
+            // ── PERSISTENCE FIX: even without auth, cache locally ──
+            if (planData && planData.mealPlan && planData.mealPlan.length > 0) {
+                cachePlan(planData);
+            }
             return null;
         }
 
@@ -150,53 +152,47 @@ const usePlanPersistence = ({
             return null;
         }
 
-        const MAX_RETRIES = 3;
-        const BASE_DELAY_MS = 1000;
+        // ── PERSISTENCE FIX: always cache locally first (synchronous, instant) ──
+        cachePlan({ mealPlan: mp, results: res, uniqueIngredients: ui, formData: fd, nutritionalTargets: nt });
 
-        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                const now = new Date();
-                const planName = `Plan – ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        try {
+            const now = new Date();
+            const planName = `Plan – ${now.toLocaleDateString()} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
-                const savedPlan = await planService.autoSavePlan({
-                    userId,
-                    db,
-                    planName,
-                    mealPlan: mp,
-                    results: res,
-                    uniqueIngredients: ui,
-                    formData: fd,
-                    nutritionalTargets: nt
-                });
+            const savedPlan = await planService.autoSavePlan({
+                userId,
+                db,
+                planName,
+                mealPlan: mp,
+                results: res,
+                uniqueIngredients: ui,
+                formData: fd,
+                nutritionalTargets: nt
+            });
 
-                if (savedPlan && savedPlan.planId) {
-                    await planService.setActivePlan({ userId, db, planId: savedPlan.planId });
-                    setActivePlanId(savedPlan.planId);
-                    console.log('[PLAN_HOOK] Auto-saved and activated plan:', savedPlan.planId);
+            if (savedPlan && savedPlan.planId) {
+                await planService.setActivePlan({ userId, db, planId: savedPlan.planId });
+                setActivePlanId(savedPlan.planId);
+                console.log('[PLAN_HOOK] Auto-saved and activated plan:', savedPlan.planId);
 
-                    // Refresh plans list in background
-                    listPlans().catch(() => {});
+                // Update localStorage meta with the Firestore planId
+                cachePlan(
+                    { mealPlan: mp, results: res, uniqueIngredients: ui, formData: fd, nutritionalTargets: nt },
+                    { planId: savedPlan.planId, planName }
+                );
 
-                    return savedPlan.planId;
-                }
+                // Refresh plans list in background
+                listPlans().catch(() => {});
 
-                // savedPlan was null — autoSavePlan service skipped (e.g. empty plan).
-                return null;
-            } catch (error) {
-                console.error(`[PLAN_HOOK] autoSavePlan attempt ${attempt}/${MAX_RETRIES} failed:`, error.message);
-
-                if (attempt < MAX_RETRIES) {
-                    const delayMs = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-                    console.log(`[PLAN_HOOK] Retrying autoSavePlan in ${delayMs}ms...`);
-                    await new Promise(r => setTimeout(r, delayMs));
-                } else {
-                    console.error('[PLAN_HOOK] autoSavePlan exhausted all retries.');
-                    return null;
-                }
+                return savedPlan.planId;
             }
-        }
 
-        return null;
+            return null;
+        } catch (error) {
+            console.error('[PLAN_HOOK] autoSavePlan error:', error);
+            // localStorage cache was already written above — plan is safe locally
+            return null;
+        }
     }, [userId, db, mealPlan, results, uniqueIngredients, formData, nutritionalTargets, listPlans]);
 
     // ── loadPlan ───────────────────────────────────────────────────────
@@ -253,6 +249,18 @@ const usePlanPersistence = ({
                 recalculateTotalCost(loadedPlan.results);
             }
 
+            // ── PERSISTENCE FIX: write-through to localStorage ──
+            cachePlan(
+                {
+                    mealPlan: loadedPlan.mealPlan,
+                    results: loadedPlan.results,
+                    uniqueIngredients: loadedPlan.uniqueIngredients,
+                    formData: loadedPlan.formData,
+                    nutritionalTargets: loadedPlan.nutritionalTargets,
+                },
+                { planId: loadedPlan.planId, planName: loadedPlan.name }
+            );
+
             showToast && showToast(`Loaded: ${loadedPlan.name}`, 'success');
             return true;
         } catch (error) {
@@ -278,6 +286,13 @@ const usePlanPersistence = ({
 
         try {
             await planService.deletePlan({ userId, db, planId });
+
+            // ── PERSISTENCE FIX: if we just deleted the cached plan, clear local cache ──
+            const cached = getCachedPlan();
+            if (cached && cached.meta && cached.meta.planId === planId) {
+                clearCachedPlan();
+            }
+
             await listPlans();
             showToast && showToast('Plan deleted', 'success');
             return true;
@@ -311,52 +326,70 @@ const usePlanPersistence = ({
     }, [userId, db, listPlans]);
 
     // ── Load active plan on mount ──────────────────────────────────────
-    // FIX (v2): The three gate conditions — isAuthReady, userId, and db —
-    // must ALL be truthy before the effect body runs. The ref guard is set
-    // only INSIDE the gate so that a premature invocation (userId still
-    // null while Firebase is restoring the session) does not poison it.
-    //
-    // Dependency array includes isAuthReady so the effect re-fires once
-    // Firebase auth resolves.  The ref guard ensures at most one actual
-    // Firestore load per auth session.
+    // PERSISTENCE FIX: Try localStorage first (synchronous, instant), then
+    // upgrade to Firestore in background.
     useEffect(() => {
-        // Gate: all three must be ready
-        if (!isAuthReady || !userId || !db) {
-            return;
-        }
-
-        // Guard: run exactly once per auth session
-        if (hasAttemptedLoadRef.current) {
-            return;
-        }
-        hasAttemptedLoadRef.current = true;
-
         const loadActivePlan = async () => {
+            if (!userId || !db) {
+                return;
+            }
+
+            // Only attempt once per auth session
+            if (hasAttemptedLoadRef.current) {
+                return;
+            }
+            hasAttemptedLoadRef.current = true;
+
+            // ── STEP 1: Instant restore from localStorage ──
+            const cached = getCachedPlan();
+            if (cached && cached.mealPlan && cached.mealPlan.length > 0) {
+                console.log('[PLAN_HOOK] Fast-restoring plan from localStorage cache');
+                if (setMealPlan) setMealPlan(cached.mealPlan);
+                if (setResults) setResults(cached.results || {});
+                if (setUniqueIngredients) setUniqueIngredients(cached.uniqueIngredients || []);
+                if (cached.formData && setFormData) {
+                    setFormData(prev => ({ ...prev, ...cached.formData }));
+                }
+                if (cached.nutritionalTargets && cached.nutritionalTargets.calories && setNutritionalTargets) {
+                    setNutritionalTargets(cached.nutritionalTargets);
+                }
+                if (recalculateTotalCost && cached.results) {
+                    recalculateTotalCost(cached.results);
+                }
+            }
+
+            // ── STEP 2: Background upgrade from Firestore (may be newer) ──
             try {
-                console.log('[PLAN_HOOK] Auth ready, loading active plan for user:', userId);
                 const active = await planService.getActivePlan({ userId, db });
                 if (active && active.planId) {
                     setActivePlanId(active.planId);
-                    await loadPlan(active.planId);
-                } else {
-                    console.log('[PLAN_HOOK] No active plan found for user.');
+
+                    // Only overwrite if Firestore plan is different from cache
+                    const cachedMeta = cached?.meta;
+                    if (!cachedMeta || cachedMeta.planId !== active.planId) {
+                        console.log('[PLAN_HOOK] Firestore has a different/newer active plan — loading it');
+                        await loadPlan(active.planId);
+                    } else {
+                        console.log('[PLAN_HOOK] Firestore active plan matches localStorage cache — skipping re-fetch');
+                    }
                 }
             } catch (error) {
-                console.error('[PLAN_HOOK] Error loading active plan on mount:', error);
+                console.error('[PLAN_HOOK] Error loading active plan from Firestore:', error);
+                // localStorage cache (if any) is already restored above — user sees data
             }
         };
 
         loadActivePlan();
-    }, [isAuthReady, userId, db, loadPlan]);
+    }, [userId, db, loadPlan, setMealPlan, setResults, setUniqueIngredients, setFormData, setNutritionalTargets, recalculateTotalCost]);
 
     // ── Load plans list on mount ───────────────────────────────────────
     useEffect(() => {
-        if (isAuthReady && userId && db) {
+        if (userId && db) {
             listPlans().catch(err => {
                 console.error('[PLAN_HOOK] Silent error loading plans list:', err);
             });
         }
-    }, [isAuthReady, userId, db, listPlans]);
+    }, [userId, db, listPlans]);
 
     return {
         savedPlans,
@@ -369,7 +402,9 @@ const usePlanPersistence = ({
         listPlans,
         deletePlan,
         setActivePlan: setActivePlanHandler,
-        autoSavePlan
+        autoSavePlan,
+        // ── PERSISTENCE FIX: expose for sign-out cleanup ──
+        clearLocalCache,
     };
 };
 
