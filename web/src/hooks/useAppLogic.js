@@ -200,7 +200,10 @@ const useAppLogic = ({
         setMealPlan: setMealPlan || (() => {}),
         setResults: setResults || (() => {}),
         setUniqueIngredients: setUniqueIngredients || (() => {}),
-        recalculateTotalCost: recalculateTotalCost || (() => {})
+        recalculateTotalCost: recalculateTotalCost || (() => {}),
+        // Additions for persistence fix:
+        setFormData: setFormData || (() => {}),
+        setNutritionalTargets: setNutritionalTargets || (() => {}),
     });
     // --- End Plan Persistence Hook Call ---
 
@@ -650,14 +653,20 @@ const useAppLogic = ({
                                   setTimeout(() => {
                                     setShowSuccessModal(false);
                                   }, 2500);
-                                  
-                                  // Auto-save to Firestore
-                                  if (planPersistence && planPersistence.autoSavePlan) {
-                                      planPersistence.autoSavePlan().catch(err => {
-                                          console.warn('[AUTO_SAVE] Failed to auto-save plan:', err.message);
-                                      });
-                                  }
                                 }, 500);
+                                
+                                // Auto-save to Firestore
+                                if (planPersistence && planPersistence.autoSavePlan) {
+                                    planPersistence.autoSavePlan({
+                                        mealPlan: eventData.mealPlan || [],
+                                        results: eventData.results || {},
+                                        uniqueIngredients: eventData.uniqueIngredients || [],
+                                        formData: formData,
+                                        nutritionalTargets: nutritionalTargets
+                                    }).catch(err => {
+                                        console.warn('[AUTO_SAVE] Failed to auto-save plan:', err.message);
+                                    });
+                                }
                                 break;
 
                             case 'error':
@@ -706,7 +715,13 @@ const useAppLogic = ({
                             showToast('Plan recovered after connection interruption!', 'success');
                             
                             if (planPersistence && planPersistence.autoSavePlan) {
-                                planPersistence.autoSavePlan().catch(err => {
+                                planPersistence.autoSavePlan({
+                                    mealPlan: recovered.mealPlan || [],
+                                    results: recovered.results || {},
+                                    uniqueIngredients: recovered.uniqueIngredients || [],
+                                    formData: formData,
+                                    nutritionalTargets: nutritionalTargets
+                                }).catch(err => {
                                     console.warn('[AUTO_SAVE] Failed to auto-save recovered plan:', err.message);
                                 });
                             }
@@ -729,7 +744,7 @@ const useAppLogic = ({
                  setTimeout(() => setLoading(false), 2000);
             }
         
-    }, [formData, isLogOpen, recalculateTotalCost, selectedModel, showToast, nutritionalTargets.calories, error, pollForCompletedPlan, planPersistence, getResponseErrorDetails]);
+    }, [formData, isLogOpen, recalculateTotalCost, selectedModel, showToast, nutritionalTargets, error, pollForCompletedPlan, planPersistence, getResponseErrorDetails]);
 
     const handleFetchNutrition = useCallback(async (product) => {
         if (!product || !product.url || nutritionCache[product.url]) { return; }
