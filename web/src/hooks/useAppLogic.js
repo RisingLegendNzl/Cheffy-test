@@ -7,6 +7,7 @@ import usePlanPersistence from './usePlanPersistence';
 const ORCHESTRATOR_TARGETS_API_URL = '/api/plan/targets';
 const ORCHESTRATOR_DAY_API_URL = '/api/plan/day';
 const ORCHESTRATOR_FULL_PLAN_API_URL = '/api/plan/generate-full-plan';
+const PLAN_STATUS_API_URL = '/api/plan/status';
 const NUTRITION_API_URL = '/api/nutrition-search';
 const MAX_SUBSTITUTES = 5;
 
@@ -84,6 +85,7 @@ const useAppLogic = ({
 }) => {
     // --- Refs ---
     const abortControllerRef = useRef(null);
+    const currentRunIdRef = useRef(null);
     
     // --- State ---
     const [results, setResults] = useState({});
@@ -391,6 +393,61 @@ const useAppLogic = ({
       }
     }, [mealPlan, showToast]);
 
+    // --- NEW HELPER FUNCTION for robust error parsing ---
+    const getResponseErrorDetails = useCallback(async (response) => {
+        let errorMsg = `HTTP ${response.status}`;
+        try {
+            // Clone the response so we can safely read the body without disturbing the stream
+            const clonedResponse = response.clone();
+            try {
+                // Attempt to read as JSON first
+                const errorData = await clonedResponse.json();
+                errorMsg = errorData.message || JSON.stringify(errorData);
+            } catch (jsonErr) {
+                // If JSON parsing fails, read the raw text
+                errorMsg = await response.text() || `HTTP ${response.status} - Could not read body`;
+            }
+        } catch (e) {
+            console.error('[ERROR] Could not read error response body:', e);
+            errorMsg = `HTTP ${response.status} - Could not read response body`;
+        }
+        return errorMsg;
+    }, []);
+
+    const pollForCompletedPlan = useCallback(async (runId) => {
+        if (!runId) return null;
+
+        const MAX_POLLS = 200;       // 200 × 3s = 10 minutes max
+        const POLL_INTERVAL_MS = 3000;
+
+        setGenerationStatus('Connection lost — checking for completed plan…');
+        setGenerationStepKey('reconnecting');
+
+        for (let i = 0; i < MAX_POLLS; i++) {
+            try {
+                const res = await fetch(`${PLAN_STATUS_API_URL}?runId=${encodeURIComponent(runId)}`);
+                if (!res.ok) {
+                    console.warn(`[POLL] Status endpoint returned ${res.status}`);
+                    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+                    continue;
+                }
+                const data = await res.json();
+
+                if (data.status === 'complete' && data.payload) {
+                    return data.payload;
+                }
+                if (data.status === 'failed') {
+                    throw new Error(data.payload?.error || 'Plan generation failed on server');
+                }
+                // status === 'running' → keep polling
+            } catch (err) {
+                console.warn(`[POLL] Poll attempt ${i + 1} error:`, err.message);
+            }
+            await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+        }
+        return null; // timed out
+    }, []);
+
     const handleGeneratePlan = useCallback(async (e) => {
         e.preventDefault();
         
@@ -400,6 +457,7 @@ const useAppLogic = ({
             abortControllerRef.current.abort();
         }
         abortControllerRef.current = new AbortController();
+        currentRunIdRef.current = null;
         const signal = abortControllerRef.current.signal;
         // --- End Abort Fix ---
 
@@ -516,6 +574,12 @@ const useAppLogic = ({
                                 setDiagnosticLogs(prev => [...prev, eventData]);
                                 break;
                             
+                            case 'plan:start':
+                                if (eventData.run_id) {
+                                    currentRunIdRef.current = eventData.run_id;
+                                }
+                                break;
+                            
                             case 'phase:start':
                                 const phaseMap = {
                                     'meals': 'planning',
@@ -586,6 +650,13 @@ const useAppLogic = ({
                                   setTimeout(() => {
                                     setShowSuccessModal(false);
                                   }, 2500);
+                                  
+                                  // Auto-save to Firestore
+                                  if (planPersistence && planPersistence.autoSavePlan) {
+                                      planPersistence.autoSavePlan().catch(err => {
+                                          console.warn('[AUTO_SAVE] Failed to auto-save plan:', err.message);
+                                      });
+                                  }
                                 }, 500);
                                 break;
 
@@ -598,41 +669,67 @@ const useAppLogic = ({
             } catch (err) {
                 if (err.name === 'AbortError') {
                     console.log('[GENERATE] Batched request aborted.');
-                    return; // Exit gracefully
+                    return;
                 }
-                
+
+                const isStreamInterrupt = (
+                    err instanceof TypeError ||
+                    /load failed|network|failed to fetch|aborted|readable/i.test(err.message)
+                );
+
+                if (isStreamInterrupt && currentRunIdRef.current) {
+                    console.warn('[GENERATE] Stream interrupted, attempting recovery via polling...', err.message);
+                    setDiagnosticLogs(prev => [...prev, {
+                        timestamp: new Date().toISOString(), level: 'WARN', tag: 'FRONTEND',
+                        message: `Stream interrupted: ${err.message}. Polling for server-side result…`
+                    }]);
+
+                    try {
+                        const recovered = await pollForCompletedPlan(currentRunIdRef.current);
+                        if (recovered) {
+                            setMealPlan(recovered.mealPlan || []);
+                            setResults(recovered.results || {});
+                            setUniqueIngredients(recovered.uniqueIngredients || []);
+                            recalculateTotalCost(recovered.results || {});
+                            if (recovered.macroDebug) setMacroDebug(recovered.macroDebug);
+
+                            setGenerationStepKey('complete');
+                            setGenerationStatus('Plan recovered successfully!');
+                            setError(null);
+
+                            setPlanStats([
+                                { label: 'Days', value: formData.days, color: '#4f46e5' },
+                                { label: 'Meals', value: recovered.mealPlan?.length * (parseInt(formData.eatingOccasions) || 3), color: '#10b981' },
+                                { label: 'Items', value: recovered.uniqueIngredients?.length || 0, color: '#f59e0b' },
+                            ]);
+
+                            showToast('Plan recovered after connection interruption!', 'success');
+                            
+                            if (planPersistence && planPersistence.autoSavePlan) {
+                                planPersistence.autoSavePlan().catch(err => {
+                                    console.warn('[AUTO_SAVE] Failed to auto-save recovered plan:', err.message);
+                                });
+                            }
+                            return;
+                        }
+                    } catch (pollErr) {
+                        console.error('[GENERATE] Recovery polling failed:', pollErr);
+                    }
+                }
+
+                // Fallthrough: unrecoverable error
                 console.error("Batched plan generation failed critically:", err);
                 setError(`Critical failure: ${err.message}`);
                 setGenerationStepKey('error');
                 setDiagnosticLogs(prev => [...prev, {
-                    timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND', message: `Critical failure: ${err.message}`
+                    timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND',
+                    message: `Critical failure: ${err.message}`
                 }]);
             } finally {
                  setTimeout(() => setLoading(false), 2000);
             }
         
-    }, [formData, isLogOpen, recalculateTotalCost, selectedModel, showToast, nutritionalTargets.calories, error]);
-
-    // --- NEW HELPER FUNCTION for robust error parsing ---
-    const getResponseErrorDetails = useCallback(async (response) => {
-        let errorMsg = `HTTP ${response.status}`;
-        try {
-            // Clone the response so we can safely read the body without disturbing the stream
-            const clonedResponse = response.clone();
-            try {
-                // Attempt to read as JSON first
-                const errorData = await clonedResponse.json();
-                errorMsg = errorData.message || JSON.stringify(errorData);
-            } catch (jsonErr) {
-                // If JSON parsing fails, read the raw text
-                errorMsg = await response.text() || `HTTP ${response.status} - Could not read body`;
-            }
-        } catch (e) {
-            console.error('[ERROR] Could not read error response body:', e);
-            errorMsg = `HTTP ${response.status} - Could not read response body`;
-        }
-        return errorMsg;
-    }, []);
+    }, [formData, isLogOpen, recalculateTotalCost, selectedModel, showToast, nutritionalTargets.calories, error, pollForCompletedPlan, planPersistence, getResponseErrorDetails]);
 
     const handleFetchNutrition = useCallback(async (product) => {
         if (!product || !product.url || nutritionCache[product.url]) { return; }
