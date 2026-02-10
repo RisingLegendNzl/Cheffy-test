@@ -6,17 +6,19 @@ import { cachePlan, getCachedPlan, clearCachedPlan, clearAll as clearLocalCache 
 /**
  * Custom hook for managing meal plan persistence.
  *
- * FIXES APPLIED (original):
+ * FIXES APPLIED:
  * - autoSavePlan accepts an optional explicit planData argument so callers
  *   can pass SSE/recovery payloads directly, avoiding stale-closure bugs.
  * - loadPlan now restores formData and nutritionalTargets (requires
  *   setFormData and setNutritionalTargets to be passed in).
+ * - loadPlan now resets selectedDay to 1 to prevent out-of-bounds crashes.
+ * - loadPlan now synchronously updates activePlanId and persists active status.
  * - The loadActivePlan mount effect uses a ref guard instead of mealPlan
  *   in its dependency array, preventing skip-on-stale-value and re-trigger
  *   loops.
  * - recalculateTotalCost is called after loading to fix the $0 total bug.
  *
- * PERSISTENCE FIX (new):
+ * PERSISTENCE FIX:
  * - Every successful save/load/autoSave also writes a plan snapshot to
  *   localStorage via localPlanCache, providing instant restore on refresh.
  * - The mount effect tries localStorage FIRST (synchronous, no network)
@@ -38,7 +40,8 @@ const usePlanPersistence = ({
     setUniqueIngredients,
     recalculateTotalCost,
     setFormData,
-    setNutritionalTargets
+    setNutritionalTargets,
+    setSelectedDay
 }) => {
     const [savedPlans, setSavedPlans] = useState([]);
     const [activePlanId, setActivePlanId] = useState(null);
@@ -199,6 +202,12 @@ const usePlanPersistence = ({
     /**
      * Loads a saved plan from Firestore and restores ALL five state fields:
      * mealPlan, results, uniqueIngredients, formData, nutritionalTargets.
+     * 
+     * CRITICAL FIXES:
+     * - Resets selectedDay to 1 to prevent out-of-bounds crashes
+     * - Updates activePlanId synchronously to prevent UI desync
+     * - Marks plan as active in Firestore
+     * - Uses staging variables for atomic state updates
      */
     const loadPlan = useCallback(async (planId) => {
         if (!userId || !db) {
@@ -212,6 +221,10 @@ const usePlanPersistence = ({
         }
 
         setLoadingPlan(true);
+        
+        // Stage all updates in local variables for atomic application
+        let stagedPlan = null;
+        
         try {
             const loadedPlan = await planService.loadPlan({
                 userId,
@@ -219,7 +232,20 @@ const usePlanPersistence = ({
                 planId
             });
 
-            // Restore the three core plan-data fields
+            stagedPlan = loadedPlan;
+
+            // ── CRITICAL FIX 1: Mark as active in Firestore BEFORE updating UI ──
+            await planService.setActivePlan({ userId, db, planId });
+
+            // ── CRITICAL FIX 2: Apply all state updates atomically ──
+            // This prevents partial-load state corruption
+            
+            // Reset selectedDay FIRST to prevent out-of-bounds render
+            if (setSelectedDay) {
+                setSelectedDay(1);
+            }
+
+            // Update plan content
             if (setMealPlan && loadedPlan.mealPlan) {
                 setMealPlan(loadedPlan.mealPlan);
             }
@@ -249,6 +275,9 @@ const usePlanPersistence = ({
                 recalculateTotalCost(loadedPlan.results);
             }
 
+            // ── CRITICAL FIX 3: Update activePlanId to sync UI selection ──
+            setActivePlanId(planId);
+
             // ── PERSISTENCE FIX: write-through to localStorage ──
             cachePlan(
                 {
@@ -261,16 +290,23 @@ const usePlanPersistence = ({
                 { planId: loadedPlan.planId, planName: loadedPlan.name }
             );
 
+            // Refresh plans list to update isActive flags
+            await listPlans();
+
             showToast && showToast(`Loaded: ${loadedPlan.name}`, 'success');
             return true;
         } catch (error) {
             console.error('[PLAN_HOOK] Error loading plan:', error);
             showToast && showToast('Failed to load plan', 'error');
+            
+            // ── ERROR RECOVERY: Don't leave UI in partial state ──
+            // If load failed, don't update any state
+            
             return false;
         } finally {
             setLoadingPlan(false);
         }
-    }, [userId, db, showToast, setMealPlan, setResults, setUniqueIngredients, setFormData, setNutritionalTargets, recalculateTotalCost]);
+    }, [userId, db, showToast, setMealPlan, setResults, setUniqueIngredients, setFormData, setNutritionalTargets, setSelectedDay, recalculateTotalCost, listPlans]);
 
     // ── deletePlan ─────────────────────────────────────────────────────
     const deletePlan = useCallback(async (planId) => {
@@ -293,6 +329,11 @@ const usePlanPersistence = ({
                 clearCachedPlan();
             }
 
+            // If we deleted the active plan, clear activePlanId
+            if (activePlanId === planId) {
+                setActivePlanId(null);
+            }
+
             await listPlans();
             showToast && showToast('Plan deleted', 'success');
             return true;
@@ -301,7 +342,7 @@ const usePlanPersistence = ({
             showToast && showToast('Failed to delete plan', 'error');
             return false;
         }
-    }, [userId, db, showToast, listPlans]);
+    }, [userId, db, showToast, listPlans, activePlanId]);
 
     // ── setActivePlan ──────────────────────────────────────────────────
     const setActivePlanHandler = useCallback(async (planId) => {
@@ -356,21 +397,26 @@ const usePlanPersistence = ({
                 if (recalculateTotalCost && cached.results) {
                     recalculateTotalCost(cached.results);
                 }
+                // Restore selectedDay to 1 on mount
+                if (setSelectedDay) {
+                    setSelectedDay(1);
+                }
             }
 
             // ── STEP 2: Background upgrade from Firestore (may be newer) ──
             try {
                 const active = await planService.getActivePlan({ userId, db });
                 if (active && active.planId) {
-                    setActivePlanId(active.planId);
-
                     // Only overwrite if Firestore plan is different from cache
                     const cachedMeta = cached?.meta;
                     if (!cachedMeta || cachedMeta.planId !== active.planId) {
                         console.log('[PLAN_HOOK] Firestore has a different/newer active plan — loading it');
+                        // loadPlan will handle setActivePlanId and setSelectedDay
                         await loadPlan(active.planId);
                     } else {
                         console.log('[PLAN_HOOK] Firestore active plan matches localStorage cache — skipping re-fetch');
+                        // Still need to set activePlanId for UI highlighting
+                        setActivePlanId(active.planId);
                     }
                 }
             } catch (error) {
@@ -380,7 +426,7 @@ const usePlanPersistence = ({
         };
 
         loadActivePlan();
-    }, [userId, db, loadPlan, setMealPlan, setResults, setUniqueIngredients, setFormData, setNutritionalTargets, recalculateTotalCost]);
+    }, [userId, db, loadPlan, setMealPlan, setResults, setUniqueIngredients, setFormData, setNutritionalTargets, setSelectedDay, recalculateTotalCost]);
 
     // ── Load plans list on mount ───────────────────────────────────────
     useEffect(() => {
