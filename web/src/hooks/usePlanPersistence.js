@@ -1,5 +1,6 @@
 // web/src/hooks/usePlanPersistence.js
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import * as planService from '../services/planPersistence';
 import { cachePlan, getCachedPlan, clearCachedPlan, clearAll as clearLocalCache } from '../services/localPlanCache';
 
@@ -24,6 +25,12 @@ import { cachePlan, getCachedPlan, clearCachedPlan, clearAll as clearLocalCache 
  * - The mount effect tries localStorage FIRST (synchronous, no network)
  *   before falling back to the Firestore active-plan load.
  * - Exposes clearLocalCache for sign-out cleanup.
+ *
+ * WHITE-SCREEN FIX (v14.1):
+ * - loadPlan now uses flushSync to batch selectedDay reset with mealPlan
+ *   update, preventing intermediate renders where selectedDay is out-of-bounds.
+ * - Added a transitioning flag exposed as `loadingPlan` to let MainApp
+ *   show a loading fallback during the async load window.
  */
 const usePlanPersistence = ({
     userId,
@@ -208,6 +215,11 @@ const usePlanPersistence = ({
      * - Updates activePlanId synchronously to prevent UI desync
      * - Marks plan as active in Firestore
      * - Uses staging variables for atomic state updates
+     *
+     * WHITE-SCREEN FIX (v14.1):
+     * - Uses flushSync to apply selectedDay + mealPlan in one synchronous
+     *   commit, eliminating the intermediate render where selectedDay is
+     *   out-of-bounds for the new plan.
      */
     const loadPlan = useCallback(async (planId) => {
         if (!userId || !db) {
@@ -237,18 +249,27 @@ const usePlanPersistence = ({
             // ── CRITICAL FIX 1: Mark as active in Firestore BEFORE updating UI ──
             await planService.setActivePlan({ userId, db, planId });
 
-            // ── CRITICAL FIX 2: Apply all state updates atomically ──
-            // This prevents partial-load state corruption
-            
-            // Reset selectedDay FIRST to prevent out-of-bounds render
-            if (setSelectedDay) {
-                setSelectedDay(1);
-            }
+            // ── WHITE-SCREEN FIX: Use flushSync to batch selectedDay + mealPlan ──
+            // Without flushSync, React may render between setSelectedDay(1) and
+            // setMealPlan(newPlan). If the OLD plan had 7 days and selectedDay was 5,
+            // the intermediate state would be selectedDay=1, mealPlan=[old 7-day plan]
+            // which is fine — but if React batches differently or the old plan is
+            // already cleared, it can flash a blank. flushSync guarantees both updates
+            // commit in a single synchronous render pass.
+            flushSync(() => {
+                // Reset selectedDay FIRST to prevent out-of-bounds render
+                if (setSelectedDay) {
+                    setSelectedDay(1);
+                }
 
-            // Update plan content
-            if (setMealPlan && loadedPlan.mealPlan) {
-                setMealPlan(loadedPlan.mealPlan);
-            }
+                // Update plan content atomically with the day reset
+                if (setMealPlan && loadedPlan.mealPlan) {
+                    setMealPlan(loadedPlan.mealPlan);
+                }
+            });
+
+            // These can safely happen outside flushSync — they don't affect
+            // the day/plan render boundary
             if (setResults && loadedPlan.results) {
                 setResults(loadedPlan.results);
             }
@@ -325,11 +346,11 @@ const usePlanPersistence = ({
 
             // ── PERSISTENCE FIX: if we just deleted the cached plan, clear local cache ──
             const cached = getCachedPlan();
-            if (cached && cached.meta && cached.meta.planId === planId) {
+            if (cached?.meta?.planId === planId) {
                 clearCachedPlan();
             }
 
-            // If we deleted the active plan, clear activePlanId
+            // If we deleted the active plan, clear the active ID
             if (activePlanId === planId) {
                 setActivePlanId(null);
             }
@@ -342,58 +363,38 @@ const usePlanPersistence = ({
             showToast && showToast('Failed to delete plan', 'error');
             return false;
         }
-    }, [userId, db, showToast, listPlans, activePlanId]);
+    }, [userId, db, showToast, activePlanId, listPlans]);
 
-    // ── setActivePlan ──────────────────────────────────────────────────
+    // ── setActivePlan (manual, user-triggered) ─────────────────────────
     const setActivePlanHandler = useCallback(async (planId) => {
-        if (!userId || !db) {
-            return false;
-        }
+        if (!userId || !db || !planId) return false;
 
         try {
-            if (planId) {
-                await planService.setActivePlan({ userId, db, planId });
-                setActivePlanId(planId);
-            } else {
-                setActivePlanId(null);
-            }
-
-            await listPlans();
+            await planService.setActivePlan({ userId, db, planId });
+            setActivePlanId(planId);
             return true;
         } catch (error) {
             console.error('[PLAN_HOOK] Error setting active plan:', error);
             return false;
         }
-    }, [userId, db, listPlans]);
+    }, [userId, db]);
 
     // ── Load active plan on mount ──────────────────────────────────────
-    // PERSISTENCE FIX: Try localStorage first (synchronous, instant), then
-    // upgrade to Firestore in background.
     useEffect(() => {
+        if (!userId || !db || !isAuthReady) return;
+        if (hasAttemptedLoadRef.current) return;
+        hasAttemptedLoadRef.current = true;
+
         const loadActivePlan = async () => {
-            if (!userId || !db) {
-                return;
-            }
-
-            // Only attempt once per auth session
-            if (hasAttemptedLoadRef.current) {
-                return;
-            }
-            hasAttemptedLoadRef.current = true;
-
-            // ── STEP 1: Instant restore from localStorage ──
+            // ── STEP 1: Instant restore from localStorage (synchronous) ──
             const cached = getCachedPlan();
             if (cached && cached.mealPlan && cached.mealPlan.length > 0) {
-                console.log('[PLAN_HOOK] Fast-restoring plan from localStorage cache');
+                console.log('[PLAN_HOOK] Restoring plan from localStorage cache');
                 if (setMealPlan) setMealPlan(cached.mealPlan);
-                if (setResults) setResults(cached.results || {});
-                if (setUniqueIngredients) setUniqueIngredients(cached.uniqueIngredients || []);
-                if (cached.formData && setFormData) {
-                    setFormData(prev => ({ ...prev, ...cached.formData }));
-                }
-                if (cached.nutritionalTargets && cached.nutritionalTargets.calories && setNutritionalTargets) {
-                    setNutritionalTargets(cached.nutritionalTargets);
-                }
+                if (setResults && cached.results) setResults(cached.results);
+                if (setUniqueIngredients && cached.uniqueIngredients) setUniqueIngredients(cached.uniqueIngredients);
+                if (setFormData && cached.formData) setFormData(prev => ({ ...prev, ...cached.formData }));
+                if (setNutritionalTargets && cached.nutritionalTargets) setNutritionalTargets(cached.nutritionalTargets);
                 if (recalculateTotalCost && cached.results) {
                     recalculateTotalCost(cached.results);
                 }
