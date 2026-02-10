@@ -139,13 +139,23 @@ function hashString(str) {
   return crypto.createHash('sha256').update(str).digest('hex').substring(0, 16);
 }
 
-async function setRunStatus(runId, status, payload, log) {
+// CHANGE 4: Persist `lastPhase` to KV for polling progress
+async function setRunStatus(runId, status, payload, log, lastPhase = null) {
     if (!kvReady) return;
     const key = `cheffy:run:${runId}`;
     const ttl = 1000 * 60 * 60; // 1 hour
     try {
-        await kv.set(key, JSON.stringify({ status, payload, updatedAt: new Date().toISOString() }), { px: ttl });
-        log(`Run status SET: ${key} → ${status}`, 'DEBUG', 'RUN_STATUS');
+        const record = {
+            status,
+            payload,
+            updatedAt: new Date().toISOString(),
+        };
+        // Include lastPhase and startedAt for running status
+        if (lastPhase) record.lastPhase = lastPhase;
+        if (status === 'running') record.startedAt = record.startedAt || new Date().toISOString();
+
+        await kv.set(key, JSON.stringify(record), { px: ttl });
+        log(`Run status SET: ${key} → ${status}${lastPhase ? ` (phase: ${lastPhase})` : ''}`, 'DEBUG', 'RUN_STATUS');
     } catch (e) {
         log(`Run status SET Error: ${e.message}`, 'ERROR', 'RUN_STATUS');
     }
@@ -172,25 +182,27 @@ function createLogger(run_id, responseStream = null) {
     
     /**
      * Writes a Server-Sent Event (SSE) to the response stream.
+     * CHANGE 2: Make `writeSseEvent` resilient to disconnection
      * @param {string} eventType - The event type (e.g., 'message', 'finalData').
      * @param {object} data - The JSON-serializable data payload.
      */
     const writeSseEvent = (eventType, data) => {
+        // Skip writes if the client has disconnected or stream is ended.
+        // CRITICAL: Do NOT call responseStream.end() here — that would
+        // terminate the serverless function and prevent the pipeline from
+        // completing.
         if (!responseStream || responseStream.writableEnded) {
-            // console.warn(`[SSE Logger] Attempted to write event '${eventType}' but stream is null or ended.`); // Optional: Log attempts to write to closed stream
-            return; // Can't write to a closed or non-existent stream
+            return;
         }
         try {
-            // Ensure data is always an object, even if a simple string is passed
             const payload = (typeof data === 'string') ? { message: data } : data;
             const dataString = JSON.stringify(payload);
             responseStream.write(`event: ${eventType}\n`);
             responseStream.write(`data: ${dataString}\n\n`);
         } catch (e) {
-            // This might fail if the client disconnected
-            console.error(`[SSE Logger] Failed to write event ${eventType} to stream: ${e.message}`);
-            // Attempt to close the stream gracefully if write fails
-             try { if (!responseStream.writableEnded) responseStream.end(); } catch {}
+            // Client likely disconnected.  Log it but do NOT end the stream.
+            // The pipeline will continue and persist the result to KV.
+            console.warn(`[SSE Logger] Write failed for event '${eventType}' (client likely gone): ${e.message}`);
         }
     };
 
@@ -244,29 +256,38 @@ function createLogger(run_id, responseStream = null) {
 
     /**
      * Logs a critical error, sends an 'error' event, and closes the stream.
+     * CHANGE 7: Update `logErrorAndClose` similarly
      * @param {string} errorMessage - The final error message.
      * @param {string} [errorCode="SERVER_FAULT_PLAN"] - A machine-readable error code.
      */
     const logErrorAndClose = (errorMessage, errorCode = "SERVER_FAULT_PLAN") => {
-        log(errorMessage, 'CRITICAL', 'SYSTEM'); // Log it normally first
+        log(errorMessage, 'CRITICAL', 'SYSTEM');
         writeSseEvent('error', {
             code: errorCode,
             message: errorMessage
         });
         if (responseStream && !responseStream.writableEnded) {
-            try { responseStream.end(); } catch (e) { console.error("[SSE Logger] Error closing stream after error event:", e.message); }
+            try { responseStream.end(); } catch (e) {
+                console.warn("[SSE Logger] Error closing stream after error event:", e.message);
+            }
         }
     };
     
     /**
      * Sends the final 'plan:complete' event and closes the stream.
+     * CHANGE 6: Update `sendFinalDataAndClose` to handle disconnected client
      * @param {object} data - The final plan data payload.
      */
     const sendFinalDataAndClose = (data) => {
         log(`Generation complete, sending final payload and closing stream.`, 'INFO', 'SYSTEM');
+        // Attempt to send the final event — will no-op if client is gone
+        // (thanks to the updated writeSseEvent from Change 2).
         writeSseEvent('plan:complete', data);
+        // Now close the stream.  This is safe even if the client is gone.
         if (responseStream && !responseStream.writableEnded) {
-            try { responseStream.end(); } catch (e) { console.error("[SSE Logger] Error closing stream after final data:", e.message); }
+            try { responseStream.end(); } catch (e) {
+                console.warn("[SSE Logger] Error closing stream after final data:", e.message);
+            }
         }
     };
     
@@ -1117,12 +1138,31 @@ module.exports = async (request, response) => {
     
     // [FIX] Pass `run_id` to logger
     const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, sendEvent } = createLogger(run_id, response);
+
+    // --- FIX (v2): Track client disconnection ---
+    // When the browser tab is closed/refreshed, the TCP connection drops.
+    // Node/Vercel emits 'close' on the request.  We set a flag but do NOT
+    // abort processing — the pipeline must run to completion so the result
+    // is persisted to KV and recoverable via polling.
+    let clientDisconnected = false;
+
+    request.on('close', () => {
+        if (!response.writableEnded) {
+            clientDisconnected = true;
+            log('Client disconnected — continuing server-side processing.', 'WARN', 'SSE');
+        }
+    });
     
     await setRunStatus(run_id, 'running', null, log);
 
     // --- End SSE Setup ---
 
     log(`Plan generation request received.`, 'INFO', 'HTTP');
+
+    // FIX (v2): Send run_id to the client immediately — before any processing.
+    // This ensures the frontend can persist it to localStorage for recovery
+    // even if the stream drops during the first few seconds.
+    sendEvent('plan:start', { run_id });
 
     let finalMealPlan = []; // This will hold the final, processed meals
     let store = ''; // Must be defined outside try block for market run logic scope
@@ -1146,7 +1186,8 @@ module.exports = async (request, response) => {
         }
 
         log(`Plan generation starting for ${numDays} days.`, 'INFO', 'SYSTEM');
-        sendEvent('plan:start', { run_id, days: numDays, formData: getSanitizedFormData(formData), model: requestPrimary });
+        // REMOVED (v2): Old sendEvent call removed to prevent duplicate/delayed run_id
+        // sendEvent('plan:start', { run_id, days: numDays, formData: getSanitizedFormData(formData), model: requestPrimary });
 
         // --- Input Validation ---
         if (!formData || typeof formData !== 'object' || Object.keys(formData).length < 5) {
@@ -1204,6 +1245,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 1: Generate ALL Meals (Parallelized - Change 2.10) ---
         sendEvent('phase:start', { name: 'meals', description: `Generating ${numDays}-day meal plan...` });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'meals');
+
         const dietitianStartTime = Date.now();
         const fullMealPlan = []; // This is the master list of day objects
         
@@ -1243,6 +1287,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 2: Aggregate Ingredients ---
         sendEvent('phase:start', { name: 'aggregate', description: 'Aggregating ingredient list...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'aggregate');
+
         const aggregateStartTime = Date.now();
         const ingredientMap = new Map(); // Use normalizedKey as the key
 
@@ -1283,6 +1330,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 3: Generate Queries & Run Market (Batched) ---
         sendEvent('phase:start', { name: 'market', description: `Querying ${store} for ${aggregatedIngredients.length} items...` });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'market');
+
         sendEvent('plan:progress', { pct: 35, message: `Running market search...` });
         const marketStartTime = Date.now();
 
@@ -1501,6 +1551,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 3.5: Price Extraction (Mod Zone 3) ---
         sendEvent('phase:start', { name: 'price_extract', description: 'Extracting price data...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'price_extract');
+
         const priceExtractStartTime = Date.now();
         const priceDataMap = new Map(); 
 
@@ -1533,6 +1586,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 4: Nutrition Fetch (Mod Zone 1 & 2: Ingredient-Centric) ---
         sendEvent('phase:start', { name: 'nutrition', description: 'Fetching ingredient nutrition data...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'nutrition');
+
         sendEvent('plan:progress', { pct: 75, message: `Fetching nutrition data...` });
         const nutritionStartTime = Date.now();
         const nutritionDataMap = new Map(); // Map<normalizedKey, nutritionData>
@@ -1579,6 +1635,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 5: Solver (Calculate Final Macros) ---
         sendEvent('phase:start', { name: 'solver', description: 'Calculating final macros...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'solver');
+
         sendEvent('plan:progress', { pct: 85, message: `Calculating final macros...` });
         const solverStartTime = Date.now();
         finalMealPlan = []; // Reset final plan, will be rebuilt here
@@ -1939,6 +1998,9 @@ module.exports = async (request, response) => {
         // --- Phase 6: Chef AI (Writer) ---
         // This phase runs *after* the solver, so it has the *final* scaled quantities
         sendEvent('phase:start', { name: 'writer', description: 'Writing recipes...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'writer');
+
         sendEvent('plan:progress', { pct: 95, message: `Writing final recipes...` });
         const writerStartTime = Date.now();
         
@@ -1970,7 +2032,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 7: Finalize ---
         sendEvent('phase:start', { name: 'finalize', description: 'Assembling final plan...' });
-        
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'finalize');
+
         // Clean up meal objects for the frontend
         let totalCalories = 0, totalProtein = 0, totalFat = 0, totalCarbs = 0;
         
