@@ -105,6 +105,66 @@ export const savePlan = async ({
 };
 
 /**
+ * Auto-save a meal plan to Firestore without backend validation.
+ * Used programmatically after generation completes or after recovery.
+ * Skips the validation call to /api/plans since the plan was just generated.
+ * 
+ * @param {object} params - Save parameters
+ * @param {string} params.userId - User ID
+ * @param {object} params.db - Firestore instance
+ * @param {string} params.planName - Name for the plan
+ * @param {array} params.mealPlan - Meal plan data
+ * @param {object} params.results - Product results
+ * @param {array} params.uniqueIngredients - Shopping list
+ * @param {object} params.formData - Generation parameters
+ * @param {object} params.nutritionalTargets - Nutritional targets
+ * @returns {Promise<object>} - Saved plan with ID
+ */
+export const autoSavePlan = async ({
+    userId,
+    db,
+    planName,
+    mealPlan,
+    results,
+    uniqueIngredients,
+    formData,
+    nutritionalTargets
+}) => {
+    if (!userId || !db) {
+        console.warn('[PLAN_SERVICE] autoSavePlan skipped: missing userId or db');
+        return null;
+    }
+
+    if (!mealPlan || mealPlan.length === 0) {
+        console.warn('[PLAN_SERVICE] autoSavePlan skipped: empty meal plan');
+        return null;
+    }
+
+    const planId = `plan_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const planDoc = {
+        planId,
+        name: planName || `Plan – ${new Date().toLocaleDateString()}`,
+        mealPlan,
+        results: results || {},
+        uniqueIngredients: uniqueIngredients || [],
+        formData: formData || {},
+        nutritionalTargets: nutritionalTargets || {},
+        createdAt: new Date().toISOString(),
+        isActive: true
+    };
+
+    try {
+        const planRef = doc(db, 'plans', userId, 'saved_plans', planId);
+        await setDoc(planRef, planDoc);
+        console.log('[PLAN_SERVICE] Auto-saved plan:', planId);
+        return planDoc;
+    } catch (error) {
+        console.error('[PLAN_SERVICE] autoSavePlan error:', error);
+        return null;
+    }
+};
+
+/**
  * Load a meal plan from Firestore
  * @param {object} params - Load parameters
  * @param {string} params.userId - User ID
