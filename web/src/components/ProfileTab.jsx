@@ -1,74 +1,216 @@
 // web/src/components/ProfileTab.jsx
-import React, { useMemo } from 'react';
-import { Target, Flame, Soup, Droplet, Wheat, User as UserIcon, Zap, TrendingUp } from 'lucide-react';
+// Enhanced UI: gradient identity stripe, stat micro-icons with stagger entrance,
+// goal colour-coded pill badge, animated calorie ring, cascading macro progress bars,
+// macro icon badges, gradient footer with chevron nudge, living-border dashboard wrapper.
 
-// A simple display card for the User Profile
-const ProfileCard = ({ formData }) => (
-  <div className="bg-white rounded-xl shadow-lg border p-6">
-    <h3 className="text-xl font-bold text-indigo-700 flex items-center mb-4">
-      <UserIcon className="w-5 h-5 mr-2" />
-      User Profile
-    </h3>
-    <div className="grid grid-cols-2 gap-4">
-      <div className="bg-gray-50 p-3 rounded-lg">
-        <span className="text-sm text-gray-500">Weight</span>
-        <p className="text-lg font-bold">{formData.weight}kg</p>
-      </div>
-      <div className="bg-gray-50 p-3 rounded-lg">
-        <span className="text-sm text-gray-500">Body Fat</span>
-        <p className="text-lg font-bold">{formData.bodyFat || 'N/A'}%</p>
-      </div>
-      <div className="bg-gray-50 p-3 rounded-lg">
-        <span className="text-sm text-gray-500">Goal</span>
-        <p className="text-lg font-bold uppercase">
-          {formData.goal.replace('_', ' ')}
-        </p>
-      </div>
-      <div className="bg-gray-50 p-3 rounded-lg">
-        <span className="text-sm text-gray-500">Activity</span>
-        <p className="text-lg font-bold capitalize">
-          {formData.activityLevel}
-        </p>
+import React, { useMemo } from 'react';
+import {
+  Target,
+  Flame,
+  Soup,
+  Droplet,
+  Wheat,
+  User as UserIcon,
+  Zap,
+  TrendingUp,
+  Scale,
+  Percent,
+  Activity,
+  ChevronRight,
+  CheckCircle,
+} from 'lucide-react';
+import { COLORS, GOAL_LABELS, ACTIVITY_LABELS } from '../constants';
+
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+
+/** Return a goal-specific colour from the GOAL_LABELS constant map. */
+const getGoalColor = (goalKey) => {
+  const entry = GOAL_LABELS[goalKey];
+  return entry?.color || COLORS.primary[500];
+};
+
+/** Return the human-readable goal label. */
+const getGoalLabel = (goalKey) => {
+  const entry = GOAL_LABELS[goalKey];
+  return entry?.label || goalKey.replace(/_/g, ' ');
+};
+
+/** Return the human-readable activity label. */
+const getActivityLabel = (actKey) => {
+  const entry = ACTIVITY_LABELS[actKey];
+  return entry?.label || actKey;
+};
+
+/** Hex colour → rgba at given opacity */
+const hexToRgba = (hex, alpha) => {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+// Macro colour tokens keyed by macro id (maps to COLORS.macros)
+const MACRO_COLORS = {
+  protein: { main: '#10b981', dark: '#059669', light: '#d1fae5' },
+  fat:     { main: '#f59e0b', dark: '#d97706', light: '#fef3c7' },
+  carbs:   { main: '#f97316', dark: '#ea580c', light: '#fed7aa' },
+};
+
+
+// ─────────────────────────────────────────────────────────────
+// PROFILE CARD (Element 1)
+// ─────────────────────────────────────────────────────────────
+
+const STAT_CONFIG = [
+  { key: 'weight',   label: 'Weight',   Icon: Scale,    format: (v) => `${v}kg` },
+  { key: 'bodyFat',  label: 'Body Fat', Icon: Percent,  format: (v) => v ? `${v}%` : 'N/A' },
+  { key: 'goal',     label: 'Goal',     Icon: Target,   format: null },    // special render
+  { key: 'activity', label: 'Activity', Icon: Activity, format: null },    // special render
+];
+
+const ProfileCard = ({ formData }) => {
+  const goalColor = getGoalColor(formData.goal);
+
+  return (
+    <div className="profile-card-enhanced bg-white rounded-xl shadow-lg border overflow-hidden">
+      {/* ── Gradient identity stripe ── */}
+      <div
+        className="h-1"
+        style={{
+          background: `linear-gradient(90deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]})`,
+        }}
+      />
+
+      <div className="p-6">
+        {/* ── Heading ── */}
+        <h3 className="text-xl font-bold flex items-center mb-4" style={{ color: COLORS.primary[700] }}>
+          <UserIcon className="w-5 h-5 mr-2" />
+          User Profile
+        </h3>
+
+        {/* ── 2×2 stat grid with stagger entrance ── */}
+        <div className="grid grid-cols-2 gap-4">
+          {STAT_CONFIG.map((stat) => {
+            const Icon = stat.Icon;
+
+            // Special rendering for Goal
+            if (stat.key === 'goal') {
+              return (
+                <div key={stat.key} className="profile-stat-box bg-gray-50 p-3 rounded-lg">
+                  <div className="flex items-center mb-1">
+                    <Icon size={14} style={{ color: COLORS.primary[400] }} className="mr-1.5" />
+                    <span className="text-sm text-gray-500">{stat.label}</span>
+                  </div>
+                  <span
+                    className="goal-pill"
+                    style={{
+                      backgroundColor: hexToRgba(goalColor, 0.12),
+                      color: goalColor,
+                    }}
+                  >
+                    {getGoalLabel(formData.goal)}
+                  </span>
+                </div>
+              );
+            }
+
+            // Special rendering for Activity
+            if (stat.key === 'activity') {
+              return (
+                <div key={stat.key} className="profile-stat-box bg-gray-50 p-3 rounded-lg">
+                  <div className="flex items-center mb-1">
+                    <Icon size={14} style={{ color: COLORS.primary[400] }} className="mr-1.5" />
+                    <span className="text-sm text-gray-500">{stat.label}</span>
+                  </div>
+                  <p className="text-base font-bold text-gray-800 leading-snug">
+                    {getActivityLabel(formData.activityLevel)}
+                  </p>
+                </div>
+              );
+            }
+
+            // Standard stat boxes (Weight, Body Fat)
+            const rawValue = formData[stat.key];
+            return (
+              <div key={stat.key} className="profile-stat-box bg-gray-50 p-3 rounded-lg">
+                <div className="flex items-center mb-1">
+                  <Icon size={14} style={{ color: COLORS.primary[400] }} className="mr-1.5" />
+                  <span className="text-sm text-gray-500">{stat.label}</span>
+                </div>
+                <p className="text-lg font-bold text-gray-800">{stat.format(rawValue)}</p>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
-// Mini progress bar component for the macro breakdown
-const MacroProgressBar = ({ label, amount, unit, kcal, color, Icon, percentage }) => {
+
+// ─────────────────────────────────────────────────────────────
+// MACRO PROGRESS BAR (enhanced)
+// ─────────────────────────────────────────────────────────────
+
+const MacroProgressBar = ({ label, amount, unit, kcal, macroKey, Icon, percentage }) => {
+  const colors = MACRO_COLORS[macroKey] || MACRO_COLORS.protein;
+
   return (
-    <div className="space-y-2">
+    <div className={`macro-row space-y-2`}>
       <div className="flex justify-between items-center">
+        {/* Left: icon badge + label */}
         <div className="flex items-center">
-          {Icon && <Icon size={16} className={`mr-2 text-${color}-600`} />}
+          {/* Icon in coloured circle */}
+          <div
+            className="w-7 h-7 rounded-full flex items-center justify-center mr-2.5 flex-shrink-0"
+            style={{ backgroundColor: colors.light }}
+          >
+            {Icon && <Icon size={14} style={{ color: colors.main }} />}
+          </div>
           <span className="text-sm font-semibold text-gray-700">{label}</span>
         </div>
+
+        {/* Right: value + kcal */}
         <div className="text-right">
           <span className="text-lg font-bold text-gray-900">{amount}{unit}</span>
           <span className="text-xs text-gray-500 ml-1">({kcal} kcal)</span>
         </div>
       </div>
-      {/* Progress bar filled to 100% */}
+
+      {/* Progress bar with cascading fill */}
       <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-        <div 
-          className={`h-2 rounded-full bg-gradient-to-r from-${color}-400 to-${color}-600 transition-all duration-700 ease-out`}
-          style={{ width: '100%' }}
+        <div
+          className={`h-2 rounded-full macro-bar-fill macro-bar-fill--${macroKey}`}
+          style={{
+            background: `linear-gradient(90deg, ${colors.main}, ${colors.dark})`,
+          }}
         />
       </div>
-      <p className="text-xs text-gray-500 text-right">{percentage}% of daily calories</p>
+
+      {/* Percentage with coloured number */}
+      <p className="text-xs text-right">
+        <span className="font-semibold" style={{ color: colors.main }}>{percentage}%</span>
+        <span className="text-gray-500"> of daily calories</span>
+      </p>
     </div>
   );
 };
 
-// Enhanced SPLIT VIEW component for nutritional targets
+
+// ─────────────────────────────────────────────────────────────
+// TARGETS CARD (Element 3 — main dashboard content)
+// ─────────────────────────────────────────────────────────────
+
 const TargetsCard = ({ nutritionalTargets }) => {
   const hasTargets = nutritionalTargets.calories > 0;
 
-  // 🆕 EMPTY STATE: Show before generation
+  // ── EMPTY STATE ──
   if (!hasTargets) {
     return (
-      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl shadow-lg border border-indigo-200 p-8 text-center">
-        <div className="w-20 h-20 mx-auto mb-4 bg-indigo-100 rounded-full flex items-center justify-center">
+      <div className="dashboard-card-wrapper bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl shadow-lg border border-indigo-200 p-8 text-center overflow-hidden">
+        <div className="empty-state-icon-breathe w-20 h-20 mx-auto mb-4 bg-indigo-100 rounded-full flex items-center justify-center">
           <Target className="w-10 h-10 text-indigo-400" />
         </div>
         <h3 className="text-xl font-bold text-indigo-700 mb-2">
@@ -78,23 +220,23 @@ const TargetsCard = ({ nutritionalTargets }) => {
           Generate a plan to see your personalized nutritional targets
         </p>
         <div className="flex items-center justify-center text-sm text-indigo-500">
-          <Zap className="w-4 h-4 mr-1" />
+          <Zap className="w-4 h-4 mr-1 empty-state-zap" />
           Click "Generate Plan" to get started
         </div>
       </div>
     );
   }
 
-  // Calculate macro ratios
+  // ── Calculate macro ratios ──
   const macroRatios = useMemo(() => {
     const { protein, fat, carbs } = nutritionalTargets;
     const proteinCal = protein * 4;
     const fatCal = fat * 9;
     const carbsCal = carbs * 4;
     const totalCal = proteinCal + fatCal + carbsCal;
-    
+
     if (totalCal === 0) return { protein: 0, fat: 0, carbs: 0 };
-    
+
     return {
       protein: Math.round((proteinCal / totalCal) * 100),
       fat: Math.round((fatCal / totalCal) * 100),
@@ -102,124 +244,137 @@ const TargetsCard = ({ nutritionalTargets }) => {
     };
   }, [nutritionalTargets]);
 
-  // SVG Circle calculations for the calorie ring
+  // ── SVG calorie ring calculations ──
   const size = 180;
   const strokeWidth = 12;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  const offset = 0; // Always show as "full" since this is a target, not progress
 
   return (
-    <div className="bg-white rounded-xl shadow-lg border overflow-hidden">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-indigo-500 to-purple-600 text-white p-6">
+    <div className="dashboard-card-wrapper bg-white rounded-xl shadow-lg border overflow-hidden">
+      {/* ── Header ── */}
+      <div
+        className="text-white p-6"
+        style={{
+          background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary[600]})`,
+        }}
+      >
         <h3 className="text-2xl font-bold text-center flex items-center justify-center">
           <Target className="w-6 h-6 mr-2" />
           Your Daily Nutritional Blueprint
         </h3>
-        <p className="text-center text-indigo-100 text-sm mt-1">
+        <p className="text-center text-sm mt-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
           Personalized for your goals
         </p>
       </div>
 
-      {/* SPLIT VIEW LAYOUT */}
+      {/* ── SPLIT VIEW LAYOUT ── */}
       <div className="grid md:grid-cols-2 gap-0">
-        
-        {/* LEFT SIDE: Calorie Target with Ring */}
-        <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-8 flex flex-col items-center justify-center border-r">
+
+        {/* LEFT SIDE: Calorie Target with animated ring */}
+        <div
+          className="p-8 flex flex-col items-center justify-center border-r"
+          style={{
+            background: `linear-gradient(135deg, ${COLORS.primary[50]}, ${COLORS.secondary[50]})`,
+          }}
+        >
           <p className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-2">
             Daily Target
           </p>
-          
+
           {/* Calorie Ring */}
           <div className="relative mb-4" style={{ width: size, height: size }}>
-            {/* Background Circle */}
-            <svg className="transform -rotate-90" width={size} height={size}>
+            <svg
+              className="transform -rotate-90"
+              width={size}
+              height={size}
+              style={{ '--ring-circumference': circumference }}
+            >
+              {/* Background circle */}
               <circle
                 cx={size / 2}
                 cy={size / 2}
                 r={radius}
-                stroke="currentColor"
+                stroke="#e5e7eb"
                 strokeWidth={strokeWidth}
                 fill="none"
-                className="text-gray-200"
               />
-              {/* Filled Circle (100% for target display) */}
+              {/* Animated filled circle */}
               <circle
                 cx={size / 2}
                 cy={size / 2}
                 r={radius}
-                stroke="url(#gradient)"
+                stroke="url(#calorieGradient)"
                 strokeWidth={strokeWidth}
                 fill="none"
                 strokeDasharray={circumference}
-                strokeDashoffset={offset}
                 strokeLinecap="round"
-                className="transition-all duration-1000 ease-out"
+                className="calorie-ring-fill"
               />
-              {/* Gradient Definition */}
+              {/* Gradient definition */}
               <defs>
-                <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#6366f1" />
-                  <stop offset="100%" stopColor="#8b5cf6" />
+                <linearGradient id="calorieGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor={COLORS.primary[500]} />
+                  <stop offset="100%" stopColor={COLORS.secondary[500]} />
                 </linearGradient>
               </defs>
             </svg>
-            {/* Center Text */}
+
+            {/* Centre text */}
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-5xl font-extrabold text-indigo-700">
-                {nutritionalTargets.calories.toLocaleString()}
-              </span>
-              <span className="text-sm text-gray-500 font-medium mt-1">
-                calories
-              </span>
+              <div className="flex items-center">
+                <Flame size={22} className="flame-heartbeat mr-1" style={{ color: '#ef4444' }} />
+                <span className="text-4xl font-extrabold" style={{ color: COLORS.primary[700] }}>
+                  {nutritionalTargets.calories.toLocaleString()}
+                </span>
+              </div>
+              <span className="text-sm text-gray-500 font-medium mt-1">calories</span>
             </div>
           </div>
 
           <p className="text-xs text-gray-500 text-center max-w-xs">
-            This is your daily calorie target based on your profile and goals
+            Daily calorie target based on your profile and goals
           </p>
         </div>
 
         {/* RIGHT SIDE: Macro Breakdown */}
         <div className="p-6 flex flex-col justify-center">
-          <div className="mb-4">
+          <div className="mb-5">
             <h4 className="text-lg font-bold text-gray-800 mb-1">Macro Split</h4>
-            <p className="text-sm text-gray-600">
-              {macroRatios.protein}% Protein • {macroRatios.fat}% Fat • {macroRatios.carbs}% Carbs
+            <p className="text-sm text-gray-500">
+              {macroRatios.protein}% Protein
+              <span className="mx-1 text-gray-300">•</span>
+              {macroRatios.fat}% Fat
+              <span className="mx-1 text-gray-300">•</span>
+              {macroRatios.carbs}% Carbs
             </p>
           </div>
 
-          <div className="space-y-6">
-            {/* Protein */}
+          <div className="space-y-5">
             <MacroProgressBar
               label="Protein"
               amount={nutritionalTargets.protein}
               unit="g"
               kcal={nutritionalTargets.protein * 4}
-              color="green"
+              macroKey="protein"
               Icon={Soup}
               percentage={macroRatios.protein}
             />
-
-            {/* Fat */}
             <MacroProgressBar
               label="Fat"
               amount={nutritionalTargets.fat}
               unit="g"
               kcal={nutritionalTargets.fat * 9}
-              color="yellow"
+              macroKey="fat"
               Icon={Droplet}
               percentage={macroRatios.fat}
             />
-
-            {/* Carbs */}
             <MacroProgressBar
               label="Carbs"
               amount={nutritionalTargets.carbs}
               unit="g"
               kcal={nutritionalTargets.carbs * 4}
-              color="orange"
+              macroKey="carbs"
               Icon={Wheat}
               percentage={macroRatios.carbs}
             />
@@ -227,14 +382,36 @@ const TargetsCard = ({ nutritionalTargets }) => {
         </div>
       </div>
 
-      {/* Footer Info Card */}
-      <div className="bg-blue-50 border-t p-4">
+      {/* ── Gradient section divider ── */}
+      <div className="section-gradient-divider" />
+
+      {/* ── Footer Info Card ── */}
+      <div
+        className="p-4"
+        style={{
+          background: `linear-gradient(135deg, ${COLORS.primary[50]}, #f3e8ff)`,
+        }}
+      >
         <div className="flex items-start">
-          <TrendingUp className="w-5 h-5 text-blue-600 mr-3 flex-shrink-0 mt-0.5" />
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mr-3 mt-0.5"
+            style={{ backgroundColor: COLORS.primary[100] }}
+          >
+            <TrendingUp className="w-4 h-4" style={{ color: COLORS.primary[600] }} />
+          </div>
           <div className="text-sm text-gray-700">
-            <p className="font-semibold text-blue-900 mb-1">Track Your Progress</p>
+            <p className="font-semibold mb-1" style={{ color: COLORS.primary[800] }}>
+              Track Your Progress
+            </p>
             <p className="text-gray-600">
-              Head to the <span className="font-semibold">Meals tab</span> to track your daily intake and see real-time progress towards these targets.
+              Head to the{' '}
+              <span className="font-semibold" style={{ color: COLORS.primary[600] }}>
+                Meals tab
+              </span>{' '}
+              to track your daily intake and see real-time progress
+              <span className="footer-chevron-nudge ml-1">
+                <ChevronRight size={14} style={{ color: COLORS.primary[500] }} />
+              </span>
             </p>
           </div>
         </div>
@@ -243,7 +420,11 @@ const TargetsCard = ({ nutritionalTargets }) => {
   );
 };
 
-// The main component that combines the two cards
+
+// ─────────────────────────────────────────────────────────────
+// PROFILE TAB — Combines Profile Card + Targets Card
+// ─────────────────────────────────────────────────────────────
+
 const ProfileTab = ({ formData, nutritionalTargets }) => {
   return (
     <div className="p-4 md:p-6 space-y-6">
