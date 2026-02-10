@@ -1,7 +1,16 @@
 // api/plan/status.js
+// ---------------------------------------------------------------------------
 // Plan Status Polling Endpoint
-// Allows the frontend to recover a completed plan if the SSE stream was interrupted.
-// Reads from Vercel KV where generate-full-plan.js persists run status.
+// ---------------------------------------------------------------------------
+// Allows the frontend to recover a completed plan if the SSE stream was
+// interrupted. Reads from Vercel KV where generate-full-plan.js persists
+// run status.
+//
+// v2 CHANGES:
+// - Returns `lastPhase` field when status is 'running' so the frontend can
+//   show meaningful progress during recovery polling.
+// - Returns `startedAt` when available for client-side staleness checks.
+// ---------------------------------------------------------------------------
 
 const { createClient } = require('@vercel/kv');
 
@@ -76,7 +85,12 @@ module.exports = async (req, res) => {
             case 'running':
                 return res.status(200).json({
                     status: 'running',
-                    updatedAt: record.updatedAt
+                    updatedAt: record.updatedAt,
+                    // v2: Surface the last phase name so the frontend can show
+                    // progress during recovery polling (e.g. "Market run in
+                    // progress…"). Falls back gracefully if not set.
+                    lastPhase: record.lastPhase || null,
+                    startedAt: record.startedAt || null
                 });
 
             default:
