@@ -1,5 +1,5 @@
 // web/src/components/MainApp.jsx
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { RefreshCw, Zap, AlertTriangle, CheckCircle, Package, DollarSign, ExternalLink, Calendar, Users, Menu, X, ChevronsDown, ChevronsUp, ShoppingBag, BookOpen, ChefHat, Tag, Soup, Replace, Target, FileText, LayoutDashboard, Terminal, Loader, ChevronRight, GripVertical, Flame, Droplet, Wheat, ChevronDown, ChevronUp, Download, ListX, Save, FolderDown, User, Check, ListChecks, ListOrdered, Utensils } from 'lucide-react';
 
 // --- Component Imports ---
@@ -256,15 +256,26 @@ const MainApp = ({
     // appear inline in the meal header area.
     // ─────────────────────────────────────────────────────────
     
+    // ── WHITE-SCREEN FIX: Clamp selectedDay safely ──
+    // Instead of relying solely on an async useEffect to auto-correct,
+    // compute a safe clamped value synchronously for rendering. This ensures
+    // that even if React renders before the useEffect fires, we never
+    // pass an out-of-bounds selectedDay to MealPlanDisplay.
+    const safeSelectedDay = useMemo(() => {
+        if (!mealPlan || mealPlan.length === 0) return 1;
+        if (selectedDay < 1) return 1;
+        if (selectedDay > mealPlan.length) return 1;
+        return selectedDay;
+    }, [mealPlan, selectedDay]);
+
     // ── CRITICAL: Validate selectedDay before rendering ──
-    // This prevents white screen crashes when selectedDay is out of bounds
     const isValidDaySelection = mealPlan && 
                                  mealPlan.length > 0 && 
-                                 selectedDay >= 1 && 
-                                 selectedDay <= mealPlan.length;
+                                 safeSelectedDay >= 1 && 
+                                 safeSelectedDay <= mealPlan.length;
 
     // Auto-correct invalid selectedDay to prevent crashes
-    // This is a safety fallback - primary fix is in loadPlan
+    // This is a safety fallback - primary fix is in loadPlan (flushSync)
     React.useEffect(() => {
         if (mealPlan && mealPlan.length > 0 && selectedDay > mealPlan.length) {
             console.warn(`[MainApp] Auto-correcting selectedDay from ${selectedDay} to 1 (plan has ${mealPlan.length} days)`);
@@ -272,13 +283,34 @@ const MainApp = ({
         }
     }, [mealPlan, selectedDay, setSelectedDay]);
 
+    // ── WHITE-SCREEN FIX: Stable plan identity key ──
+    // When loading a new plan, React needs to know the plan has changed so
+    // DayTabBar and MealPlanDisplay re-mount cleanly. We derive a stable
+    // identity from the plan's day count + first meal name.
+    const planIdentityKey = useMemo(() => {
+        if (!mealPlan || mealPlan.length === 0) return 'empty';
+        const firstMealName = mealPlan[0]?.meals?.[0]?.name || 'unknown';
+        return `plan-${mealPlan.length}d-${firstMealName}`;
+    }, [mealPlan]);
+
     const mealPlanContent = (
         <div className="flex flex-col">
-            {/* ── Day Tab Bar (auto-hidden for single-day plans) ── */}
-            {mealPlan && mealPlan.length > 0 && (
+            {/* ── WHITE-SCREEN FIX: Loading overlay during plan transition ── */}
+            {loadingPlan && (
+                <div className="flex items-center justify-center py-16">
+                    <div className="text-center">
+                        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mx-auto mb-3"></div>
+                        <p className="text-gray-500 text-sm font-medium">Loading plan…</p>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Day Tab Bar (auto-hidden for single-day plans, hidden during load) ── */}
+            {!loadingPlan && mealPlan && mealPlan.length > 0 && (
                 <DayTabBar
+                    key={planIdentityKey}
                     totalDays={Math.max(1, mealPlan.length)}
-                    selectedDay={selectedDay}
+                    selectedDay={safeSelectedDay}
                     onSelectDay={setSelectedDay}
                     onSavePlan={handleSavePlanClick}
                     onLoadPlans={handleOpenSavedPlans}
@@ -288,7 +320,7 @@ const MainApp = ({
             )}
 
             {/* ── Single-day inline action buttons (shown only when tab bar is hidden) ── */}
-            {mealPlan && mealPlan.length === 1 && (
+            {!loadingPlan && mealPlan && mealPlan.length === 1 && (
                 <div className="flex items-center justify-end gap-2 px-4 pt-3">
                     <button
                         onClick={handleSavePlanClick}
@@ -310,12 +342,12 @@ const MainApp = ({
             )}
 
             {/* ── Meal Content with Bounds Validation ── */}
-            {isValidDaySelection ? (
+            {!loadingPlan && isValidDaySelection ? (
                 <div className="p-4">
                     <MealPlanDisplay
-                        key={selectedDay}
+                        key={`${planIdentityKey}-day${safeSelectedDay}`}
                         mealPlan={mealPlan}
-                        selectedDay={selectedDay}
+                        selectedDay={safeSelectedDay}
                         nutritionalTargets={nutritionalTargets}
                         eatenMeals={eatenMeals}
                         onToggleMealEaten={onToggleMealEaten}
@@ -323,7 +355,7 @@ const MainApp = ({
                         showToast={showToast}
                     />
                 </div>
-            ) : (
+            ) : !loadingPlan ? (
                 <div className="flex-1 text-center p-8 text-gray-500">
                     {error && !loading ? (
                         <div className="p-4 bg-red-50 text-red-800 rounded-lg">
@@ -337,7 +369,7 @@ const MainApp = ({
                         !loading && 'Select a valid day to view meals.'
                     )}
                 </div>
-            )}
+            ) : null}
         </div>
     );
 
@@ -596,3 +628,4 @@ const MainApp = ({
 };
 
 export default MainApp;
+
