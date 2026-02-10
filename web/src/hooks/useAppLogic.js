@@ -3,6 +3,15 @@ import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
 import usePlanPersistence from './usePlanPersistence';
 import { persistRunId, getPendingRun, clearPendingRun } from '../services/runRecovery';
+import {
+    cachePlan,
+    getCachedPlan,
+    cacheLogs,
+    getCachedLogs,
+    cacheRunId,
+    getCachedRunState,
+    clearRunState
+} from '../services/localPlanCache';
 
 // --- CONFIGURATION ---
 const ORCHESTRATOR_TARGETS_API_URL = '/api/plan/targets';
@@ -97,7 +106,7 @@ const useAppLogic = ({
     const [error, setError] = useState(null);
     const [eatenMeals, setEatenMeals] = useState({});
     const [selectedDay, setSelectedDay] = useState(1);
-    const [diagnosticLogs, setDiagnosticLogs] = useState([]);
+    const [diagnosticLogs, setDiagnosticLogs] = useState(() => getCachedLogs());
     const [nutritionCache, setNutritionCache] = useState({});
     const [loadingNutritionFor, setLoadingNutritionFor] = useState(null);
     const [logHeight, setLogHeight] = useState(250);
@@ -143,6 +152,78 @@ const useAppLogic = ({
             }
         };
     }, []);
+
+    // --- PERSISTENCE FIX: Resume polling if a run was in-flight before refresh ---
+    useEffect(() => {
+        const { runId, state } = getCachedRunState();
+        if (!runId || !state) return;
+
+        // Only resume if we don't already have a plan loaded
+        // (covers the case where refresh happened after plan:complete but before
+        // sessionStorage was cleared — unlikely but defensive)
+        if (mealPlan && mealPlan.length > 0) {
+            clearRunState();
+            return;
+        }
+
+        console.log(`[MOUNT] Found in-flight run ${runId} (state: ${state}). Resuming polling…`);
+        currentRunIdRef.current = runId;
+
+        // Fire-and-forget poll
+        (async () => {
+            try {
+                const recovered = await pollForCompletedPlan(runId);
+                if (recovered) {
+                    setMealPlan(recovered.mealPlan || []);
+                    setResults(recovered.results || {});
+                    setUniqueIngredients(recovered.uniqueIngredients || []);
+                    recalculateTotalCost(recovered.results || {});
+                    if (recovered.macroDebug) setMacroDebug(recovered.macroDebug);
+
+                    setGenerationStepKey('complete');
+                    setGenerationStatus('Plan recovered after refresh!');
+                    setError(null);
+
+                    cachePlan({
+                        mealPlan: recovered.mealPlan || [],
+                        results: recovered.results || {},
+                        uniqueIngredients: recovered.uniqueIngredients || [],
+                        formData: formData,
+                        nutritionalTargets: nutritionalTargets
+                    });
+
+                    if (planPersistence && planPersistence.autoSavePlan) {
+                        planPersistence.autoSavePlan({
+                            mealPlan: recovered.mealPlan || [],
+                            results: recovered.results || {},
+                            uniqueIngredients: recovered.uniqueIngredients || [],
+                            formData: formData,
+                            nutritionalTargets: nutritionalTargets
+                        }).catch(err => console.warn('[AUTO_SAVE] Post-refresh recovery save failed:', err.message));
+                    }
+
+                    showToast('Plan recovered after page refresh!', 'success');
+                } else {
+                    setGenerationStatus('Previous generation could not be recovered. You can start a new one.');
+                    setGenerationStepKey(null);
+                }
+            } catch (err) {
+                console.error('[MOUNT] Poll recovery failed:', err);
+                setGenerationStatus('Previous generation could not be recovered.');
+                setGenerationStepKey(null);
+            } finally {
+                clearRunState();
+                setLoading(false);
+            }
+        })();
+
+        // Show loading state while polling
+        setLoading(true);
+        setGenerationStatus('Recovering plan from previous session…');
+        setGenerationStepKey('reconnecting');
+
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Intentionally empty deps — runs once on mount only
 
     // --- Mount-time run recovery (survives tab close / refresh) ---
     useEffect(() => {
@@ -225,6 +306,13 @@ const useAppLogic = ({
     useEffect(() => {
       localStorage.setItem('cheffy_show_macro_debug_log', JSON.stringify(showMacroDebugLog));
     }, [showMacroDebugLog]);
+
+    // --- PERSISTENCE FIX: Persist diagnostic logs to sessionStorage ---
+    useEffect(() => {
+        if (diagnosticLogs.length > 0) {
+            cacheLogs(diagnosticLogs);
+        }
+    }, [diagnosticLogs]);
 
     // Persist selected AI model
     useEffect(() => {
@@ -616,6 +704,14 @@ const useAppLogic = ({
                     // --- END FIXED ERROR HANDLING ---
                 }
 
+                // ── PERSISTENCE FIX: Read run_id from response header ──
+                const headerRunId = planResponse.headers.get('X-Cheffy-Run-Id');
+                if (headerRunId) {
+                    currentRunIdRef.current = headerRunId;
+                    cacheRunId(headerRunId, 'generating');
+                    console.log('[GENERATE] Got run_id from header:', headerRunId);
+                }
+
                 // console.log('[DEBUG] About to get reader from body...'); // Diagnostic log removed for cleanup
                 // console.log('[DEBUG] planResponse.body exists:', !!planResponse.body); // Diagnostic log removed for cleanup
                 
@@ -650,14 +746,7 @@ const useAppLogic = ({
                             case 'plan:start':
                                 if (eventData.run_id) {
                                     currentRunIdRef.current = eventData.run_id;
-                                    // FIX (v2): Persist runId to localStorage so it survives
-                                    // tab refresh/close.  If the SSE stream drops, the mount-
-                                    // time recovery effect (Change 2) will pick this up and
-                                    // resume polling.
-                                    persistRunId(eventData.run_id, {
-                                        formDataSnapshot: formData,
-                                        nutritionalTargetsSnapshot: nutritionalTargets,
-                                    });
+                                    cacheRunId(eventData.run_id, 'generating');
                                 }
                                 break;
                             
@@ -749,6 +838,16 @@ const useAppLogic = ({
                                         showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
                                     }
                                 }
+
+                                // ── PERSISTENCE FIX: write plan to localStorage ──
+                                cachePlan({
+                                    mealPlan: eventData.mealPlan || [],
+                                    results: eventData.results || {},
+                                    uniqueIngredients: eventData.uniqueIngredients || [],
+                                    formData: formData,
+                                    nutritionalTargets: nutritionalTargets
+                                });
+                                clearRunState();
                                 break;
 
                             case 'error':
@@ -770,6 +869,7 @@ const useAppLogic = ({
 
                 if (isStreamInterrupt && currentRunIdRef.current) {
                     console.warn('[GENERATE] Stream interrupted, attempting recovery via polling...', err.message);
+                    cacheRunId(currentRunIdRef.current, 'polling');
                     setDiagnosticLogs(prev => [...prev, {
                         timestamp: new Date().toISOString(), level: 'WARN', tag: 'FRONTEND',
                         message: `Stream interrupted: ${err.message}. Polling for server-side result…`
@@ -811,6 +911,16 @@ const useAppLogic = ({
                                     showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
                                 }
                             }
+
+                            // ── PERSISTENCE FIX: cache recovered plan locally ──
+                            cachePlan({
+                                mealPlan: recovered.mealPlan || [],
+                                results: recovered.results || {},
+                                uniqueIngredients: recovered.uniqueIngredients || [],
+                                formData: formData,
+                                nutritionalTargets: nutritionalTargets
+                            });
+                            clearRunState();
                             return;
                         }
                     } catch (pollErr) {
@@ -823,6 +933,7 @@ const useAppLogic = ({
                 console.error("Batched plan generation failed critically:", err);
                 setError(`Critical failure: ${err.message}`);
                 setGenerationStepKey('error');
+                clearRunState();
                 setDiagnosticLogs(prev => [...prev, {
                     timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND',
                     message: `Critical failure: ${err.message}`
