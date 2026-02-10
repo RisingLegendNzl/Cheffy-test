@@ -1,42 +1,66 @@
 // web/src/components/MainApp.jsx
 import React, { useState } from 'react';
-import { LayoutDashboard, Utensils, ShoppingBag, AlertTriangle, Save, FolderDown } from 'lucide-react';
-import PlanSetupWizard from './wizard/PlanSetupWizard';
-import ProfileTab from './ProfileTab';
+import { RefreshCw, Zap, AlertTriangle, CheckCircle, Package, DollarSign, ExternalLink, Calendar, Users, Menu, X, ChevronsDown, ChevronsUp, ShoppingBag, BookOpen, ChefHat, Tag, Soup, Replace, Target, FileText, LayoutDashboard, Terminal, Loader, ChevronRight, GripVertical, Flame, Droplet, Wheat, ChevronDown, ChevronUp, Download, ListX, Save, FolderDown, User, Check, ListChecks, ListOrdered, Utensils } from 'lucide-react';
+
+// --- Component Imports ---
+import MacroRing from './MacroRing';
+import MacroBar from './MacroBar';
+import InputField from './InputField';
+import DaySlider from './DaySlider';
+import DayTabBar from './DayTabBar';
+import ProductCard from './ProductCard';
+import CollapsibleSection from './CollapsibleSection';
+import SubstituteMenu from './SubstituteMenu';
+import GenerationProgressDisplay from './GenerationProgressDisplay';
+import StoryModeGeneration from './StoryModeGeneration';
+import NutritionalInfo from './NutritionalInfo';
+import IngredientResultBlock from './IngredientResultBlock';
 import MealPlanDisplay from './MealPlanDisplay';
-import ShoppingListWithDetails from './ShoppingListWithDetails';
-import Header from './Header';
-import BottomNav from './BottomNav';
-import ToastContainer from './ToastContainer';
+import LogEntry from './LogEntry';
 import DiagnosticLogViewer from './DiagnosticLogViewer';
 import FailedIngredientLogViewer from './FailedIngredientLogViewer';
-import MacroDebugLogViewer from './MacroDebugLogViewer';
-import StoryModeGeneration from './StoryModeGeneration';
-import SuccessModal from './SuccessModal';
-import SettingsPanel from './SettingsPanel';
-import SavedPlansModal from './SavedPlansModal';
+import MacroDebugLogViewer from './MacroDebugLogViewer'; // CHANGE 1
 import RecipeModal from './RecipeModal';
-import DayTabBar from './DayTabBar';
+import EmojiIcon from './EmojiIcon';
+import ProfileTab from './ProfileTab';
+import SavedPlansModal from './SavedPlansModal';
+import PlanSetupWizard from './wizard/PlanSetupWizard';
+
+// Phase 2 imports
+import Header from './Header';
+import { ToastContainer } from './Toast';
+import EmptyState from './EmptyState';
+import LoadingOverlay from './LoadingOverlay';
+import SuccessModal from './SuccessModal';
+import MealCard from './MealCard';
+import DayNavigator from './DayNavigator';
+import ShoppingListWithDetails from './ShoppingListWithDetails';
+import FormSection from './FormSection';
+import SettingsPanel from './SettingsPanel';
+import BottomNav from './BottomNav';
+import { MealCardSkeleton, ProfileCardSkeleton, ShoppingListSkeleton } from './SkeletonLoader';
 import PullToRefresh from './PullToRefresh';
 
-/**
- * Emoji Icon Component
- */
-const EmojiIcon = ({ code, alt }) => (
-    <span role="img" aria-label={alt} className="text-xl">
-        {String.fromCodePoint(parseInt(code, 16))}
-    </span>
-);
-
-/**
- * Category Icon Map
- */
-const categoryIcons = {
-    'fruits_vegetables': <EmojiIcon code="1f34e" alt="fruits" />, 
-    'meat_seafood': <EmojiIcon code="1f357" alt="meat" />, 
-    'dairy_eggs': <EmojiIcon code="1f9c0" alt="dairy" />,
-    'grains_bread': <EmojiIcon code="1f35e" alt="bread" />,
-    'pantry': <EmojiIcon code="1f3fa" alt="pantry" />, 
+// --- Category Icon Map ---
+const categoryIconMap = {
+    'produce': <EmojiIcon code="1f966" alt="produce" />,
+    'fruit': <EmojiIcon code="1f353" alt="fruit" />,
+    'veg': <EmojiIcon code="1f955" alt="veg" />,
+    'grains': <EmojiIcon code="1f33e" alt="grains" />,
+    'carb': <EmojiIcon code="1f33e" alt="grains" />,
+    'meat': <EmojiIcon code="1f969" alt="meat" />,
+    'protein': <EmojiIcon code="1f969" alt="meat" />,
+    'seafood': <EmojiIcon code="1f41f" alt="seafood" />,
+    'dairy': <EmojiIcon code="1f95b" alt="dairy" />,
+    'fat': <EmojiIcon code="1f951" alt="fat" />,
+    'drinks': <EmojiIcon code="1f9c3" alt="drinks" />,
+    'pantry': <EmojiIcon code="1f968" alt="pantry" />,
+    'canned': <EmojiIcon code="1f96b" alt="canned" />,
+    'spreads': <EmojiIcon code="1f95c" alt="spreads" />,
+    'condiments': <EmojiIcon code="1f9c2" alt="condiments" />,
+    'bakery': <EmojiIcon code="1f370" alt="bakery" />,
+    'frozen': <EmojiIcon code="2744" alt="frozen" />,
+    'snacks': <EmojiIcon code="1f36b" alt="snacks" />, 
     'misc': <EmojiIcon code="1f36b" alt="snacks" />,
     'uncategorized': <EmojiIcon code="1f6cd" alt="shopping" />,
     'default': <EmojiIcon code="1f6cd" alt="shopping" />
