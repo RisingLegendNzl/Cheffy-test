@@ -1,13 +1,6 @@
 // web/src/services/planPersistence.js
-// ---------------------------------------------------------------------------
 // Service layer for meal plan persistence.
 // Handles API validation calls and Firestore operations.
-//
-// v2 CHANGES:
-// - autoSavePlan now throws on Firestore write failure instead of returning
-//   null, so the retry logic in usePlanPersistence can catch and retry.
-// - Minor JSDoc improvements.
-// ---------------------------------------------------------------------------
 
 import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, orderBy } from 'firebase/firestore';
 
@@ -110,11 +103,7 @@ export const savePlan = async ({
  * All data fields are passed explicitly by the caller — this function
  * does NOT read from React state or closures.
  *
- * v2 CHANGE: Throws on Firestore write errors instead of returning null,
- * allowing the caller (usePlanPersistence.autoSavePlan) to retry.
- *
- * @throws {Error} If the Firestore write fails.
- * @returns {object|null} The saved plan document, or null if inputs are invalid.
+ * PERSISTENCE FIX: Includes a single retry on Firestore write failure.
  */
 export const autoSavePlan = async ({
     userId,
@@ -149,11 +138,27 @@ export const autoSavePlan = async ({
         isActive: true
     };
 
-    // v2: Let errors propagate so the hook's retry logic can catch them.
-    const planRef = doc(db, 'plans', userId, 'saved_plans', planId);
-    await setDoc(planRef, planDoc);
-    console.log('[PLAN_SERVICE] Auto-saved plan:', planId);
-    return planDoc;
+    const MAX_RETRIES = 1;
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const planRef = doc(db, 'plans', userId, 'saved_plans', planId);
+            await setDoc(planRef, planDoc);
+            console.log('[PLAN_SERVICE] Auto-saved plan:', planId, attempt > 0 ? `(retry ${attempt})` : '');
+            return planDoc;
+        } catch (error) {
+            lastError = error;
+            console.warn(`[PLAN_SERVICE] autoSavePlan attempt ${attempt + 1} failed:`, error.message);
+            if (attempt < MAX_RETRIES) {
+                // Brief delay before retry
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+    }
+
+    console.error('[PLAN_SERVICE] autoSavePlan failed after retries:', lastError);
+    return null;
 };
 
 /**
