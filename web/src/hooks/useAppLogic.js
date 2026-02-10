@@ -361,6 +361,7 @@ const useAppLogic = ({
         // Additions for persistence fix:
         setFormData: setFormData || (() => {}),
         setNutritionalTargets: setNutritionalTargets || (() => {}),
+        setSelectedDay: setSelectedDay || (() => {}),
     });
     // --- End Plan Persistence Hook Call ---
 
