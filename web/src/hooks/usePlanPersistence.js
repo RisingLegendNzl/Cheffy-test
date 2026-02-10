@@ -1,14 +1,19 @@
 // web/src/hooks/usePlanPersistence.js
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import * as planService from '../services/planPersistence';
 
 /**
- * Custom hook for managing meal plan persistence
- * 
- * FIX: Added recalculateTotalCost parameter and invoke it after loading plans
- * This fixes the bug where total cost and estimated savings show $0 after loading
- * 
- * FIX: Added autoSavePlan method for automatic persistence after generation/recovery
+ * Custom hook for managing meal plan persistence.
+ *
+ * FIXES APPLIED:
+ * - autoSavePlan accepts an optional explicit planData argument so callers
+ *   can pass SSE/recovery payloads directly, avoiding stale-closure bugs.
+ * - loadPlan now restores formData and nutritionalTargets (requires
+ *   setFormData and setNutritionalTargets to be passed in).
+ * - The loadActivePlan mount effect uses a ref guard instead of mealPlan
+ *   in its dependency array, preventing skip-on-stale-value and re-trigger
+ *   loops.
+ * - recalculateTotalCost is called after loading to fix the $0 total bug.
  */
 const usePlanPersistence = ({
     userId,
@@ -23,7 +28,9 @@ const usePlanPersistence = ({
     setMealPlan,
     setResults,
     setUniqueIngredients,
-    recalculateTotalCost  // FIX: New parameter to recalculate costs after loading
+    recalculateTotalCost,
+    setFormData,
+    setNutritionalTargets
 }) => {
     const [savedPlans, setSavedPlans] = useState([]);
     const [activePlanId, setActivePlanId] = useState(null);
@@ -31,7 +38,15 @@ const usePlanPersistence = ({
     const [loadingPlan, setLoadingPlan] = useState(false);
     const [loadingPlansList, setLoadingPlansList] = useState(false);
 
-    // Hardened listPlans implementation
+    // Guard ref: ensures the mount-load runs exactly once per auth session
+    const hasAttemptedLoadRef = useRef(false);
+
+    // Reset the guard when user identity changes (sign-out → sign-in)
+    useEffect(() => {
+        hasAttemptedLoadRef.current = false;
+    }, [userId]);
+
+    // ── listPlans ──────────────────────────────────────────────────────
     const listPlans = useCallback(async () => {
         if (!userId || !db) {
             return [];
@@ -54,6 +69,7 @@ const usePlanPersistence = ({
         }
     }, [userId, db]);
 
+    // ── savePlan (manual, user-triggered) ──────────────────────────────
     const savePlan = useCallback(async (planName) => {
         if (!userId || !db) {
             showToast && showToast('Please sign in to save plans', 'warning');
@@ -90,21 +106,30 @@ const usePlanPersistence = ({
         }
     }, [userId, db, mealPlan, results, uniqueIngredients, formData, nutritionalTargets, showToast, listPlans]);
 
+    // ── autoSavePlan ───────────────────────────────────────────────────
     /**
-     * autoSavePlan — Automatically saves the current plan and marks it active.
-     * Called programmatically after plan generation completes or after recovery.
-     * Does NOT show toast notifications (silent operation).
-     * Skips backend validation (unnecessary for a freshly generated plan).
-     * 
-     * @returns {Promise<string|null>} The planId if saved, or null on failure.
+     * Automatically saves a plan and marks it active.
+     *
+     * @param {object} [planData] - Optional explicit data to save. When
+     *   provided, these values are used instead of hook closure state.
+     *   Expected shape: { mealPlan, results, uniqueIngredients, formData,
+     *   nutritionalTargets }
+     * @returns {Promise<string|null>} The planId if saved, or null.
      */
-    const autoSavePlan = useCallback(async () => {
+    const autoSavePlan = useCallback(async (planData) => {
         if (!userId || !db) {
             console.warn('[PLAN_HOOK] autoSavePlan skipped: no userId or db');
             return null;
         }
 
-        if (!mealPlan || mealPlan.length === 0) {
+        // Use explicit data if provided, otherwise fall back to closure state
+        const mp   = planData?.mealPlan          ?? mealPlan;
+        const res  = planData?.results           ?? results;
+        const ui   = planData?.uniqueIngredients ?? uniqueIngredients;
+        const fd   = planData?.formData          ?? formData;
+        const nt   = planData?.nutritionalTargets ?? nutritionalTargets;
+
+        if (!mp || mp.length === 0) {
             console.warn('[PLAN_HOOK] autoSavePlan skipped: no meal plan data');
             return null;
         }
@@ -117,20 +142,19 @@ const usePlanPersistence = ({
                 userId,
                 db,
                 planName,
-                mealPlan,
-                results,
-                uniqueIngredients,
-                formData,
-                nutritionalTargets
+                mealPlan: mp,
+                results: res,
+                uniqueIngredients: ui,
+                formData: fd,
+                nutritionalTargets: nt
             });
 
             if (savedPlan && savedPlan.planId) {
-                // Mark as active so it auto-loads on next mount
                 await planService.setActivePlan({ userId, db, planId: savedPlan.planId });
                 setActivePlanId(savedPlan.planId);
                 console.log('[PLAN_HOOK] Auto-saved and activated plan:', savedPlan.planId);
 
-                // Refresh the plans list in the background
+                // Refresh plans list in background
                 listPlans().catch(() => {});
 
                 return savedPlan.planId;
@@ -143,14 +167,10 @@ const usePlanPersistence = ({
         }
     }, [userId, db, mealPlan, results, uniqueIngredients, formData, nutritionalTargets, listPlans]);
 
+    // ── loadPlan ───────────────────────────────────────────────────────
     /**
-     * FIX: Enhanced loadPlan function that recalculates totals after loading
-     * 
-     * CRITICAL CHANGE: After setting state with loaded plan data, we now call
-     * recalculateTotalCost(loadedPlan.results) to recompute the shopping total
-     * and trigger derived value recalculation (estimated savings).
-     * 
-     * This fixes the bug where total cost shows $0 when loading saved plans.
+     * Loads a saved plan from Firestore and restores ALL five state fields:
+     * mealPlan, results, uniqueIngredients, formData, nutritionalTargets.
      */
     const loadPlan = useCallback(async (planId) => {
         if (!userId || !db) {
@@ -171,7 +191,7 @@ const usePlanPersistence = ({
                 planId
             });
 
-            // Set all state from loaded plan
+            // Restore the three core plan-data fields
             if (setMealPlan && loadedPlan.mealPlan) {
                 setMealPlan(loadedPlan.mealPlan);
             }
@@ -182,8 +202,20 @@ const usePlanPersistence = ({
                 setUniqueIngredients(loadedPlan.uniqueIngredients);
             }
 
-            // FIX: Recalculate total cost from loaded results
-            // This is the critical missing piece that caused the $0 bug
+            // Restore formData so the profile/setup panel reflects the plan's parameters
+            if (setFormData && loadedPlan.formData && Object.keys(loadedPlan.formData).length > 0) {
+                setFormData(prev => ({
+                    ...prev,
+                    ...loadedPlan.formData
+                }));
+            }
+
+            // Restore nutritionalTargets so calorie/macro bars show correct values
+            if (setNutritionalTargets && loadedPlan.nutritionalTargets && loadedPlan.nutritionalTargets.calories) {
+                setNutritionalTargets(loadedPlan.nutritionalTargets);
+            }
+
+            // Recalculate total cost from loaded results
             if (recalculateTotalCost && loadedPlan.results) {
                 console.log('[PLAN_HOOK] Recalculating total cost after loading plan');
                 recalculateTotalCost(loadedPlan.results);
@@ -198,8 +230,9 @@ const usePlanPersistence = ({
         } finally {
             setLoadingPlan(false);
         }
-    }, [userId, db, showToast, setMealPlan, setResults, setUniqueIngredients, recalculateTotalCost]);
+    }, [userId, db, showToast, setMealPlan, setResults, setUniqueIngredients, setFormData, setNutritionalTargets, recalculateTotalCost]);
 
+    // ── deletePlan ─────────────────────────────────────────────────────
     const deletePlan = useCallback(async (planId) => {
         if (!userId || !db) {
             showToast && showToast('Please sign in to delete plans', 'warning');
@@ -223,6 +256,7 @@ const usePlanPersistence = ({
         }
     }, [userId, db, showToast, listPlans]);
 
+    // ── setActivePlan ──────────────────────────────────────────────────
     const setActivePlanHandler = useCallback(async (planId) => {
         if (!userId || !db) {
             return false;
@@ -244,21 +278,27 @@ const usePlanPersistence = ({
         }
     }, [userId, db, listPlans]);
 
-    // Load active plan on mount
+    // ── Load active plan on mount ──────────────────────────────────────
+    // Uses a ref guard instead of mealPlan in deps to prevent:
+    //   a) Skipping load when mealPlan has a stale non-empty value
+    //   b) Re-triggering when loadPlan itself updates mealPlan
     useEffect(() => {
         const loadActivePlan = async () => {
             if (!userId || !db) {
                 return;
             }
 
+            // Only attempt once per auth session
+            if (hasAttemptedLoadRef.current) {
+                return;
+            }
+            hasAttemptedLoadRef.current = true;
+
             try {
                 const active = await planService.getActivePlan({ userId, db });
                 if (active && active.planId) {
                     setActivePlanId(active.planId);
-                    // Only auto-load if there's no current meal plan
-                    if (!mealPlan || mealPlan.length === 0) {
-                        await loadPlan(active.planId);
-                    }
+                    await loadPlan(active.planId);
                 }
             } catch (error) {
                 console.error('[PLAN_HOOK] Error loading active plan on mount:', error);
@@ -266,11 +306,11 @@ const usePlanPersistence = ({
         };
 
         loadActivePlan();
-    }, [userId, db, mealPlan, loadPlan]); 
+    }, [userId, db, loadPlan]);
 
-    // Load plans list on mount
+    // ── Load plans list on mount ───────────────────────────────────────
     useEffect(() => {
-        if (userId && db) { 
+        if (userId && db) {
             listPlans().catch(err => {
                 console.error('[PLAN_HOOK] Silent error loading plans list:', err);
             });
