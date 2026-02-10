@@ -3,7 +3,7 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 
 // --- Firebase Imports ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore, setLogLevel } from 'firebase/firestore';
 
 // --- Component Imports ---
@@ -25,7 +25,8 @@ const App = () => {
     const [contentView, setContentView] = useState('profile');
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-    const [showLandingPage, setShowLandingPage] = useState(true);
+    // [FIX] Removed: const [showLandingPage, setShowLandingPage] = useState(true);
+    // Landing page visibility is now derived from isAuthReady + userId (see below)
     const [authLoading, setAuthLoading] = useState(false);
     const [authError, setAuthError] = useState(null);
 
@@ -51,6 +52,11 @@ const App = () => {
 
     // --- Responsive ---
     const { isMobile, isDesktop } = useResponsive();
+
+    // --- [FIX] Derive landing page visibility instead of using separate state + useEffect ---
+    // This eliminates the race condition where showLandingPage was true before Firebase
+    // had a chance to restore the session, causing a "logged out" flash on refresh.
+    const showLandingPage = isAuthReady && !userId;
 
     // --- Firebase Initialization and Auth Effect ---
     useEffect(() => {
@@ -93,6 +99,18 @@ const App = () => {
                 setLogLevel('debug');
                 console.log("[FIREBASE] Initialized.");
 
+                // [FIX] Explicitly set persistence to browserLocalPersistence.
+                // This ensures the session survives page refreshes via IndexedDB,
+                // and documents the intent (Firebase v9+ defaults to this, but
+                // being explicit guards against edge cases).
+                setPersistence(authInstance, browserLocalPersistence)
+                    .then(() => {
+                        console.log("[FIREBASE] Persistence set to browserLocalPersistence.");
+                    })
+                    .catch((persistErr) => {
+                        console.warn("[FIREBASE] Failed to set persistence (falling back to default):", persistErr);
+                    });
+
                 const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
                     if (user) {
                         console.log("[FIREBASE] User is signed in:", user.uid);
@@ -114,14 +132,9 @@ const App = () => {
         }
     }, []);
 
-    // --- Landing page visibility ---
-    useEffect(() => {
-        if (!userId) {
-            setShowLandingPage(true);
-        } else {
-            setShowLandingPage(false);
-        }
-    }, [userId]);
+    // [FIX] Removed the old useEffect that toggled showLandingPage based on userId.
+    // It introduced an extra render cycle that caused the "logged out" flash.
+    // Landing page visibility is now derived above: const showLandingPage = isAuthReady && !userId;
 
     // --- Business Logic Hook ---
     const logic = useAppLogic({
@@ -157,12 +170,14 @@ const App = () => {
     };
 
     // --- Auth Handlers with Loading State ---
+    // [FIX] Removed manual setShowLandingPage calls — no longer needed since
+    // showLandingPage is derived from isAuthReady && !userId, which updates
+    // automatically when Firebase auth state changes.
     const handleSignUp = useCallback(async (credentials) => {
         setAuthLoading(true);
         setAuthError(null);
         try {
             await logic.handleSignUp(credentials);
-            setShowLandingPage(false);
             setContentView('profile');
         } catch (error) {
             setAuthError(error.message);
@@ -176,7 +191,6 @@ const App = () => {
         setAuthError(null);
         try {
             await logic.handleSignIn(credentials);
-            setShowLandingPage(false);
             setContentView('profile');
         } catch (error) {
             setAuthError(error.message);
@@ -187,7 +201,6 @@ const App = () => {
 
     const handleSignOut = useCallback(async () => {
         await logic.handleSignOut();
-        setShowLandingPage(true);
         setContentView('profile');
         setAuthError(null);
     }, [logic]);
@@ -202,6 +215,53 @@ const App = () => {
     }, []);
 
     // --- Render ---
+    // [FIX] Gate rendering on isAuthReady. Before Firebase resolves the session,
+    // show a branded loading screen instead of flashing the landing page.
+    if (!isAuthReady) {
+        return (
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '100vh',
+                background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 50%, #ddd6fe 100%)',
+            }}>
+                <div style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #6366f1, #7c3aed)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: 16,
+                    animation: 'pulse 2s ease-in-out infinite',
+                }}>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M6 13.87A4 4 0 0 1 7.41 6a5.11 5.11 0 0 1 1.05-1.54 5 5 0 0 1 7.08 0A5.11 5.11 0 0 1 16.59 6 4 4 0 0 1 18 13.87V21H6Z" />
+                        <line x1="6" y1="17" x2="18" y2="17" />
+                    </svg>
+                </div>
+                <p style={{
+                    color: '#6366f1',
+                    fontSize: 18,
+                    fontWeight: 600,
+                    fontFamily: "'Poppins', sans-serif",
+                    letterSpacing: '0.02em',
+                }}>
+                    Cheffy
+                </p>
+                <style>{`
+                    @keyframes pulse {
+                        0%, 100% { transform: scale(1); opacity: 1; }
+                        50% { transform: scale(1.08); opacity: 0.85; }
+                    }
+                `}</style>
+            </div>
+        );
+    }
+
     return (
         <>
             {showLandingPage ? (
@@ -259,7 +319,7 @@ const App = () => {
                     setIsLogOpen={logic.setIsLogOpen} 
                     latestLog={logic.latestLog}
                     
-                    // NEW: Macro Debug Log props (with defensive defaults)
+                    // Macro Debug Log props (with defensive defaults)
                     macroDebug={logic.macroDebug || {}}
                     showMacroDebugLog={logic.showMacroDebugLog ?? false}
                     setShowMacroDebugLog={logic.setShowMacroDebugLog || (() => {})}
@@ -325,4 +385,3 @@ const App = () => {
 };
 
 export default App;
-
