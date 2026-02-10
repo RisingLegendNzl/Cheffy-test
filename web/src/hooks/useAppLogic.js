@@ -2,6 +2,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
 import usePlanPersistence from './usePlanPersistence';
+import { persistRunId, getPendingRun, clearPendingRun } from '../services/runRecovery';
 
 // --- CONFIGURATION ---
 const ORCHESTRATOR_TARGETS_API_URL = '/api/plan/targets';
@@ -142,6 +143,74 @@ const useAppLogic = ({
             }
         };
     }, []);
+
+    // --- Mount-time run recovery (survives tab close / refresh) ---
+    useEffect(() => {
+        // Only attempt recovery once auth is ready and the user is signed in.
+        // Also skip if the hook is already in a loading/generating state.
+        if (!isAuthReady || !userId || loading) return;
+
+        const pendingRun = getPendingRun();
+        if (!pendingRun) return;
+
+        console.log('[RECOVERY] Found pending run from previous session:', pendingRun.runId);
+
+        // Kick off polling in the background
+        const recover = async () => {
+            setLoading(true);
+            setGenerationStepKey('reconnecting');
+            setGenerationStatus('Resuming plan generation from previous session…');
+
+            try {
+                const recovered = await pollForCompletedPlan(pendingRun.runId);
+                if (recovered) {
+                    setMealPlan(recovered.mealPlan || []);
+                    setResults(recovered.results || {});
+                    setUniqueIngredients(recovered.uniqueIngredients || []);
+                    recalculateTotalCost(recovered.results || {});
+                    if (recovered.macroDebug) setMacroDebug(recovered.macroDebug);
+
+                    setGenerationStepKey('complete');
+                    setGenerationStatus('Plan recovered successfully!');
+                    setError(null);
+
+                    showToast('Plan recovered from previous session!', 'success');
+
+                    // Auto-save the recovered plan
+                    if (planPersistence && planPersistence.autoSavePlan) {
+                        try {
+                            await planPersistence.autoSavePlan({
+                                mealPlan: recovered.mealPlan || [],
+                                results: recovered.results || {},
+                                uniqueIngredients: recovered.uniqueIngredients || [],
+                                formData: formData,
+                                nutritionalTargets: nutritionalTargets
+                            });
+                        } catch (err) {
+                            console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
+                            showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
+                        }
+                    }
+                } else {
+                    // Polling timed out — the run is likely dead
+                    console.warn('[RECOVERY] Polling timed out for pending run:', pendingRun.runId);
+                    setGenerationStepKey(null);
+                    setGenerationStatus('Ready to generate plan.');
+                }
+            } catch (err) {
+                console.error('[RECOVERY] Recovery failed:', err);
+                setError(null); // Don't show error — just let user re-generate
+                setGenerationStepKey(null);
+                setGenerationStatus('Ready to generate plan.');
+            } finally {
+                clearPendingRun();
+                setLoading(false);
+            }
+        };
+
+        recover();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isAuthReady, userId]);
 
     // --- Persist Log Visibility Preferences ---
     useEffect(() => {
@@ -459,6 +528,7 @@ const useAppLogic = ({
             console.log('[GENERATE] Aborting previous request.');
             abortControllerRef.current.abort();
         }
+        clearPendingRun();
         abortControllerRef.current = new AbortController();
         currentRunIdRef.current = null;
         const signal = abortControllerRef.current.signal;
@@ -580,6 +650,14 @@ const useAppLogic = ({
                             case 'plan:start':
                                 if (eventData.run_id) {
                                     currentRunIdRef.current = eventData.run_id;
+                                    // FIX (v2): Persist runId to localStorage so it survives
+                                    // tab refresh/close.  If the SSE stream drops, the mount-
+                                    // time recovery effect (Change 2) will pick this up and
+                                    // resume polling.
+                                    persistRunId(eventData.run_id, {
+                                        formDataSnapshot: formData,
+                                        nutritionalTargetsSnapshot: nutritionalTargets,
+                                    });
                                 }
                                 break;
                             
@@ -629,6 +707,7 @@ const useAppLogic = ({
 
                             case 'plan:complete':
                                 planComplete = true;
+                                clearPendingRun();
                                 setMealPlan(eventData.mealPlan || []);
                                 setResults(eventData.results || {});
                                 setUniqueIngredients(eventData.uniqueIngredients || []);
@@ -657,15 +736,18 @@ const useAppLogic = ({
                                 
                                 // Auto-save to Firestore
                                 if (planPersistence && planPersistence.autoSavePlan) {
-                                    planPersistence.autoSavePlan({
-                                        mealPlan: eventData.mealPlan || [],
-                                        results: eventData.results || {},
-                                        uniqueIngredients: eventData.uniqueIngredients || [],
-                                        formData: formData,
-                                        nutritionalTargets: nutritionalTargets
-                                    }).catch(err => {
-                                        console.warn('[AUTO_SAVE] Failed to auto-save plan:', err.message);
-                                    });
+                                    try {
+                                        await planPersistence.autoSavePlan({
+                                            mealPlan: eventData.mealPlan || [],
+                                            results: eventData.results || {},
+                                            uniqueIngredients: eventData.uniqueIngredients || [],
+                                            formData: formData,
+                                            nutritionalTargets: nutritionalTargets
+                                        });
+                                    } catch (err) {
+                                        console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
+                                        showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
+                                    }
                                 }
                                 break;
 
@@ -696,6 +778,7 @@ const useAppLogic = ({
                     try {
                         const recovered = await pollForCompletedPlan(currentRunIdRef.current);
                         if (recovered) {
+                            clearPendingRun();
                             setMealPlan(recovered.mealPlan || []);
                             setResults(recovered.results || {});
                             setUniqueIngredients(recovered.uniqueIngredients || []);
@@ -715,15 +798,18 @@ const useAppLogic = ({
                             showToast('Plan recovered after connection interruption!', 'success');
                             
                             if (planPersistence && planPersistence.autoSavePlan) {
-                                planPersistence.autoSavePlan({
-                                    mealPlan: recovered.mealPlan || [],
-                                    results: recovered.results || {},
-                                    uniqueIngredients: recovered.uniqueIngredients || [],
-                                    formData: formData,
-                                    nutritionalTargets: nutritionalTargets
-                                }).catch(err => {
-                                    console.warn('[AUTO_SAVE] Failed to auto-save recovered plan:', err.message);
-                                });
+                                try {
+                                    await planPersistence.autoSavePlan({
+                                        mealPlan: recovered.mealPlan || [],
+                                        results: recovered.results || {},
+                                        uniqueIngredients: recovered.uniqueIngredients || [],
+                                        formData: formData,
+                                        nutritionalTargets: nutritionalTargets
+                                    });
+                                } catch (err) {
+                                    console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
+                                    showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
+                                }
                             }
                             return;
                         }
@@ -733,6 +819,7 @@ const useAppLogic = ({
                 }
 
                 // Fallthrough: unrecoverable error
+                clearPendingRun();
                 console.error("Batched plan generation failed critically:", err);
                 setError(`Critical failure: ${err.message}`);
                 setGenerationStepKey('error');
