@@ -1,6 +1,13 @@
 // web/src/services/planPersistence.js
+// ---------------------------------------------------------------------------
 // Service layer for meal plan persistence.
 // Handles API validation calls and Firestore operations.
+//
+// v2 CHANGES:
+// - autoSavePlan now throws on Firestore write failure instead of returning
+//   null, so the retry logic in usePlanPersistence can catch and retry.
+// - Minor JSDoc improvements.
+// ---------------------------------------------------------------------------
 
 import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, orderBy } from 'firebase/firestore';
 
@@ -102,6 +109,12 @@ export const savePlan = async ({
  *
  * All data fields are passed explicitly by the caller — this function
  * does NOT read from React state or closures.
+ *
+ * v2 CHANGE: Throws on Firestore write errors instead of returning null,
+ * allowing the caller (usePlanPersistence.autoSavePlan) to retry.
+ *
+ * @throws {Error} If the Firestore write fails.
+ * @returns {object|null} The saved plan document, or null if inputs are invalid.
  */
 export const autoSavePlan = async ({
     userId,
@@ -136,15 +149,11 @@ export const autoSavePlan = async ({
         isActive: true
     };
 
-    try {
-        const planRef = doc(db, 'plans', userId, 'saved_plans', planId);
-        await setDoc(planRef, planDoc);
-        console.log('[PLAN_SERVICE] Auto-saved plan:', planId);
-        return planDoc;
-    } catch (error) {
-        console.error('[PLAN_SERVICE] autoSavePlan error:', error);
-        return null;
-    }
+    // v2: Let errors propagate so the hook's retry logic can catch them.
+    const planRef = doc(db, 'plans', userId, 'saved_plans', planId);
+    await setDoc(planRef, planDoc);
+    console.log('[PLAN_SERVICE] Auto-saved plan:', planId);
+    return planDoc;
 };
 
 /**
