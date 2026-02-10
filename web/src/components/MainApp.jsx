@@ -1,6 +1,6 @@
 // web/src/components/MainApp.jsx
 import React, { useState, useMemo } from 'react';
-import { RefreshCw, Zap, AlertTriangle, CheckCircle, Package, DollarSign, ExternalLink, Calendar, Users, Menu, X, ChevronsDown, ChevronsUp, ShoppingBag, BookOpen, ChefHat, Tag, Soup, Replace, Target, FileText, LayoutDashboard, Terminal, Loader, ChevronRight, GripVertical, Flame, Droplet, Wheat, ChevronDown, ChevronUp, Download, ListX, Save, FolderDown, User, Check, ListChecks, ListOrdered, Utensils } from 'lucide-react';
+import { RefreshCw, Zap, AlertTriangle, CheckCircle, Package, DollarSign, ExternalLink, Calendar, Users, Menu, X, ChevronsDown, ChevronsUp, ShoppingBag, BookOpen, ChefHat, Tag, Soup, Replace, Target, FileText, Terminal, Loader, ChevronRight, GripVertical, Flame, Droplet, Wheat, ChevronDown, ChevronUp, Download, ListX, Save, FolderDown, User, Check, ListChecks, ListOrdered, Utensils } from 'lucide-react';
 
 // --- Component Imports ---
 import MacroRing from './MacroRing';
@@ -25,6 +25,7 @@ import EmojiIcon from './EmojiIcon';
 import ProfileTab from './ProfileTab';
 import SavedPlansModal from './SavedPlansModal';
 import PlanSetupWizard from './wizard/PlanSetupWizard';
+import EnhancedTabs from './EnhancedTabs';
 
 // Phase 2 imports
 import Header from './Header';
@@ -293,6 +294,18 @@ const MainApp = ({
         return `plan-${mealPlan.length}d-${firstMealName}`;
     }, [mealPlan]);
 
+    // ── Badge counts for EnhancedTabs ──
+    const mealCount = useMemo(() => {
+        if (!mealPlan || mealPlan.length === 0) return 0;
+        return mealPlan.reduce((sum, day) => sum + (day?.meals?.length || 0), 0);
+    }, [mealPlan]);
+
+    const ingredientCount = useMemo(() => {
+        return uniqueIngredients?.length || 0;
+    }, [uniqueIngredients]);
+
+    const hasResults = results && Object.keys(results).length > 0;
+
     const mealPlanContent = (
         <div className="flex flex-col">
             {/* ── WHITE-SCREEN FIX: Loading overlay during plan transition ── */}
@@ -419,34 +432,15 @@ const MainApp = ({
     
                             {/* --- RESULTS VIEW (RIGHT COLUMN) --- */}
                             <div className={`w-full md:w-1/2 ${isMenuOpen ? 'hidden md:block' : 'block'}`}>
-                                <div className="border-b">
-                                    <div className="p-6 md:p-8">
-                                        {/* Added Navigation Tabs */}
-                                        <div className="flex space-x-4 border-b">
-                                            <button
-                                                onClick={() => handleTabChange('profile')}
-                                                className={`pb-2 text-lg font-semibold ${contentView === 'profile' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-                                            >
-                                                <LayoutDashboard className="inline w-5 h-5 mr-2" /> Summary
-                                            </button>
-                                            {results && Object.keys(results).length > 0 && (
-                                                <>
-                                                    <button
-                                                        onClick={() => handleTabChange('meals')}
-                                                        className={`pb-2 text-lg font-semibold ${contentView === 'meals' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-                                                    >
-                                                        <Utensils className="inline w-5 h-5 mr-2" /> Meals
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleTabChange('ingredients')}
-                                                        className={`pb-2 text-lg font-semibold ${contentView === 'ingredients' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-                                                    >
-                                                        <ShoppingBag className="inline w-5 h-5 mr-2" /> Shopping
-                                                    </button>
-                                                </>
-                                            )}
-                                        </div>
-                                    </div>
+                                {/* ── Enhanced Tabs ── */}
+                                <div className="p-4 md:p-6 pb-0">
+                                    <EnhancedTabs
+                                        activeTab={contentView}
+                                        onTabChange={handleTabChange}
+                                        hasResults={hasResults}
+                                        mealCount={mealCount}
+                                        ingredientCount={ingredientCount}
+                                    />
                                 </div>
     
                                 {hasInvalidMeals ? (
