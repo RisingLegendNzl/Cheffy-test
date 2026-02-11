@@ -25,42 +25,38 @@ import EmojiIcon from './EmojiIcon';
 import ProfileTab from './ProfileTab';
 import SavedPlansModal from './SavedPlansModal';
 import PlanSetupWizard from './wizard/PlanSetupWizard';
-// EnhancedTabs REMOVED — top tab bar no longer rendered
+import NewUserProfileGate from './NewUserProfileGate';
+// EnhancedTabs REMOVED — top tab bar no longer rendered.
 
-// Phase 2 imports
 import Header from './Header';
-import { ToastContainer } from './Toast';
-import EmptyState from './EmptyState';
-import LoadingOverlay from './LoadingOverlay';
-import SuccessModal from './SuccessModal';
-import MealCard from './MealCard';
-import DayNavigator from './DayNavigator';
-import ShoppingListWithDetails from './ShoppingListWithDetails';
-import FormSection from './FormSection';
-import SettingsPanel from './SettingsPanel';
 import BottomNav from './BottomNav';
-import { MealCardSkeleton, ProfileCardSkeleton, ShoppingListSkeleton } from './SkeletonLoader';
 import PullToRefresh from './PullToRefresh';
+import SettingsPanel from './SettingsPanel';
+import SuccessModal from './SuccessModal';
+import ToastContainer from './ToastContainer';
 
-// --- Category Icon Map ---
-const categoryIconMap = {
-    'produce': <EmojiIcon code="1f966" alt="produce" />,
-    'fruit': <EmojiIcon code="1f353" alt="fruit" />,
-    'veg': <EmojiIcon code="1f955" alt="veg" />,
-    'grains': <EmojiIcon code="1f33e" alt="grains" />,
-    'carb': <EmojiIcon code="1f33e" alt="grains" />,
-    'meat': <EmojiIcon code="1f969" alt="meat" />,
+import { COLORS, SHADOWS, Z_INDEX, APP_CONFIG } from '../constants';
+
+// Category icon map for shopping list
+const CATEGORY_ICONS = {
     'protein': <EmojiIcon code="1f969" alt="meat" />,
-    'seafood': <EmojiIcon code="1f41f" alt="seafood" />,
+    'meat': <EmojiIcon code="1f969" alt="meat" />,
+    'poultry': <EmojiIcon code="1f357" alt="poultry" />,
+    'seafood': <EmojiIcon code="1f990" alt="seafood" />,
     'dairy': <EmojiIcon code="1f95b" alt="dairy" />,
-    'fat': <EmojiIcon code="1f951" alt="fat" />,
-    'drinks': <EmojiIcon code="1f9c3" alt="drinks" />,
-    'pantry': <EmojiIcon code="1f968" alt="pantry" />,
+    'grains': <EmojiIcon code="1f33e" alt="grains" />,
+    'vegetables': <EmojiIcon code="1f966" alt="vegetables" />,
+    'fruits': <EmojiIcon code="1f34e" alt="fruits" />,
+    'fats': <EmojiIcon code="1fad2" alt="fats" />,
+    'oils': <EmojiIcon code="1fad2" alt="fats" />,
+    'spices': <EmojiIcon code="1f9c2" alt="spices" />,
+    'seasonings': <EmojiIcon code="1f9c2" alt="spices" />,
+    'condiments': <EmojiIcon code="1f9c8" alt="condiments" />,
+    'sauces': <EmojiIcon code="1f9c8" alt="condiments" />,
     'canned': <EmojiIcon code="1f96b" alt="canned" />,
-    'spreads': <EmojiIcon code="1f95c" alt="spreads" />,
-    'condiments': <EmojiIcon code="1f9c2" alt="condiments" />,
-    'bakery': <EmojiIcon code="1f370" alt="bakery" />,
     'frozen': <EmojiIcon code="2744" alt="frozen" />,
+    'beverages': <EmojiIcon code="1f964" alt="beverages" />,
+    'bakery': <EmojiIcon code="1f35e" alt="bakery" />,
     'snacks': <EmojiIcon code="1f36b" alt="snacks" />,
     'misc': <EmojiIcon code="1f36b" alt="snacks" />,
     'uncategorized': <EmojiIcon code="1f6cd" alt="shopping" />,
@@ -179,10 +175,24 @@ const MainApp = ({
     // Responsive
     isMobile,
     isDesktop,
+
+    // --- NEW: Onboarding / New User Props ---
+    isNewUser = false,
+    profileSetupComplete = true,
+    profileSetupSaving = false,
+    onCompleteProfileSetup = () => {},
 }) => {
     
+    // Determine if we should show the new-user profile gate
+    const showProfileGate = isNewUser && !profileSetupComplete;
+
     // Create a wrapped handler that closes meal when changing tabs
+    // Also blocks tab changes if profile setup is not complete for new users
     const handleTabChange = (newTab) => {
+        // Block navigation if new user hasn't completed profile setup
+        if (showProfileGate) {
+            return;
+        }
         // Close meal detail if open
         if (selectedMeal) {
             setSelectedMeal(null);
@@ -200,155 +210,83 @@ const MainApp = ({
         <div className="p-6 text-center bg-red-100 text-red-800 rounded-lg shadow-lg m-4">
             <AlertTriangle className="inline mr-2 w-8 h-8" />
             <h3 className="text-xl font-bold">Plan Calculation Error</h3>
-            <p className="mt-2">A critical error occurred while calculating meal nutrition. The generated plan is incomplete and cannot be displayed. Please check the logs for details.</p>
+            <p className="mt-2">A critical error occurred while calculating meal nutrition. The generated plan is incomplete and cannot be displayed. Check logs for details.</p>
+            {error && <pre className="mt-2 whitespace-pre-wrap text-sm">{error}</pre>}
         </div>
     );
 
-    // Handler for opening saved plans modal
+    // Handle opening saved plans
     const handleOpenSavedPlans = () => {
         setShowSavedPlansModal(true);
     };
-
-    // Handler for save plan button click
-    const handleSavePlanClick = () => {
-        if (!mealPlan || mealPlan.length === 0) {
-            showToast('No meal plan to save', 'warning');
-            return;
-        }
-        setShowSavePlanPrompt(true);
-    };
-
-    // Handler for confirming save with name
-    const handleConfirmSave = async () => {
-        const name = savePlanName.trim() || `Plan ${new Date().toLocaleDateString()}`;
-        await handleSavePlan(name);
-        setShowSavePlanPrompt(false);
-        setSavePlanName('');
-    };
-
-    // --- Shopping List Content Definition ---
-    const shoppingListContent = (
-        <div className="p-4">
-            <ShoppingListWithDetails
-                ingredients={uniqueIngredients || []}
-                results={results || {}}
-                totalCost={totalCost || 0}
-                storeName={formData?.store || 'Woolworths'}
-                onShowToast={showToast}
-                onSelectSubstitute={handleSubstituteSelection}
-                onQuantityChange={handleQuantityChange}
-                onFetchNutrition={handleFetchNutrition}
-                nutritionCache={nutritionCache || {}}
-                loadingNutritionFor={loadingNutritionFor}
-                categorizedResults={categorizedResults || {}}
-            />
-        </div>
-    );
     
-    // ── WHITE-SCREEN FIX: Clamp selectedDay safely ──
-    const safeSelectedDay = useMemo(() => {
-        if (!mealPlan || mealPlan.length === 0) return 1;
-        return Math.min(Math.max(1, selectedDay), mealPlan.length);
-    }, [selectedDay, mealPlan]);
+    // Memoize content for meals tab
+    const mealPlanContent = useMemo(() => {
+        if (!mealPlan || mealPlan.length === 0) return null;
+        return (
+            <MealPlanDisplay
+                mealPlan={mealPlan}
+                selectedDay={selectedDay}
+                setSelectedDay={setSelectedDay}
+                eatenMeals={eatenMeals}
+                onToggleMealEaten={onToggleMealEaten}
+                formData={formData}
+                nutritionalTargets={nutritionalTargets}
+                nutritionCache={nutritionCache}
+                loadingNutritionFor={loadingNutritionFor}
+                onFetchNutrition={handleFetchNutrition}
+                onSelectMeal={setSelectedMeal}
+            />
+        );
+    }, [mealPlan, selectedDay, eatenMeals, formData, nutritionalTargets, nutritionCache, loadingNutritionFor, handleFetchNutrition, setSelectedMeal, onToggleMealEaten, setSelectedDay]);
 
-    const isValidDaySelection = mealPlan && mealPlan.length > 0 && safeSelectedDay >= 1 && safeSelectedDay <= mealPlan.length;
-
-    // We derive a stable identity from the plan's day count + first meal name.
-    const planIdentityKey = useMemo(() => {
-        if (!mealPlan || mealPlan.length === 0) return 'empty';
-        const firstMealName = mealPlan[0]?.meals?.[0]?.name || 'unknown';
-        return `plan-${mealPlan.length}d-${firstMealName}`;
-    }, [mealPlan]);
-
-    // ── Badge counts (kept for potential future use) ──
-    const mealCount = useMemo(() => {
-        if (!mealPlan || mealPlan.length === 0) return 0;
-        return mealPlan.reduce((sum, day) => sum + (day?.meals?.length || 0), 0);
-    }, [mealPlan]);
-
-    const ingredientCount = useMemo(() => {
-        return uniqueIngredients?.length || 0;
-    }, [uniqueIngredients]);
-
-    const hasResults = results && Object.keys(results).length > 0;
-
-    const mealPlanContent = (
-        <div className="flex flex-col">
-            {/* ── WHITE-SCREEN FIX: Loading overlay during plan transition ── */}
-            {loadingPlan && (
-                <div className="flex items-center justify-center py-16">
-                    <div className="text-center">
-                        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mx-auto mb-3"></div>
-                        <p className="text-gray-500 text-sm font-medium">Loading plan…</p>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Day Tab Bar (auto-hidden for single-day plans, hidden during load) ── */}
-            {!loadingPlan && mealPlan && mealPlan.length > 0 && (
-                <DayTabBar
-                    key={planIdentityKey}
-                    totalDays={Math.max(1, mealPlan.length)}
-                    selectedDay={safeSelectedDay}
-                    onSelectDay={setSelectedDay}
-                    onSavePlan={handleSavePlanClick}
-                    onLoadPlans={handleOpenSavedPlans}
-                    savingPlan={savingPlan}
-                    loading={loading}
-                />
-            )}
-
-            {/* ── Single-day inline action buttons (shown only when tab bar is hidden) ── */}
-            {!loadingPlan && mealPlan && mealPlan.length === 1 && (
-                <div className="flex items-center justify-end gap-2 px-4 pt-3">
-                    <button
-                        onClick={handleSavePlanClick}
-                        disabled={savingPlan || loading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-indigo-600 text-white"
+    // Memoize shopping list content
+    const shoppingListContent = useMemo(() => {
+        if (!results || Object.keys(results).length === 0) return null;
+        
+        const categories = categorizedResults || { 'All Items': results };
+        
+        return (
+            <div className="p-4 md:p-6 space-y-4">
+                {Object.entries(categories).map(([category, items]) => (
+                    <CollapsibleSection
+                        key={category}
+                        title={category}
+                        icon={CATEGORY_ICONS[category.toLowerCase()] || CATEGORY_ICONS['default']}
+                        itemCount={Object.keys(items).length}
+                        defaultOpen={true}
                     >
-                        <Save size={14} />
-                        <span>{savingPlan ? 'Saving…' : 'Save'}</span>
-                    </button>
-                    <button
-                        onClick={handleOpenSavedPlans}
-                        disabled={loading}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md bg-gray-200 text-gray-800"
-                    >
-                        <FolderDown size={14} />
-                        <span>Load</span>
-                    </button>
-                </div>
-            )}
+                        {Object.entries(items).map(([key, item]) => (
+                            <IngredientResultBlock
+                                key={key}
+                                ingredientKey={key}
+                                result={item}
+                                onSelectSubstitute={handleSubstituteSelection}
+                                onQuantityChange={handleQuantityChange}
+                            />
+                        ))}
+                    </CollapsibleSection>
+                ))}
+            </div>
+        );
+    }, [results, categorizedResults, handleSubstituteSelection, handleQuantityChange]);
 
-            {/* ── Meal Content with Bounds Validation ── */}
-            {!loadingPlan && isValidDaySelection ? (
-                <div className="p-4">
-                    <MealPlanDisplay
-                        key={`${planIdentityKey}-day${safeSelectedDay}`}
-                        mealPlan={mealPlan}
-                        selectedDay={safeSelectedDay}
-                        nutritionalTargets={nutritionalTargets}
-                        eatenMeals={eatenMeals}
-                        onToggleMealEaten={onToggleMealEaten}
-                        onViewRecipe={setSelectedMeal}
-                        showToast={showToast}
-                    />
+    // Error/empty state for meals & ingredients
+    const emptyResultsMessage = (
+        <div className="p-6 text-center text-gray-500">
+            {loading ? null : error ? (
+                <div className="bg-red-50 text-red-700 p-4 rounded-lg">
+                    <AlertTriangle className="inline mr-2 w-5 h-5" />
+                    <strong>Error generating plan.</strong>
+                    <br />
+                    <strong>Check logs for details.</strong>
+                    <pre className="mt-2 whitespace-pre-wrap text-sm">{error}</pre>
                 </div>
-            ) : !loadingPlan ? (
-                <div className="flex-1 text-center p-8 text-gray-500">
-                    {error && !loading ? (
-                        <div className="p-4 bg-red-50 text-red-800 rounded-lg">
-                            <AlertTriangle className="inline w-6 h-6 mr-2" />
-                            <strong>Error generating plan. Check logs for details.</strong>
-                            <pre className="mt-2 whitespace-pre-wrap text-sm">{error}</pre>
-                        </div>
-                    ) : mealPlan?.length === 0 && !loading ? (
-                        'Generate a plan to see your meals.'
-                    ) : (
-                        !loading && 'Select a valid day to view meals.'
-                    )}
-                </div>
-            ) : null}
+            ) : mealPlan?.length === 0 && !loading ? (
+                'Generate a plan to see your meals.'
+            ) : (
+                !loading && 'Select a valid day to view meals.'
+            )}
         </div>
     );
 
@@ -356,6 +294,16 @@ const MainApp = ({
 
     return (
         <>
+            {/* --- NEW USER PROFILE GATE --- */}
+            {showProfileGate && (
+                <NewUserProfileGate
+                    formData={formData}
+                    onChange={handleChange}
+                    onComplete={onCompleteProfileSetup}
+                    saving={profileSetupSaving}
+                />
+            )}
+
             <Header 
                 userId={userId}
                 userName={formData?.name || ''}
@@ -448,6 +396,7 @@ const MainApp = ({
                 activeTab={contentView}
                 onTabChange={handleTabChange}
                 showPlanButton={false}
+                disabled={showProfileGate}
             />
     
             <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
@@ -484,56 +433,51 @@ const MainApp = ({
                 onToggleMacroDebugLog={setShowMacroDebugLog}
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
-                settings={{
-                    showOrchestratorLogs,
-                    showFailedIngredientsLogs,
-                    showMacroDebugLog,
-                }}
-                onToggleSetting={(key) => {
-                    if (key === 'showOrchestratorLogs') {
-                        setShowOrchestratorLogs(!showOrchestratorLogs);
-                    } else if (key === 'showFailedIngredientsLogs') {
-                        setShowFailedIngredientsLogs(!showFailedIngredientsLogs);
-                    } else if (key === 'showMacroDebugLog') {
-                        setShowMacroDebugLog(!showMacroDebugLog);
-                    }
-                }}
             />
 
-            {/* Save Plan Name Prompt */}
+            {/* Save Plan Prompt */}
             {showSavePlanPrompt && (
                 <>
                     <div
-                        className="fixed inset-0 bg-black bg-opacity-50 z-[1000]"
+                        className="fixed inset-0 bg-black bg-opacity-50 animate-fadeIn"
+                        style={{ zIndex: Z_INDEX.modalBackdrop }}
                         onClick={() => setShowSavePlanPrompt(false)}
                     />
-                    <div className="fixed inset-0 z-[1001] flex items-center justify-center p-4">
-                        <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
-                            <h3 className="text-xl font-bold mb-4 text-gray-900">Save Plan</h3>
-                            <input
-                                type="text"
-                                value={savePlanName}
-                                onChange={(e) => setSavePlanName(e.target.value)}
-                                placeholder={`Plan ${new Date().toLocaleDateString()}`}
-                                className="w-full border rounded-lg px-4 py-2 mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                autoFocus
-                                onKeyDown={(e) => { if (e.key === 'Enter') handleConfirmSave(); }}
-                            />
-                            <div className="flex justify-end gap-2">
-                                <button
-                                    onClick={() => setShowSavePlanPrompt(false)}
-                                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={handleConfirmSave}
-                                    disabled={savingPlan}
-                                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-                                >
-                                    {savingPlan ? 'Saving...' : 'Save'}
-                                </button>
-                            </div>
+                    <div
+                        className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl p-6 w-80 shadow-2xl"
+                        style={{ zIndex: Z_INDEX.modal }}
+                    >
+                        <h3 className="text-lg font-bold mb-4" style={{ color: COLORS.gray[900] }}>
+                            Save Current Plan
+                        </h3>
+                        <input
+                            type="text"
+                            value={savePlanName}
+                            onChange={(e) => setSavePlanName(e.target.value)}
+                            placeholder="Plan name (optional)"
+                            className="w-full px-4 py-2 border rounded-lg mb-4"
+                            style={{ borderColor: COLORS.gray[300] }}
+                        />
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setShowSavePlanPrompt(false)}
+                                className="flex-1 px-4 py-2 rounded-lg border"
+                                style={{ borderColor: COLORS.gray[300], color: COLORS.gray[600] }}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    await handleSavePlan(savePlanName || undefined);
+                                    setShowSavePlanPrompt(false);
+                                    setSavePlanName('');
+                                }}
+                                disabled={savingPlan}
+                                className="flex-1 px-4 py-2 rounded-lg text-white font-semibold"
+                                style={{ backgroundColor: COLORS.primary[600] }}
+                            >
+                                {savingPlan ? 'Saving...' : 'Save'}
+                            </button>
                         </div>
                     </div>
                 </>
