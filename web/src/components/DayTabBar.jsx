@@ -6,18 +6,9 @@ import { COLORS } from '../constants';
 /**
  * DayTabBar — Concept B "Segmented Timeline"
  *
- * A sticky segmented control with a sliding gradient pill that follows the
- * active day. A small caret triangle points downward from the active segment,
- * visually connecting the selector to the content below.
- *
- *   • Hidden entirely for single-day plans (totalDays === 1).
- *   • Horizontally scrollable on mobile when days exceed screen width.
- *   • Active segment: sliding gradient pill + white bold text.
- *   • Inactive segments: muted text, hover highlight.
- *   • Integrated kebab menu for Save / Load actions (top-right).
- *   • Spring-physics pill animation (cubic-bezier overshoot).
- *
- * Retains all WHITE-SCREEN FIX logic from the original implementation.
+ * STICKY FIX: Uses position:sticky with will-change:transform and is
+ * rendered OUTSIDE the <div className="p-4"> wrapper in MainApp so that
+ * no padding or overflow context prevents sticking.
  */
 const DayTabBar = ({
     totalDays,
@@ -32,11 +23,11 @@ const DayTabBar = ({
     const segmentRefs = useRef({});
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef(null);
+    const barRef = useRef(null);
 
-    // Pill position state
     const [pillStyle, setPillStyle] = useState({ left: 0, width: 0 });
-    // Caret position state
     const [caretLeft, setCaretLeft] = useState(0);
+    const [hasInitialized, setHasInitialized] = useState(false);
 
     // ── Hide for single-day plans ──
     if (totalDays <= 1) return null;
@@ -68,13 +59,16 @@ const DayTabBar = ({
 
         setPillStyle({ left, width });
         setCaretLeft(center);
-    }, [clampedDay]);
 
-    // Reposition on day change or resize
+        if (!hasInitialized) setHasInitialized(true);
+    }, [clampedDay, hasInitialized]);
+
+    // Double-rAF for reliable initial positioning
     useEffect(() => {
-        // Use rAF to ensure layout is settled
-        const frame = requestAnimationFrame(positionPill);
-        return () => cancelAnimationFrame(frame);
+        const id = requestAnimationFrame(() => {
+            requestAnimationFrame(positionPill);
+        });
+        return () => cancelAnimationFrame(id);
     }, [clampedDay, totalDays, positionPill]);
 
     useEffect(() => {
@@ -84,45 +78,55 @@ const DayTabBar = ({
 
     // ── Scroll-triggered shadow ──
     useEffect(() => {
-        const el = document.querySelector('.day-tab-bar-concept-b');
+        const el = barRef.current;
         if (!el) return;
         const onScroll = () => {
             el.classList.toggle('scrolled', window.scrollY > 8);
         };
         window.addEventListener('scroll', onScroll, { passive: true });
+        onScroll(); // Check immediately
         return () => window.removeEventListener('scroll', onScroll);
     }, []);
 
     // ── Close kebab menu on outside click ──
     useEffect(() => {
+        if (!menuOpen) return;
         const handleClickOutside = (e) => {
             if (menuRef.current && !menuRef.current.contains(e.target)) {
                 setMenuOpen(false);
             }
         };
-        if (menuOpen) {
-            document.addEventListener('mousedown', handleClickOutside);
-            return () => document.removeEventListener('mousedown', handleClickOutside);
-        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [menuOpen]);
 
-    // ── Determine segment label format ──
-    // Active segment shows full "Day N", inactive shows compact "D N"
     const getLabel = (day) => {
         if (day === clampedDay) return `Day ${day}`;
-        // On very small screens or many days, keep it short
         if (totalDays > 5) return `D${day}`;
         return `Day ${day}`;
     };
 
+    // Suppress spring animation on very first render
+    const springTransition = hasInitialized
+        ? 'left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)'
+        : 'none';
+    const caretTransition = hasInitialized
+        ? 'left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)'
+        : 'none';
+
     return (
         <div
-            className="day-tab-bar-concept-b sticky top-0 z-30"
+            ref={barRef}
+            className="day-tab-bar-concept-b"
             style={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 30,
                 background: 'rgba(255, 255, 255, 0.94)',
                 backdropFilter: 'blur(18px) saturate(1.6)',
                 WebkitBackdropFilter: 'blur(18px) saturate(1.6)',
                 borderBottom: `1px solid ${COLORS.gray[200]}`,
+                willChange: 'transform',
             }}
         >
             <div className="flex items-center">
@@ -130,7 +134,6 @@ const DayTabBar = ({
                 <div className="flex-1" style={{ padding: '10px 12px 0 12px' }}>
                     <div
                         ref={trackRef}
-                        className="concept-b-seg-track"
                         style={{
                             position: 'relative',
                             display: 'flex',
@@ -142,7 +145,6 @@ const DayTabBar = ({
                     >
                         {/* Sliding Gradient Pill */}
                         <div
-                            className="concept-b-seg-pill"
                             style={{
                                 position: 'absolute',
                                 top: '3px',
@@ -152,7 +154,7 @@ const DayTabBar = ({
                                 borderRadius: '10px',
                                 background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary ? COLORS.secondary[500] : '#a855f7'})`,
                                 boxShadow: '0 4px 16px rgba(99, 102, 241, 0.35)',
-                                transition: 'left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                transition: springTransition,
                                 zIndex: 1,
                             }}
                         />
@@ -210,7 +212,7 @@ const DayTabBar = ({
                             style={{
                                 position: 'absolute',
                                 left: `${caretLeft - 7}px`,
-                                transition: 'left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                transition: caretTransition,
                             }}
                         >
                             <polygon
@@ -242,17 +244,13 @@ const DayTabBar = ({
                         {menuOpen ? <X size={18} /> : <MoreVertical size={18} />}
                     </button>
 
-                    {/* Dropdown */}
                     {menuOpen && (
                         <div
                             className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-xl border py-1 z-50"
                             style={{ borderColor: COLORS.gray[200] }}
                         >
                             <button
-                                onClick={() => {
-                                    setMenuOpen(false);
-                                    onSavePlan?.();
-                                }}
+                                onClick={() => { setMenuOpen(false); onSavePlan?.(); }}
                                 disabled={savingPlan || loading}
                                 className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-left transition-colors hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed"
                                 style={{ color: COLORS.gray[800] }}
@@ -260,12 +258,8 @@ const DayTabBar = ({
                                 <Save size={16} style={{ color: COLORS.primary[600] }} />
                                 {savingPlan ? 'Saving…' : 'Save Plan'}
                             </button>
-
                             <button
-                                onClick={() => {
-                                    setMenuOpen(false);
-                                    onLoadPlans?.();
-                                }}
+                                onClick={() => { setMenuOpen(false); onLoadPlans?.(); }}
                                 disabled={loading}
                                 className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm font-medium text-left transition-colors hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed"
                                 style={{ color: COLORS.gray[800] }}
@@ -278,7 +272,6 @@ const DayTabBar = ({
                 </div>
             </div>
 
-            {/* ── Scroll shadow trigger (added on scroll via CSS class) ── */}
             <style>{`
                 .day-tab-bar-concept-b.scrolled {
                     box-shadow: 0 6px 28px rgba(0, 0, 0, 0.07) !important;
