@@ -1,15 +1,197 @@
 // web/src/components/MealPlanDisplay.jsx
 import React, { useMemo, useState } from 'react';
 import { BookOpen, Target, CheckCircle, AlertTriangle, Soup, Droplet, Wheat, Copy } from 'lucide-react';
-import MacroBar from './MacroBar';
+import { COLORS } from '../constants';
 import { exportMealPlanToClipboard } from '../utils/mealPlanExporter';
+
+// ─────────────────────────────────────────────────────────────
+// CONCENTRIC RINGS — Concept B progress visualization
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * A single concentric ring drawn via SVG.
+ * @param {number} cx - Center X
+ * @param {number} cy - Center Y
+ * @param {number} r  - Radius
+ * @param {number} sw - Stroke width
+ * @param {string} bgColor - Background ring color
+ * @param {string} fillColor - Fill stroke color (or gradient id like "url(#calGrad)")
+ * @param {number} pct - 0–1 fill percentage
+ * @param {number} delay - Stagger delay in ms
+ */
+const RingLayer = ({ cx, cy, r, sw, bgColor, fillColor, pct, delay = 0 }) => {
+    const circ = 2 * Math.PI * r;
+    const offset = circ - circ * Math.min(Math.max(pct, 0), 1);
+
+    return (
+        <>
+            <circle
+                cx={cx} cy={cy} r={r}
+                fill="none"
+                stroke={bgColor}
+                strokeWidth={sw}
+            />
+            <circle
+                cx={cx} cy={cy} r={r}
+                fill="none"
+                stroke={fillColor}
+                strokeWidth={sw}
+                strokeLinecap="round"
+                strokeDasharray={circ}
+                strokeDashoffset={offset}
+                className="concept-b-ring-fill"
+                style={{
+                    transition: `stroke-dashoffset 0.7s cubic-bezier(0.22, 1, 0.36, 1) ${delay}ms`,
+                }}
+            />
+        </>
+    );
+};
+
+/**
+ * ConcentricRingsCard — The Concept B daily progress visualization.
+ * Four concentric rings: Calories (outer), Protein, Fat, Carbs (inner).
+ * Side labels with color dots and current/target values.
+ */
+const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
+    const calTarget = targets?.calories || 1;
+    const proTarget = targets?.protein || 1;
+    const fatTarget = targets?.fat || 1;
+    const carbTarget = targets?.carbs || 1;
+
+    const calPct = calTarget > 0 ? calories / calTarget : 0;
+    const proPct = proTarget > 0 ? protein / proTarget : 0;
+    const fatPct = fatTarget > 0 ? fat / fatTarget : 0;
+    const carbPct = carbTarget > 0 ? carbs / carbTarget : 0;
+
+    // Ring parameters (center = 80,80; viewBox = 160×160)
+    const size = 160;
+    const cx = 80;
+    const cy = 80;
+
+    // Color helpers
+    const getCalColor = () => {
+        if (calPct > 1.05) return '#ef4444'; // red
+        if (calPct >= 0.95) return '#22c55e'; // green
+        return null; // use gradient
+    };
+    const calStrokeOverride = getCalColor();
+
+    return (
+        <div className="concept-b-rings-card">
+            {/* SVG Gradient Definitions (only rendered once) */}
+            <svg width="0" height="0" style={{ position: 'absolute' }}>
+                <defs>
+                    <linearGradient id="cheffyCalGrad" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stopColor={COLORS.primary[500]} />
+                        <stop offset="100%" stopColor={COLORS.secondary ? COLORS.secondary[500] : '#a855f7'} />
+                    </linearGradient>
+                </defs>
+            </svg>
+
+            <div className="concept-b-rings-layout">
+                {/* ── Left: Ring Visualization ── */}
+                <div className="concept-b-ring-container">
+                    <svg
+                        viewBox={`0 0 ${size} ${size}`}
+                        width="100%"
+                        height="100%"
+                        style={{ transform: 'rotate(-90deg)' }}
+                    >
+                        {/* Outer → Inner: Calories, Protein, Fat, Carbs */}
+                        <RingLayer
+                            cx={cx} cy={cy} r={70} sw={10}
+                            bgColor={COLORS.gray ? COLORS.gray[100] : '#f3f4f6'}
+                            fillColor={calStrokeOverride || 'url(#cheffyCalGrad)'}
+                            pct={calPct}
+                            delay={0}
+                        />
+                        <RingLayer
+                            cx={cx} cy={cy} r={56} sw={8}
+                            bgColor="rgba(59, 130, 246, 0.1)"
+                            fillColor="#3b82f6"
+                            pct={proPct}
+                            delay={100}
+                        />
+                        <RingLayer
+                            cx={cx} cy={cy} r={44} sw={7}
+                            bgColor="rgba(245, 158, 11, 0.1)"
+                            fillColor="#f59e0b"
+                            pct={fatPct}
+                            delay={200}
+                        />
+                        <RingLayer
+                            cx={cx} cy={cy} r={33} sw={6}
+                            bgColor="rgba(34, 197, 94, 0.1)"
+                            fillColor="#22c55e"
+                            pct={carbPct}
+                            delay={300}
+                        />
+                    </svg>
+
+                    {/* Center Text */}
+                    <div className="concept-b-ring-center">
+                        <span className="concept-b-ring-center-num">
+                            {calories.toLocaleString()}
+                        </span>
+                        <span className="concept-b-ring-center-label">
+                            kcal eaten
+                        </span>
+                    </div>
+                </div>
+
+                {/* ── Right: Label Rows ── */}
+                <div className="concept-b-ring-labels">
+                    <RingLabelRow
+                        dotStyle={{ background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary ? COLORS.secondary[500] : '#a855f7'})` }}
+                        label="Calories"
+                        current={calories.toLocaleString()}
+                        target={`/ ${calTarget.toLocaleString()} kcal`}
+                    />
+                    <RingLabelRow
+                        dotStyle={{ background: '#3b82f6' }}
+                        label="Protein"
+                        current={protein}
+                        target={`/ ${proTarget}g`}
+                    />
+                    <RingLabelRow
+                        dotStyle={{ background: '#f59e0b' }}
+                        label="Fat"
+                        current={fat}
+                        target={`/ ${fatTarget}g`}
+                    />
+                    <RingLabelRow
+                        dotStyle={{ background: '#22c55e' }}
+                        label="Carbs"
+                        current={carbs}
+                        target={`/ ${carbTarget}g`}
+                    />
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const RingLabelRow = ({ dotStyle, label, current, target }) => (
+    <div className="concept-b-label-row">
+        <span className="concept-b-label-dot" style={dotStyle} />
+        <span className="concept-b-label-text">{label}</span>
+        <span className="concept-b-label-value">
+            <span className="concept-b-label-current">{current}</span>{' '}
+            <span className="concept-b-label-target">{target}</span>
+        </span>
+    </div>
+);
+
+
+// ─────────────────────────────────────────────────────────────
+// MEAL PLAN DISPLAY — Main component
+// ─────────────────────────────────────────────────────────────
 
 const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals, onToggleMealEaten, onViewRecipe, showToast }) => {
     const [copying, setCopying] = useState(false);
 
     // ── CRITICAL BOUNDS CHECK: Prevent out-of-bounds crashes ──
-    // This handles the case where selectedDay > mealPlan.length
-    // (e.g., user was on day 7 of a 7-day plan, then loaded a 3-day plan)
     if (!mealPlan || mealPlan.length === 0) {
         console.warn('[MealPlanDisplay] mealPlan is empty or undefined');
         return (
@@ -32,7 +214,7 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
 
     const dayData = mealPlan[selectedDay - 1];
 
-    // ── CRITICAL NULL CHECK: Prevent crashes from undefined dayData ──
+    // ── CRITICAL NULL CHECK ──
     if (!dayData) {
         console.warn(`[MealPlanDisplay] No valid data found for day ${selectedDay}.`);
         return (
@@ -54,9 +236,7 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
     }
 
     // Calculate eaten macros for the day
-    // SAFETY: Only execute after all null checks pass
     const dailyMacrosEaten = useMemo(() => {
-        // Extra safety check inside useMemo to prevent crashes
         if (!dayData || !Array.isArray(dayData.meals) || !eatenMeals) {
             return { calories: 0, protein: 0, fat: 0, carbs: 0 };
         }
@@ -101,11 +281,9 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
         }
     };
 
-    const calTarget = nutritionalTargets?.calories || 0;
-    
     return (
         <div className="space-y-6">
-            {/* Premium Header with Copy Button */}
+            {/* ════════ Premium Header with Copy Button ════════ */}
             <div className="flex items-center justify-between pb-4 border-b border-gray-200">
                 <div className="flex items-center gap-3">
                     <div 
@@ -139,66 +317,17 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
                     </span>
                 </button>
             </div>
-            
-            {/* Enhanced Tracker with Macro Bars */}
-            <div className="sticky top-0 bg-white/95 backdrop-blur-sm p-6 rounded-xl shadow-lg border z-10">
-                <h4 className="text-lg font-bold mb-4 flex items-center">
-                    <Target className="w-5 h-5 mr-2"/>Daily Progress
-                </h4>
-                
-                {/* Main Calorie Bar */}
-                <div className="mb-4">
-                    <div className="flex justify-between items-center mb-1">
-                        <span className="text-sm font-semibold text-gray-700">Calories</span>
-                        <span className="text-sm font-bold">
-                            <span className={dailyMacrosEaten.calories > calTarget * 1.05 ? 'text-red-600' : 
-                                dailyMacrosEaten.calories >= calTarget * 0.95 ? 'text-green-600' : 'text-gray-700'}>
-                                {dailyMacrosEaten.calories}
-                            </span>
-                            <span className="text-gray-500"> / {calTarget} kcal</span>
-                        </span>
-                    </div>
-                    <div className="relative w-full h-3 bg-gray-200 rounded-full overflow-hidden">
-                        <div 
-                            className={`h-full rounded-full transition-all duration-300 ${
-                                dailyMacrosEaten.calories > calTarget * 1.05 ? 'bg-red-500' :
-                                dailyMacrosEaten.calories >= calTarget * 0.95 ? 'bg-green-500' : 'bg-indigo-500'
-                            }`}
-                            style={{ width: `${Math.min((dailyMacrosEaten.calories / calTarget) * 100, 100)}%` }}
-                        />
-                    </div>
-                </div>
 
-                {/* Macro Bars */}
-                <div className="space-y-3">
-                    <MacroBar 
-                        icon={Soup} 
-                        label="Protein" 
-                        current={dailyMacrosEaten.protein} 
-                        target={nutritionalTargets?.protein || 0} 
-                        unit="g" 
-                        color="bg-blue-500"
-                    />
-                    <MacroBar 
-                        icon={Droplet} 
-                        label="Fat" 
-                        current={dailyMacrosEaten.fat} 
-                        target={nutritionalTargets?.fat || 0} 
-                        unit="g" 
-                        color="bg-yellow-500"
-                    />
-                    <MacroBar 
-                        icon={Wheat} 
-                        label="Carbs" 
-                        current={dailyMacrosEaten.carbs} 
-                        target={nutritionalTargets?.carbs || 0} 
-                        unit="g" 
-                        color="bg-green-500"
-                    />
-                </div>
-            </div>
+            {/* ════════ Concept B: Concentric Rings Progress Card ════════ */}
+            <ConcentricRingsCard
+                calories={dailyMacrosEaten.calories}
+                protein={dailyMacrosEaten.protein}
+                fat={dailyMacrosEaten.fat}
+                carbs={dailyMacrosEaten.carbs}
+                targets={nutritionalTargets}
+            />
 
-            {/* Meal Cards */}
+            {/* ════════ Meal Cards (UNCHANGED) ════════ */}
             <div className="space-y-4">
                 {dayData.meals.map((meal, index) => {
                     if (!meal || !meal.name) {
