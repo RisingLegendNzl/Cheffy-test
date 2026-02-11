@@ -1,0 +1,233 @@
+/* =============================================================================
+   concept-b-rings.css
+   Concept B "Segmented Timeline" — Concentric Rings progress card styles.
+   Imported in index.jsx alongside dashboard-enhancements.css.
+   ============================================================================= */
+
+
+/* =============================================================================
+   1. CONCENTRIC RINGS CARD — Layout & container
+   ============================================================================= */
+
+.concept-b-rings-card {
+  position: relative;
+  padding: 20px;
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid #e5e7eb;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(99, 102, 241, 0.04);
+  overflow: visible;
+  transition: box-shadow 0.3s ease;
+}
+
+.concept-b-rings-card:hover {
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(99, 102, 241, 0.08);
+}
+
+/* ── Side-by-side layout (rings left, labels right) ── */
+.concept-b-rings-layout {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+/* Stack vertically on narrow screens */
+@media (max-width: 480px) {
+  .concept-b-rings-layout {
+    flex-direction: column;
+    text-align: center;
+    gap: 16px;
+  }
+}
+
+
+/* =============================================================================
+   2. RING CONTAINER — SVG viewport & center text
+   ============================================================================= */
+
+.concept-b-ring-container {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  flex-shrink: 0;
+}
+
+/* Slightly smaller on very small screens */
+@media (max-width: 380px) {
+  .concept-b-ring-container {
+    width: 130px;
+    height: 130px;
+  }
+}
+
+/* Ring fill transition (set inline for per-ring stagger via delay) */
+.concept-b-ring-fill {
+  /* transition is applied inline with per-ring delay */
+}
+
+/* Center overlay text */
+.concept-b-ring-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  /* Counter-rotate to cancel the SVG rotation */
+  transform: rotate(90deg);
+}
+
+.concept-b-ring-center-num {
+  font-weight: 800;
+  font-size: 22px;
+  color: #111827;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.concept-b-ring-center-label {
+  font-size: 11px;
+  color: #9ca3af;
+  font-weight: 500;
+  margin-top: 3px;
+}
+
+/* Smaller center text on small screens */
+@media (max-width: 380px) {
+  .concept-b-ring-center-num {
+    font-size: 18px;
+  }
+  .concept-b-ring-center-label {
+    font-size: 10px;
+  }
+}
+
+
+/* =============================================================================
+   3. LABEL ROWS — Right-side macro labels
+   ============================================================================= */
+
+.concept-b-ring-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0; /* prevent overflow */
+}
+
+.concept-b-label-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  transition: background-color 0.2s ease;
+  cursor: default;
+}
+
+.concept-b-label-row:hover {
+  background-color: #f9fafb;
+}
+
+.concept-b-label-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.concept-b-label-text {
+  font-weight: 600;
+  font-size: 13px;
+  color: #4b5563;
+  flex: 1;
+  white-space: nowrap;
+}
+
+.concept-b-label-value {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.concept-b-label-current {
+  font-weight: 700;
+  color: #111827;
+}
+
+.concept-b-label-target {
+  font-weight: 400;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+/* On mobile stacked layout, center the labels */
+@media (max-width: 480px) {
+  .concept-b-ring-labels {
+    width: 100%;
+  }
+
+  .concept-b-label-row {
+    justify-content: center;
+    gap: 8px;
+    padding: 6px 10px;
+  }
+
+  .concept-b-label-text {
+    flex: none;
+  }
+}
+
+
+/* =============================================================================
+   4. SEGMENTED TIMELINE — Scroll shadow animation
+   ============================================================================= */
+
+.day-tab-bar-concept-b {
+  transition: box-shadow 0.3s ease;
+}
+
+.day-tab-bar-concept-b.scrolled {
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.07);
+}
+
+
+/* =============================================================================
+   5. RING ENTRANCE ANIMATION — Initial draw on mount
+   ============================================================================= */
+
+@keyframes conceptBRingDraw {
+  from {
+    stroke-dashoffset: var(--ring-circ);
+  }
+  to {
+    stroke-dashoffset: var(--ring-target);
+  }
+}
+
+
+/* =============================================================================
+   6. ACCESSIBILITY — Respect reduced motion
+   ============================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  .concept-b-ring-fill {
+    transition: none !important;
+  }
+
+  .concept-b-seg-pill {
+    transition: none !important;
+  }
+
+  .day-tab-bar-concept-b {
+    transition: none !important;
+  }
+
+  .concept-b-rings-card {
+    transition: none !important;
+  }
+}
