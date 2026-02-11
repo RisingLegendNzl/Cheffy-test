@@ -47,6 +47,9 @@ export const STEP_VALIDATORS = {
 
   preferences: () => ({}),
 
+  // Inspiration step is always valid — users can skip it
+  inspiration: () => ({}),
+
   review: () => ({}),
 };
 
