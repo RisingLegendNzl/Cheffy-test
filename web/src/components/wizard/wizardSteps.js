@@ -24,6 +24,13 @@ export const WIZARD_STEPS = [
     accentColor: '#10b981', // success green
   },
   {
+    id: 'inspiration',
+    title: 'Meal Inspiration',
+    subtitle: 'Dream up any meals you can imagine',
+    icon: '👨‍🍳',
+    accentColor: '#8b5cf6', // violet
+  },
+  {
     id: 'review',
     title: 'Review & Go',
     subtitle: 'Confirm your setup and generate',
