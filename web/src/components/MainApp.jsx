@@ -19,13 +19,13 @@ import MealPlanDisplay from './MealPlanDisplay';
 import LogEntry from './LogEntry';
 import DiagnosticLogViewer from './DiagnosticLogViewer';
 import FailedIngredientLogViewer from './FailedIngredientLogViewer';
-import MacroDebugLogViewer from './MacroDebugLogViewer'; // CHANGE 1
+import MacroDebugLogViewer from './MacroDebugLogViewer';
 import RecipeModal from './RecipeModal';
 import EmojiIcon from './EmojiIcon';
 import ProfileTab from './ProfileTab';
 import SavedPlansModal from './SavedPlansModal';
 import PlanSetupWizard from './wizard/PlanSetupWizard';
-import EnhancedTabs from './EnhancedTabs';
+// EnhancedTabs REMOVED — top tab bar no longer rendered
 
 // Phase 2 imports
 import Header from './Header';
@@ -61,7 +61,7 @@ const categoryIconMap = {
     'condiments': <EmojiIcon code="1f9c2" alt="condiments" />,
     'bakery': <EmojiIcon code="1f370" alt="bakery" />,
     'frozen': <EmojiIcon code="2744" alt="frozen" />,
-    'snacks': <EmojiIcon code="1f36b" alt="snacks" />, 
+    'snacks': <EmojiIcon code="1f36b" alt="snacks" />,
     'misc': <EmojiIcon code="1f36b" alt="snacks" />,
     'uncategorized': <EmojiIcon code="1f6cd" alt="shopping" />,
     'default': <EmojiIcon code="1f6cd" alt="shopping" />
@@ -245,56 +245,22 @@ const MainApp = ({
         </div>
     );
     
-    // ─────────────────────────────────────────────────────────
-    // MEAL PLAN CONTENT — Option A: Sticky Top Tab Bar
-    // ─────────────────────────────────────────────────────────
-    // Old layout:  sidebar card (DaySidebar + Save/Load) | meal content
-    // New layout:  DayTabBar (full-width sticky strip)
-    //              meal content (full-width)
-    //
-    // Save/Load live inside the DayTabBar kebab menu.
-    // For single-day plans (tab bar hidden), compact buttons
-    // appear inline in the meal header area.
-    // ─────────────────────────────────────────────────────────
-    
     // ── WHITE-SCREEN FIX: Clamp selectedDay safely ──
-    // Instead of relying solely on an async useEffect to auto-correct,
-    // compute a safe clamped value synchronously for rendering. This ensures
-    // that even if React renders before the useEffect fires, we never
-    // pass an out-of-bounds selectedDay to MealPlanDisplay.
     const safeSelectedDay = useMemo(() => {
         if (!mealPlan || mealPlan.length === 0) return 1;
-        if (selectedDay < 1) return 1;
-        if (selectedDay > mealPlan.length) return 1;
-        return selectedDay;
-    }, [mealPlan, selectedDay]);
+        return Math.min(Math.max(1, selectedDay), mealPlan.length);
+    }, [selectedDay, mealPlan]);
 
-    // ── CRITICAL: Validate selectedDay before rendering ──
-    const isValidDaySelection = mealPlan && 
-                                 mealPlan.length > 0 && 
-                                 safeSelectedDay >= 1 && 
-                                 safeSelectedDay <= mealPlan.length;
+    const isValidDaySelection = mealPlan && mealPlan.length > 0 && safeSelectedDay >= 1 && safeSelectedDay <= mealPlan.length;
 
-    // Auto-correct invalid selectedDay to prevent crashes
-    // This is a safety fallback - primary fix is in loadPlan (flushSync)
-    React.useEffect(() => {
-        if (mealPlan && mealPlan.length > 0 && selectedDay > mealPlan.length) {
-            console.warn(`[MainApp] Auto-correcting selectedDay from ${selectedDay} to 1 (plan has ${mealPlan.length} days)`);
-            setSelectedDay(1);
-        }
-    }, [mealPlan, selectedDay, setSelectedDay]);
-
-    // ── WHITE-SCREEN FIX: Stable plan identity key ──
-    // When loading a new plan, React needs to know the plan has changed so
-    // DayTabBar and MealPlanDisplay re-mount cleanly. We derive a stable
-    // identity from the plan's day count + first meal name.
+    // We derive a stable identity from the plan's day count + first meal name.
     const planIdentityKey = useMemo(() => {
         if (!mealPlan || mealPlan.length === 0) return 'empty';
         const firstMealName = mealPlan[0]?.meals?.[0]?.name || 'unknown';
         return `plan-${mealPlan.length}d-${firstMealName}`;
     }, [mealPlan]);
 
-    // ── Badge counts for EnhancedTabs ──
+    // ── Badge counts (kept for potential future use) ──
     const mealCount = useMemo(() => {
         if (!mealPlan || mealPlan.length === 0) return 0;
         return mealPlan.reduce((sum, day) => sum + (day?.meals?.length || 0), 0);
@@ -392,6 +358,7 @@ const MainApp = ({
         <>
             <Header 
                 userId={userId}
+                userName={formData?.name || ''}
                 onOpenSettings={() => setIsSettingsOpen(true)}
                 onNavigateToProfile={() => {
                     handleTabChange('profile');
@@ -406,7 +373,7 @@ const MainApp = ({
                     className="min-h-screen bg-gray-100 p-4 md:p-8 transition-all duration-200 relative" 
                     style={{ 
                         paddingTop: '80px',
-                        paddingBottom: `${isMobile && results && Object.keys(results).length > 0 ? '6rem' : (Number.isFinite(totalLogHeight) ? totalLogHeight : 50) + 'px'}`
+                        paddingBottom: '6rem'
                     }}
                 >
                     <div className="max-w-7xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden">
@@ -432,17 +399,8 @@ const MainApp = ({
     
                             {/* --- RESULTS VIEW (RIGHT COLUMN) --- */}
                             <div className={`w-full md:w-1/2 ${isMenuOpen ? 'hidden md:block' : 'block'}`}>
-                                {/* ── Enhanced Tabs ── */}
-                                <div className="p-4 md:p-6 pb-0">
-                                    <EnhancedTabs
-                                        activeTab={contentView}
-                                        onTabChange={handleTabChange}
-                                        hasResults={hasResults}
-                                        mealCount={mealCount}
-                                        ingredientCount={ingredientCount}
-                                    />
-                                </div>
-    
+                                {/* Top tab bar REMOVED — navigation handled by BottomNav */}
+
                                 {hasInvalidMeals ? (
                                     <PlanCalculationErrorPanel />
                                 ) : (
@@ -485,13 +443,12 @@ const MainApp = ({
                 </div>
             </PullToRefresh>
     
-            {isMobile && results && Object.keys(results).length > 0 && (
-                <BottomNav
-                    activeTab={contentView}
-                    onTabChange={handleTabChange}
-                    showPlanButton={false}
-                />
-            )}
+            {/* BottomNav — always visible as primary navigation */}
+            <BottomNav
+                activeTab={contentView}
+                onTabChange={handleTabChange}
+                showPlanButton={false}
+            />
     
             <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
             
@@ -552,27 +509,27 @@ const MainApp = ({
                     />
                     <div className="fixed inset-0 z-[1001] flex items-center justify-center p-4">
                         <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
-                            <h3 className="text-xl font-bold mb-4 text-gray-900">
-                                Save Meal Plan
-                            </h3>
+                            <h3 className="text-xl font-bold mb-4 text-gray-900">Save Plan</h3>
                             <input
                                 type="text"
                                 value={savePlanName}
                                 onChange={(e) => setSavePlanName(e.target.value)}
                                 placeholder={`Plan ${new Date().toLocaleDateString()}`}
-                                className="w-full px-4 py-2 border rounded-lg mb-4 border-gray-300"
+                                className="w-full border rounded-lg px-4 py-2 mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                autoFocus
+                                onKeyDown={(e) => { if (e.key === 'Enter') handleConfirmSave(); }}
                             />
-                            <div className="flex space-x-3">
+                            <div className="flex justify-end gap-2">
                                 <button
                                     onClick={() => setShowSavePlanPrompt(false)}
-                                    className="flex-1 py-2 px-4 rounded-lg font-semibold bg-gray-200 text-gray-700"
+                                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     onClick={handleConfirmSave}
                                     disabled={savingPlan}
-                                    className="flex-1 py-2 px-4 rounded-lg font-semibold text-white disabled:opacity-50 bg-indigo-600"
+                                    className="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
                                 >
                                     {savingPlan ? 'Saving...' : 'Save'}
                                 </button>
@@ -622,4 +579,3 @@ const MainApp = ({
 };
 
 export default MainApp;
-
