@@ -6,18 +6,32 @@ import { COLORS, Z_INDEX, SHADOWS } from '../constants';
 /**
  * Bottom navigation bar — primary navigation for all screen sizes.
  * Tabs: Profile | Meals | Shop
+ *
+ * Props:
+ *  - activeTab      {string}   Currently active tab id
+ *  - onTabChange    {function} Callback when a tab is tapped
+ *  - showPlanButton {boolean}  Whether to show the floating "+" button
+ *  - onNewPlan      {function} Callback for the "+" button
+ *  - disabled       {boolean}  When true, all tab buttons are visually dimmed and non-interactive
+ *                              (used during new-user onboarding profile gate)
  */
 const BottomNav = ({ 
   activeTab, 
   onTabChange, 
   showPlanButton = true,
-  onNewPlan 
+  onNewPlan,
+  disabled = false,
 }) => {
   const tabs = [
     { id: 'profile', label: 'Profile', icon: User },
     { id: 'meals', label: 'Meals', icon: Utensils },
     { id: 'ingredients', label: 'Shop', icon: ShoppingCart },
   ];
+
+  const handleTabClick = (tabId) => {
+    if (disabled) return;
+    onTabChange(tabId);
+  };
 
   return (
     <nav
@@ -26,6 +40,9 @@ const BottomNav = ({
         zIndex: Z_INDEX.fixed,
         borderColor: COLORS.gray[200],
         boxShadow: SHADOWS.xl,
+        opacity: disabled ? 0.5 : 1,
+        pointerEvents: disabled ? 'none' : 'auto',
+        transition: 'opacity 0.2s ease',
       }}
     >
       <div className="flex items-center justify-around h-16 px-2 max-w-7xl mx-auto">
@@ -39,25 +56,27 @@ const BottomNav = ({
               <React.Fragment key={`group-${tab.id}`}>
                 {/* Generate Plan FAB */}
                 <button
-                  onClick={onNewPlan}
+                  onClick={() => !disabled && onNewPlan && onNewPlan()}
                   className="relative -mt-8 w-14 h-14 rounded-full flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
                   style={{
                     background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]})`,
                   }}
                   aria-label="Generate new plan"
+                  disabled={disabled}
                 >
                   <Plus size={28} className="text-white" />
                 </button>
 
                 {/* Regular tab */}
                 <button
-                  onClick={() => onTabChange(tab.id)}
+                  onClick={() => handleTabClick(tab.id)}
                   className={`flex-1 flex flex-col items-center justify-center h-full transition-all ${
                     isActive ? 'scale-105' : 'scale-100'
                   }`}
                   style={{
                     color: isActive ? COLORS.primary[600] : COLORS.gray[400],
                   }}
+                  disabled={disabled}
                 >
                   <Icon size={22} className="mb-1" />
                   <span className="text-xs font-semibold">{tab.label}</span>
@@ -75,13 +94,14 @@ const BottomNav = ({
           return (
             <button
               key={tab.id}
-              onClick={() => onTabChange(tab.id)}
+              onClick={() => handleTabClick(tab.id)}
               className={`flex-1 flex flex-col items-center justify-center h-full relative transition-all ${
                 isActive ? 'scale-105' : 'scale-100'
               }`}
               style={{
                 color: isActive ? COLORS.primary[600] : COLORS.gray[400],
               }}
+              disabled={disabled}
             >
               <Icon size={22} className="mb-1" />
               <span className="text-xs font-semibold">{tab.label}</span>
