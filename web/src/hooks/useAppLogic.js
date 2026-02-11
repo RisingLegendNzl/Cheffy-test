@@ -1087,7 +1087,8 @@ const useAppLogic = ({
                     trialStartDate: trialStartDate.toISOString(),
                     trialEndDate: trialEndDate.toISOString(),
                     accountStatus: 'trial',
-                    appId: appId
+                    appId: appId,
+                    profileSetupComplete: false
                 });
                 console.log("[AUTH] User profile saved to Firestore");
             }
