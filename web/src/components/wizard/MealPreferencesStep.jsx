@@ -1,23 +1,11 @@
 // web/src/components/wizard/MealPreferencesStep.jsx
 import React from 'react';
-import FloatingInput from './FloatingInput';
 import FloatingSelect from './FloatingSelect';
 import DayPicker from './DayPicker';
 
 const MealPreferencesStep = ({ formData, onChange }) => {
   return (
     <div className="flex flex-col gap-5">
-      <FloatingSelect
-        label="Dietary Preference"
-        name="dietary"
-        value={formData.dietary}
-        onChange={onChange}
-        options={[
-          { value: 'None', label: 'No Restrictions' },
-          { value: 'Vegetarian', label: 'Vegetarian' },
-        ]}
-      />
-
       <FloatingSelect
         label="Meals Per Day"
         name="eatingOccasions"
@@ -63,14 +51,6 @@ const MealPreferencesStep = ({ formData, onChange }) => {
           { value: 'Balanced Variety', label: 'Balanced Variety' },
           { value: 'Low Repetition', label: 'Low Repetition (more variety)' },
         ]}
-      />
-
-      <FloatingInput
-        label="Cuisine Profile"
-        name="cuisine"
-        value={formData.cuisine}
-        onChange={onChange}
-        placeholder="e.g., Mediterranean, Spicy Thai, Asian fusion"
       />
 
       <DayPicker value={formData.days} onChange={onChange} />
