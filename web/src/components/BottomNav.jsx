@@ -4,8 +4,8 @@ import { Home, Utensils, ShoppingCart, User, Plus } from 'lucide-react';
 import { COLORS, Z_INDEX, SHADOWS } from '../constants';
 
 /**
- * Mobile bottom navigation bar
- * Shows on mobile devices for easy thumb navigation
+ * Bottom navigation bar — primary navigation for all screen sizes.
+ * Tabs: Profile | Meals | Shop
  */
 const BottomNav = ({ 
   activeTab, 
@@ -21,14 +21,14 @@ const BottomNav = ({
 
   return (
     <nav
-      className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t"
+      className="fixed bottom-0 left-0 right-0 bg-white border-t"
       style={{
         zIndex: Z_INDEX.fixed,
         borderColor: COLORS.gray[200],
         boxShadow: SHADOWS.xl,
       }}
     >
-      <div className="flex items-center justify-around h-16 px-2">
+      <div className="flex items-center justify-around h-16 px-2 max-w-7xl mx-auto">
         {tabs.map((tab, index) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
