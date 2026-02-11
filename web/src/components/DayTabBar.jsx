@@ -1,77 +1,97 @@
 // web/src/components/DayTabBar.jsx
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 import { Save, FolderDown, MoreVertical, X } from 'lucide-react';
 import { COLORS } from '../constants';
 
 /**
- * DayTabBar — Sticky horizontal tab strip for switching between plan days.
+ * DayTabBar — Concept B "Segmented Timeline"
  *
- * Replaces the old DaySidebar + Save/Load card approach.
+ * A sticky segmented control with a sliding gradient pill that follows the
+ * active day. A small caret triangle points downward from the active segment,
+ * visually connecting the selector to the content below.
+ *
  *   • Hidden entirely for single-day plans (totalDays === 1).
  *   • Horizontally scrollable on mobile when days exceed screen width.
- *   • Active tab: gradient underline + bold text; inactive: muted.
- *   • On desktop (≤7 days): all tabs visible without scrolling.
+ *   • Active segment: sliding gradient pill + white bold text.
+ *   • Inactive segments: muted text, hover highlight.
  *   • Integrated kebab menu for Save / Load actions (top-right).
+ *   • Spring-physics pill animation (cubic-bezier overshoot).
  *
- * WHITE-SCREEN FIX (v14.1):
- *   • Uses useMemo to derive stable day list, preventing unnecessary
- *     re-renders when totalDays hasn't actually changed.
- *   • Clamps selectedDay to valid bounds before rendering active state,
- *     preventing a brief flash of no-active-tab during plan transitions.
+ * Retains all WHITE-SCREEN FIX logic from the original implementation.
  */
 const DayTabBar = ({
     totalDays,
     selectedDay,
     onSelectDay,
-    // Save / Load action props
     onSavePlan,
     onLoadPlans,
     savingPlan = false,
     loading = false,
 }) => {
-    const scrollContainerRef = useRef(null);
-    const activeTabRef = useRef(null);
-    const [menuOpen, setMenuOpen] = React.useState(false);
+    const trackRef = useRef(null);
+    const segmentRefs = useRef({});
+    const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef(null);
+
+    // Pill position state
+    const [pillStyle, setPillStyle] = useState({ left: 0, width: 0 });
+    // Caret position state
+    const [caretLeft, setCaretLeft] = useState(0);
 
     // ── Hide for single-day plans ──
     if (totalDays <= 1) return null;
 
-    // ── WHITE-SCREEN FIX: Derive a stable day list ──
-    // useMemo ensures we don't create a new array on every render unless
-    // totalDays actually changes. This stabilises React's reconciliation.
+    // ── Derive stable day list (WHITE-SCREEN FIX) ──
     const dayNumbers = useMemo(
         () => Array.from({ length: totalDays }, (_, i) => i + 1),
         [totalDays]
     );
 
-    // ── WHITE-SCREEN FIX: Clamp selectedDay for rendering ──
-    // During plan transitions, selectedDay might momentarily be > totalDays.
-    // Clamp it so we always highlight a valid tab (or none if truly invalid).
-    const clampedSelectedDay = useMemo(() => {
+    // ── Clamp selectedDay (WHITE-SCREEN FIX) ──
+    const clampedDay = useMemo(() => {
         if (selectedDay < 1) return 1;
         if (selectedDay > totalDays) return 1;
         return selectedDay;
     }, [selectedDay, totalDays]);
 
-    // ── Auto-scroll active tab into view on mount / day change ──
-    useEffect(() => {
-        if (activeTabRef.current && scrollContainerRef.current) {
-            const container = scrollContainerRef.current;
-            const tab = activeTabRef.current;
-            const containerRect = container.getBoundingClientRect();
-            const tabRect = tab.getBoundingClientRect();
+    // ── Position the sliding pill + caret ──
+    const positionPill = useCallback(() => {
+        const track = trackRef.current;
+        const activeBtn = segmentRefs.current[clampedDay];
+        if (!track || !activeBtn) return;
 
-            // Only scroll if the tab is partially off-screen
-            if (tabRect.left < containerRect.left || tabRect.right > containerRect.right) {
-                tab.scrollIntoView({
-                    behavior: 'smooth',
-                    block: 'nearest',
-                    inline: 'center',
-                });
-            }
-        }
-    }, [clampedSelectedDay]);
+        const trackRect = track.getBoundingClientRect();
+        const btnRect = activeBtn.getBoundingClientRect();
+        const left = btnRect.left - trackRect.left;
+        const width = btnRect.width;
+        const center = left + width / 2;
+
+        setPillStyle({ left, width });
+        setCaretLeft(center);
+    }, [clampedDay]);
+
+    // Reposition on day change or resize
+    useEffect(() => {
+        // Use rAF to ensure layout is settled
+        const frame = requestAnimationFrame(positionPill);
+        return () => cancelAnimationFrame(frame);
+    }, [clampedDay, totalDays, positionPill]);
+
+    useEffect(() => {
+        window.addEventListener('resize', positionPill);
+        return () => window.removeEventListener('resize', positionPill);
+    }, [positionPill]);
+
+    // ── Scroll-triggered shadow ──
+    useEffect(() => {
+        const el = document.querySelector('.day-tab-bar-concept-b');
+        if (!el) return;
+        const onScroll = () => {
+            el.classList.toggle('scrolled', window.scrollY > 8);
+        };
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => window.removeEventListener('scroll', onScroll);
+    }, []);
 
     // ── Close kebab menu on outside click ──
     useEffect(() => {
@@ -86,72 +106,138 @@ const DayTabBar = ({
         }
     }, [menuOpen]);
 
+    // ── Determine segment label format ──
+    // Active segment shows full "Day N", inactive shows compact "D N"
+    const getLabel = (day) => {
+        if (day === clampedDay) return `Day ${day}`;
+        // On very small screens or many days, keep it short
+        if (totalDays > 5) return `D${day}`;
+        return `Day ${day}`;
+    };
+
     return (
         <div
-            className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b"
-            style={{ borderColor: COLORS.gray[200] }}
+            className="day-tab-bar-concept-b sticky top-0 z-30"
+            style={{
+                background: 'rgba(255, 255, 255, 0.94)',
+                backdropFilter: 'blur(18px) saturate(1.6)',
+                WebkitBackdropFilter: 'blur(18px) saturate(1.6)',
+                borderBottom: `1px solid ${COLORS.gray[200]}`,
+            }}
         >
             <div className="flex items-center">
-                {/* ── Tab strip (scrollable) ── */}
-                <div
-                    ref={scrollContainerRef}
-                    className="flex-1 flex overflow-x-auto scrollbar-hide"
-                    style={{
-                        scrollbarWidth: 'none',
-                        msOverflowStyle: 'none',
-                    }}
-                >
-                    {dayNumbers.map((day) => {
-                        const isActive = day === clampedSelectedDay;
+                {/* ── Segmented Track ── */}
+                <div className="flex-1" style={{ padding: '10px 12px 0 12px' }}>
+                    <div
+                        ref={trackRef}
+                        className="concept-b-seg-track"
+                        style={{
+                            position: 'relative',
+                            display: 'flex',
+                            background: COLORS.gray[100],
+                            borderRadius: '12px',
+                            padding: '3px',
+                            overflow: 'hidden',
+                        }}
+                    >
+                        {/* Sliding Gradient Pill */}
+                        <div
+                            className="concept-b-seg-pill"
+                            style={{
+                                position: 'absolute',
+                                top: '3px',
+                                bottom: '3px',
+                                left: `${pillStyle.left}px`,
+                                width: `${pillStyle.width}px`,
+                                borderRadius: '10px',
+                                background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary ? COLORS.secondary[500] : '#a855f7'})`,
+                                boxShadow: '0 4px 16px rgba(99, 102, 241, 0.35)',
+                                transition: 'left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                                zIndex: 1,
+                            }}
+                        />
 
-                        return (
-                            <button
-                                key={`day-tab-${day}`}
-                                ref={isActive ? activeTabRef : null}
-                                onClick={() => onSelectDay(day)}
-                                className="relative flex-shrink-0 px-5 py-3.5 text-sm font-semibold transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-1"
-                                style={{
-                                    color: isActive ? COLORS.primary[700] : COLORS.gray[500],
-                                    fontWeight: isActive ? 700 : 500,
-                                    // On desktop with ≤7 days, distribute tabs evenly
-                                    ...(totalDays <= 7
-                                        ? { flex: '1 1 0%', textAlign: 'center' }
-                                        : { minWidth: '80px', textAlign: 'center' }),
-                                }}
-                                aria-current={isActive ? 'true' : undefined}
-                            >
-                                {/* Label */}
-                                <span className="relative z-10">Day {day}</span>
+                        {/* Segment Buttons */}
+                        {dayNumbers.map((day) => {
+                            const isActive = day === clampedDay;
+                            return (
+                                <button
+                                    key={`seg-${day}`}
+                                    ref={(el) => { segmentRefs.current[day] = el; }}
+                                    onClick={() => onSelectDay(day)}
+                                    className="concept-b-seg-btn"
+                                    style={{
+                                        position: 'relative',
+                                        zIndex: 2,
+                                        flex: totalDays <= 7 ? '1 1 0%' : undefined,
+                                        minWidth: totalDays > 7 ? '64px' : undefined,
+                                        padding: '10px 4px',
+                                        background: 'none',
+                                        border: 'none',
+                                        fontFamily: 'inherit',
+                                        fontWeight: isActive ? 700 : 600,
+                                        fontSize: '13px',
+                                        color: isActive ? '#ffffff' : COLORS.gray[500],
+                                        cursor: 'pointer',
+                                        transition: 'color 0.25s',
+                                        textAlign: 'center',
+                                        userSelect: 'none',
+                                        whiteSpace: 'nowrap',
+                                    }}
+                                    aria-current={isActive ? 'true' : undefined}
+                                >
+                                    {getLabel(day)}
+                                </button>
+                            );
+                        })}
+                    </div>
 
-                                {/* Gradient underline for active tab */}
-                                {isActive && (
-                                    <span
-                                        className="absolute bottom-0 left-2 right-2 h-[3px] rounded-full"
-                                        style={{
-                                            background: `linear-gradient(90deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]})`,
-                                        }}
-                                    />
-                                )}
-
-                                {/* Hover underline for inactive tabs */}
-                                {!isActive && (
-                                    <span
-                                        className="absolute bottom-0 left-2 right-2 h-[2px] rounded-full opacity-0 hover-underline transition-opacity duration-200"
-                                        style={{ backgroundColor: COLORS.gray[300] }}
-                                    />
-                                )}
-                            </button>
-                        );
-                    })}
+                    {/* ── Caret Triangle ── */}
+                    <div
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'center',
+                            height: '8px',
+                            marginTop: '-1px',
+                            overflow: 'visible',
+                            position: 'relative',
+                        }}
+                    >
+                        <svg
+                            viewBox="0 0 16 8"
+                            width="14"
+                            height="8"
+                            style={{
+                                position: 'absolute',
+                                left: `${caretLeft - 7}px`,
+                                transition: 'left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                            }}
+                        >
+                            <polygon
+                                points="0,0 16,0 8,8"
+                                fill={COLORS.primary[500]}
+                                style={{ filter: 'drop-shadow(0 2px 3px rgba(99, 102, 241, 0.2))' }}
+                            />
+                        </svg>
+                    </div>
                 </div>
 
-                {/* ── Kebab action menu (Save / Load) ── */}
-                <div ref={menuRef} className="relative flex-shrink-0 border-l" style={{ borderColor: COLORS.gray[200] }}>
+                {/* ── Kebab Menu (Save / Load) ── */}
+                <div
+                    ref={menuRef}
+                    className="relative flex-shrink-0 border-l"
+                    style={{
+                        borderColor: COLORS.gray[200],
+                        alignSelf: 'stretch',
+                        display: 'flex',
+                        alignItems: 'center',
+                    }}
+                >
                     <button
                         onClick={() => setMenuOpen((o) => !o)}
-                        className="flex items-center justify-center w-11 h-full py-3.5 transition-colors duration-150 hover:bg-gray-100"
+                        className="flex items-center justify-center w-11 py-3.5 transition-colors duration-150 hover:bg-gray-100"
                         aria-label="Plan actions"
-                        style={{ color: COLORS.gray[500] }}
+                        style={{ color: COLORS.gray[500], height: '100%' }}
                     >
                         {menuOpen ? <X size={18} /> : <MoreVertical size={18} />}
                     </button>
@@ -192,11 +278,14 @@ const DayTabBar = ({
                 </div>
             </div>
 
-            {/* ── Utility CSS (scrollbar hide + hover underline) ── */}
+            {/* ── Scroll shadow trigger (added on scroll via CSS class) ── */}
             <style>{`
-                .scrollbar-hide::-webkit-scrollbar { display: none; }
-                .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-                button:hover .hover-underline { opacity: 1 !important; }
+                .day-tab-bar-concept-b.scrolled {
+                    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.07) !important;
+                }
+                .concept-b-seg-btn:not([aria-current="true"]):hover {
+                    color: ${COLORS.gray[700]} !important;
+                }
             `}</style>
         </div>
     );
