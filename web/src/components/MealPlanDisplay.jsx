@@ -69,12 +69,23 @@ const AnimatedNumber = ({ value, duration = 500, format }) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// RING LAYER — Single concentric SVG ring
+// RING LAYER — Single concentric SVG ring (with animation support)
 // ─────────────────────────────────────────────────────────────
 
-const RingLayer = ({ cx, cy, r, sw, bgColor, fillColor, pct, delay = 0 }) => {
+/**
+ * Renders a background track circle and a filled progress arc.
+ *
+ * FIX #2 (ANIMATION): When `animationKey` changes (day switch), the ring
+ * uses CSS keyframe animation (class `concept-b-ring-fill-animate`) instead
+ * of a simple CSS transition. This draws the ring from zero to target offset,
+ * providing a visually distinct "draw-in" effect on day switch.
+ *
+ * FIX #1 (LAYOUT): Ring radii have been widened — see ConcentricRingsCard.
+ */
+const RingLayer = ({ cx, cy, r, sw, bgColor, fillColor, pct, delay = 0, animationKey }) => {
     const circ = 2 * Math.PI * r;
-    const offset = circ - circ * Math.min(Math.max(pct, 0), 1);
+    const clampedPct = Math.min(Math.max(pct, 0), 1);
+    const targetOffset = circ - circ * clampedPct;
 
     return (
         <>
@@ -85,16 +96,21 @@ const RingLayer = ({ cx, cy, r, sw, bgColor, fillColor, pct, delay = 0 }) => {
                 strokeWidth={sw}
             />
             <circle
+                key={animationKey}
                 cx={cx} cy={cy} r={r}
                 fill="none"
                 stroke={fillColor}
                 strokeWidth={sw}
                 strokeLinecap="round"
                 strokeDasharray={circ}
-                strokeDashoffset={offset}
-                className="concept-b-ring-fill"
+                strokeDashoffset={targetOffset}
+                className="concept-b-ring-fill concept-b-ring-fill-animate"
                 style={{
-                    transition: `stroke-dashoffset 0.7s cubic-bezier(0.22, 1, 0.36, 1) ${delay}ms`,
+                    '--ring-circ': circ,
+                    '--ring-target-offset': targetOffset,
+                    animationDelay: `${delay}ms`,
+                    animationDuration: '0.7s',
+                    animationFillMode: 'forwards',
                 }}
             />
         </>
@@ -106,8 +122,11 @@ const RingLayer = ({ cx, cy, r, sw, bgColor, fillColor, pct, delay = 0 }) => {
 // LABEL ROW — Right-side macro label with animated value
 // ─────────────────────────────────────────────────────────────
 
-const RingLabelRow = ({ dotStyle, label, current, target, isNumeric = false }) => (
-    <div className="concept-b-label-row">
+const RingLabelRow = ({ dotStyle, label, current, target, isNumeric = false, animDelay = 0 }) => (
+    <div
+        className="concept-b-label-row concept-b-label-row-animate"
+        style={{ animationDelay: `${animDelay}ms` }}
+    >
         <span className="concept-b-label-dot" style={dotStyle} />
         <span className="concept-b-label-text">{label}</span>
         <span className="concept-b-label-value">
@@ -126,6 +145,18 @@ const RingLabelRow = ({ dotStyle, label, current, target, isNumeric = false }) =
 
 // ─────────────────────────────────────────────────────────────
 // CONCENTRIC RINGS CARD — Concept B progress visualization
+//
+// FIX #1 (LAYOUT): Container widened from 160→180px. Ring radii
+// spread out: cal r=80, protein r=64, fat r=50, carbs r=37.
+// The innermost ring (r=37, sw=6) leaves a center area of
+// ~62px diameter — enough for "1,397" + "kcal eaten" text.
+// This matches the horizontal layout of Concept B HTML.
+//
+// FIX #2 (ANIMATION): A `ringAnimKey` counter increments on
+// every prop change (day switch), causing all RingLayer circles
+// to remount and replay their CSS keyframe draw-in animation.
+// The center number uses AnimatedNumber for smooth count transitions.
+// Label rows have staggered fade-slide entrance animations.
 // ─────────────────────────────────────────────────────────────
 
 const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
@@ -139,9 +170,28 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
     const fatPct = fatTarget > 0 ? fat / fatTarget : 0;
     const carbPct = carbTarget > 0 ? carbs / carbTarget : 0;
 
-    const size = 160;
-    const cx = 80;
-    const cy = 80;
+    // FIX #1: Increased SVG viewBox from 160→180 for more ring space
+    const size = 180;
+    const cx = 90;
+    const cy = 90;
+
+    // FIX #2: Animation key — increments on any macro change to trigger
+    // ring remount and CSS keyframe replay
+    const ringAnimKeyRef = useRef(0);
+    const prevValuesRef = useRef({ calories, protein, fat, carbs });
+
+    const valuesChanged =
+        prevValuesRef.current.calories !== calories ||
+        prevValuesRef.current.protein !== protein ||
+        prevValuesRef.current.fat !== fat ||
+        prevValuesRef.current.carbs !== carbs;
+
+    if (valuesChanged) {
+        ringAnimKeyRef.current += 1;
+        prevValuesRef.current = { calories, protein, fat, carbs };
+    }
+
+    const animKey = ringAnimKeyRef.current;
 
     // Dynamic calorie ring color
     const getCalStroke = () => {
@@ -170,9 +220,14 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
                      * FIX #1: The SVG is rotated -90deg so arcs start at 12-o'clock.
                      * The center text overlay is a SIBLING div positioned absolutely
                      * over the ring container — it is NOT inside the SVG, so it must
-                     * NOT have any counter-rotation. The old code had rotate(90deg)
-                     * on .concept-b-ring-center which made "kcal eaten" display sideways.
-                     * That CSS rule is removed in the updated concept-b-rings.css.
+                     * NOT have any counter-rotation.
+                     *
+                     * Ring radii (FIX #1 — wider spacing for text room):
+                     *   Calories (outer):  r=80, sw=10   → track at 70–90px
+                     *   Protein:           r=64, sw=8    → track at 60–68px
+                     *   Fat:               r=50, sw=7    → track at ~46.5–53.5px
+                     *   Carbs (inner):     r=37, sw=6    → track at 34–40px
+                     *   Center text area:  ~62px diameter (31px radius clear)
                      */}
                     <svg
                         viewBox={`0 0 ${size} ${size}`}
@@ -180,35 +235,46 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
                         height="100%"
                         style={{ transform: 'rotate(-90deg)' }}
                     >
+                        {/* Calories — outermost ring */}
                         <RingLayer
-                            cx={cx} cy={cy} r={70} sw={10}
+                            cx={cx} cy={cy} r={80} sw={10}
                             bgColor={COLORS.gray ? COLORS.gray[100] : '#f3f4f6'}
                             fillColor={calStrokeOverride || 'url(#cheffyCalGrad)'}
                             pct={calPct} delay={0}
+                            animationKey={`cal-${animKey}`}
                         />
+                        {/* Protein */}
                         <RingLayer
-                            cx={cx} cy={cy} r={56} sw={8}
+                            cx={cx} cy={cy} r={64} sw={8}
                             bgColor="rgba(59, 130, 246, 0.1)"
                             fillColor="#3b82f6"
                             pct={proPct} delay={100}
+                            animationKey={`pro-${animKey}`}
                         />
+                        {/* Fat */}
                         <RingLayer
-                            cx={cx} cy={cy} r={44} sw={7}
+                            cx={cx} cy={cy} r={50} sw={7}
                             bgColor="rgba(245, 158, 11, 0.1)"
                             fillColor="#f59e0b"
                             pct={fatPct} delay={200}
+                            animationKey={`fat-${animKey}`}
                         />
+                        {/* Carbs — innermost ring */}
                         <RingLayer
-                            cx={cx} cy={cy} r={33} sw={6}
+                            cx={cx} cy={cy} r={37} sw={6}
                             bgColor="rgba(34, 197, 94, 0.1)"
                             fillColor="#22c55e"
                             pct={carbPct} delay={300}
+                            animationKey={`carb-${animKey}`}
                         />
                     </svg>
 
                     {/* Center Text — NO rotation, positioned over the ring */}
                     <div className="concept-b-ring-center">
-                        <span className="concept-b-ring-center-num">
+                        <span
+                            key={`center-num-${animKey}`}
+                            className="concept-b-ring-center-num pop-animate"
+                        >
                             <AnimatedNumber value={calories} duration={600} />
                         </span>
                         <span className="concept-b-ring-center-label">
@@ -218,13 +284,14 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
                 </div>
 
                 {/* ── Right: Label Rows with animated numbers ── */}
-                <div className="concept-b-ring-labels">
+                <div className="concept-b-ring-labels" key={`labels-${animKey}`}>
                     <RingLabelRow
                         dotStyle={{ background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary ? COLORS.secondary[500] : '#a855f7'})` }}
                         label="Calories"
                         current={calories}
                         target={`/ ${calTarget.toLocaleString()} kcal`}
                         isNumeric
+                        animDelay={50}
                     />
                     <RingLabelRow
                         dotStyle={{ background: '#3b82f6' }}
@@ -232,6 +299,7 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
                         current={protein}
                         target={`/ ${proTarget}g`}
                         isNumeric
+                        animDelay={120}
                     />
                     <RingLabelRow
                         dotStyle={{ background: '#f59e0b' }}
@@ -239,6 +307,7 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
                         current={fat}
                         target={`/ ${fatTarget}g`}
                         isNumeric
+                        animDelay={190}
                     />
                     <RingLabelRow
                         dotStyle={{ background: '#22c55e' }}
@@ -246,6 +315,7 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
                         current={carbs}
                         target={`/ ${carbTarget}g`}
                         isNumeric
+                        animDelay={260}
                     />
                 </div>
             </div>
