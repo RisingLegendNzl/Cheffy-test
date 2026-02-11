@@ -1,135 +1,339 @@
 // web/src/components/landing/HeroSection.jsx
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Play } from 'lucide-react';
-import { COLORS } from '../../constants';
+import { ArrowRight, Leaf, Flame, ShoppingCart } from 'lucide-react';
 
 /**
  * Hero Section Component
- * Main landing section with headline, CTAs, and social proof
+ * Editorial, warm aesthetic — asymmetric layout with organic feel
+ * Removed: Watch Demo button
  */
-const HeroSection = ({ onGetStarted, onWatchDemo }) => {
-  // Add state to track component mount for load-in animation
+const HeroSection = ({ onGetStarted }) => {
   const [isMounted, setIsMounted] = useState(false);
+
   useEffect(() => {
-    // Set mounted to true after a short delay to ensure animation plays
-    const timer = setTimeout(() => setIsMounted(true), 100);
+    const timer = setTimeout(() => setIsMounted(true), 150);
     return () => clearTimeout(timer);
   }, []);
 
+  const stats = [
+    { icon: <Leaf size={16} />, label: 'Personalized Plans', value: 'AI-Driven' },
+    { icon: <Flame size={16} />, label: 'Macro Accuracy', value: '99.2%' },
+    { icon: <ShoppingCart size={16} />, label: 'Avg. Weekly Savings', value: '$45+' },
+  ];
+
   return (
-    <section className="relative overflow-hidden bg-gradient-to-b from-indigo-50 to-white py-20 md:py-32">
-      <div className="max-w-7xl mx-auto px-4 md:px-8">
-        {/*
-          ADD:
-          - transition-all, duration-700
-          - Ternary for opacity and transform based on isMounted
-        */}
-        <div
-          className={`text-center mb-12 transition-all duration-700 ease-out ${
-            isMounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-5'
-          }`}
-        >
-          {/* Badge */}
-          <div className="inline-flex items-center space-x-2 px-4 py-2 rounded-full mb-6"
-            style={{ 
-              backgroundColor: COLORS.primary[50],
-              color: COLORS.primary[700]
+    <section
+      className="relative overflow-hidden pt-28 md:pt-36 pb-16 md:pb-24"
+      style={{ backgroundColor: '#FAFAF7' }}
+    >
+      {/* Decorative grain texture overlay */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-30"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E")`,
+        }}
+      />
+
+      {/* Subtle organic blob shapes */}
+      <div
+        className="absolute -top-20 -right-20 w-96 h-96 rounded-full opacity-10"
+        style={{
+          background: 'radial-gradient(circle, #2D6A4F 0%, transparent 70%)',
+          filter: 'blur(60px)',
+        }}
+      />
+      <div
+        className="absolute bottom-0 -left-32 w-80 h-80 rounded-full opacity-8"
+        style={{
+          background: 'radial-gradient(circle, #D4A373 0%, transparent 70%)',
+          filter: 'blur(50px)',
+        }}
+      />
+
+      <div className="max-w-7xl mx-auto px-5 md:px-10 relative">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          {/* ─── Left Column: Copy ─── */}
+          <div
+            className="transition-all duration-700 ease-out"
+            style={{
+              opacity: isMounted ? 1 : 0,
+              transform: isMounted ? 'translateY(0)' : 'translateY(24px)',
             }}
           >
-            <span className="text-2xl">✨</span>
-            <span className="text-sm font-semibold">AI-Powered Meal Planning</span>
-          </div>
-
-          {/* Main Headline */}
-          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold mb-6 font-poppins">
-            <span style={{ color: COLORS.gray[900] }}>Your Personal</span>
-            <br />
-            <span 
-              className="bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent"
-            >
-              Meal Companion
-            </span>
-          </h1>
-
-          {/* Subheadline */}
-          <p 
-            className="text-lg md:text-xl mb-10 max-w-2xl mx-auto"
-            style={{ color: COLORS.gray[600] }}
-          >
-            Generate personalized meal plans, track your macros, and achieve your health goals with AI-powered nutrition insights.
-          </p>
-
-          {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4 mb-16">
-            <button
-              onClick={onGetStarted}
-              className="w-full sm:w-auto px-8 py-4 rounded-full font-semibold text-white transition-all hover:shadow-xl hover:scale-105 flex items-center justify-center space-x-2"
-              style={{ 
-                backgroundColor: COLORS.primary[600],
+            {/* Eyebrow tag */}
+            <div
+              className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full mb-7"
+              style={{
+                backgroundColor: 'rgba(45, 106, 79, 0.08)',
+                border: '1px solid rgba(45, 106, 79, 0.15)',
               }}
             >
-              <span>Start 7-Day Free Trial</span> {/* <-- Updated to 7-Day */}
-              <ArrowRight size={20} />
-            </button>
+              <span className="text-sm" role="img" aria-label="sparkles">✨</span>
+              <span
+                className="text-xs font-semibold tracking-wide uppercase"
+                style={{
+                  color: '#2D6A4F',
+                  fontFamily: "'Georgia', serif",
+                  letterSpacing: '0.08em',
+                }}
+              >
+                AI-Powered Nutrition
+              </span>
+            </div>
 
-            <button
-              onClick={onWatchDemo}
-              className="w-full sm:w-auto px-8 py-4 rounded-full font-semibold transition-all hover:shadow-lg flex items-center justify-center space-x-2"
-              style={{ 
-                backgroundColor: COLORS.success.main,
-                color: 'white'
+            {/* Headline */}
+            <h1
+              className="mb-6"
+              style={{
+                fontFamily: "'Georgia', 'Times New Roman', serif",
+                fontWeight: 700,
+                lineHeight: 1.08,
+                color: '#1B1B18',
+                letterSpacing: '-0.025em',
               }}
             >
-              <Play size={20} />
-              <span>Watch Demo</span>
-            </button>
+              <span className="block text-4xl md:text-5xl lg:text-6xl">
+                Eat well,
+              </span>
+              <span
+                className="block text-4xl md:text-5xl lg:text-6xl mt-1"
+                style={{ color: '#2D6A4F' }}
+              >
+                effortlessly.
+              </span>
+            </h1>
+
+            {/* Subheadline */}
+            <p
+              className="text-base md:text-lg mb-9 max-w-lg leading-relaxed"
+              style={{
+                color: '#6B6B63',
+                fontFamily: "'Georgia', serif",
+                lineHeight: 1.7,
+              }}
+            >
+              Cheffy generates personalized meal plans calibrated to your macros,
+              budget, and local grocery prices — so every plate moves you
+              closer to your goals.
+            </p>
+
+            {/* CTA */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-4 mb-12">
+              <button
+                onClick={onGetStarted}
+                className="group px-7 py-3.5 rounded-xl font-semibold text-white text-sm transition-all duration-300 hover:shadow-xl hover:translate-y-[-2px] flex items-center space-x-2.5"
+                style={{
+                  backgroundColor: '#2D6A4F',
+                  fontFamily: "'Georgia', serif",
+                  boxShadow: '0 4px 14px rgba(45, 106, 79, 0.25)',
+                }}
+              >
+                <span>Start Your Free Trial</span>
+                <ArrowRight
+                  size={17}
+                  className="transition-transform duration-300 group-hover:translate-x-1"
+                />
+              </button>
+
+              <span
+                className="text-xs"
+                style={{
+                  color: '#9C9C94',
+                  fontFamily: "'Georgia', serif",
+                }}
+              >
+                7 days free · No credit card required
+              </span>
+            </div>
+
+            {/* Stats Row */}
+            <div className="flex flex-wrap gap-6">
+              {stats.map((stat, i) => (
+                <div
+                  key={i}
+                  className="flex items-center space-x-2.5 transition-all duration-500"
+                  style={{
+                    opacity: isMounted ? 1 : 0,
+                    transform: isMounted ? 'translateY(0)' : 'translateY(12px)',
+                    transitionDelay: `${400 + i * 120}ms`,
+                  }}
+                >
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center"
+                    style={{
+                      backgroundColor: 'rgba(45, 106, 79, 0.08)',
+                      color: '#2D6A4F',
+                    }}
+                  >
+                    {stat.icon}
+                  </div>
+                  <div>
+                    <div
+                      className="text-xs"
+                      style={{
+                        color: '#9C9C94',
+                        fontFamily: "'Georgia', serif",
+                      }}
+                    >
+                      {stat.label}
+                    </div>
+                    <div
+                      className="text-sm font-bold"
+                      style={{
+                        color: '#1B1B18',
+                        fontFamily: "'Georgia', serif",
+                      }}
+                    >
+                      {stat.value}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Hero Image - Larger and Cleaner */}
-          {/*
-            ADD:
-            - transition-all, duration-1000
-            - Ternary for opacity and scale based on isMounted
-            - Added delay-300 to make it appear after the text
-          */}
+          {/* ─── Right Column: Hero Visual ─── */}
           <div
-            className={`max-w-6xl mx-auto px-4 transition-all duration-1000 ease-out delay-300 ${
-              isMounted ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-            }`}
+            className="relative transition-all duration-1000 ease-out"
+            style={{
+              opacity: isMounted ? 1 : 0,
+              transform: isMounted ? 'translateY(0) scale(1)' : 'translateY(30px) scale(0.97)',
+              transitionDelay: '300ms',
+            }}
           >
-            <div 
-              className="rounded-3xl overflow-hidden shadow-2xl"
-              style={{ backgroundColor: COLORS.gray[100] }}
+            {/* Main Image Card */}
+            <div
+              className="relative rounded-3xl overflow-hidden"
+              style={{
+                boxShadow:
+                  '0 25px 60px -12px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04)',
+              }}
             >
               <img
-                src="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=1400&h=700&fit=crop&q=80"
-                alt="Healthy meal prep bowls"
+                src="https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=800&h=900&fit=crop&q=80"
+                alt="Healthy meal prep bowls with colorful fresh ingredients"
                 className="w-full h-auto"
                 loading="eager"
+                style={{ aspectRatio: '4/4.5' }}
               />
+
+              {/* Overlay gradient at bottom */}
+              <div
+                className="absolute bottom-0 left-0 right-0 h-32"
+                style={{
+                  background:
+                    'linear-gradient(to top, rgba(27, 27, 24, 0.55), transparent)',
+                }}
+              />
+
+              {/* Floating card on image */}
+              <div
+                className="absolute bottom-5 left-5 right-5 p-4 rounded-2xl"
+                style={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.92)',
+                  backdropFilter: 'blur(16px) saturate(180%)',
+                  border: '1px solid rgba(255,255,255,0.6)',
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div
+                      className="text-xs mb-0.5"
+                      style={{
+                        color: '#6B6B63',
+                        fontFamily: "'Georgia', serif",
+                      }}
+                    >
+                      Today's Plan
+                    </div>
+                    <div
+                      className="text-sm font-bold"
+                      style={{
+                        color: '#1B1B18',
+                        fontFamily: "'Georgia', serif",
+                      }}
+                    >
+                      Mediterranean Bowl Day
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    {[
+                      { label: 'P', value: '142g', color: '#2D6A4F' },
+                      { label: 'C', value: '210g', color: '#D4A373' },
+                      { label: 'F', value: '68g', color: '#BC6C25' },
+                    ].map((m) => (
+                      <div key={m.label} className="text-center">
+                        <div
+                          className="text-[10px] font-bold"
+                          style={{
+                            color: m.color,
+                            fontFamily: "'Georgia', serif",
+                          }}
+                        >
+                          {m.label}
+                        </div>
+                        <div
+                          className="text-xs font-semibold"
+                          style={{
+                            color: '#1B1B18',
+                            fontFamily: "'Georgia', serif",
+                          }}
+                        >
+                          {m.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
-            
-            {/* Subtle Caption */}
-            <p 
-              className="text-center mt-6 text-sm"
-              style={{ color: COLORS.gray[500] }}
+
+            {/* Floating accent card — top right */}
+            <div
+              className="absolute -top-4 -right-4 md:-top-6 md:-right-6 p-3 rounded-2xl hidden md:block"
+              style={{
+                backgroundColor: '#fff',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.08)',
+                border: '1px solid rgba(0,0,0,0.04)',
+                transform: isMounted ? 'rotate(3deg)' : 'rotate(3deg) scale(0.9)',
+                opacity: isMounted ? 1 : 0,
+                transition: 'all 0.6s ease-out 0.6s',
+              }}
             >
-              Personalized meal plans tailored to your goals
-            </p>
+              <div className="flex items-center space-x-2">
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-sm"
+                  style={{ backgroundColor: '#F0F9F4' }}
+                >
+                  🥗
+                </div>
+                <div>
+                  <div
+                    className="text-[10px]"
+                    style={{
+                      color: '#9C9C94',
+                      fontFamily: "'Georgia', serif",
+                    }}
+                  >
+                    Weekly meals
+                  </div>
+                  <div
+                    className="text-sm font-bold"
+                    style={{
+                      color: '#1B1B18',
+                      fontFamily: "'Georgia', serif",
+                    }}
+                  >
+                    21 planned
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-
-      {/* Decorative Elements */}
-      <div 
-        className="absolute top-20 left-10 w-72 h-72 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"
-      ></div>
-      <div 
-        className="absolute top-40 right-10 w-72 h-72 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"
-      ></div>
     </section>
   );
 };
 
 export default HeroSection;
-
