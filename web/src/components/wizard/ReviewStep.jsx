@@ -88,10 +88,6 @@ const ReviewStep = ({ formData }) => {
           label="Goal"
           value={GOAL_LABELS[formData.goal] || formData.goal}
         />
-        <SummaryItem
-          label="Diet"
-          value={formData.dietary === 'None' ? 'No Restrictions' : formData.dietary}
-        />
       </SummarySection>
 
       {/* Plan summary */}
@@ -104,10 +100,18 @@ const ReviewStep = ({ formData }) => {
         <SummaryItem label="Store" value={formData.store} />
         <SummaryItem label="Budget" value={formData.costPriority} />
         <SummaryItem label="Variety" value={formData.mealVariety} />
-        {formData.cuisine && (
-          <SummaryItem label="Cuisine" value={formData.cuisine} />
-        )}
       </SummarySection>
+
+      {/* Meal Inspiration summary (only shown if user provided input) */}
+      {formData.cuisine && formData.cuisine.trim() && (
+        <SummarySection icon="👨‍🍳" title="Meal Inspiration">
+          <div className="col-span-2">
+            <div style={{ fontSize: '14px', fontWeight: '500', color: COLORS.gray[700], lineHeight: '1.5' }}>
+              {formData.cuisine}
+            </div>
+          </div>
+        </SummarySection>
+      )}
     </div>
   );
 };
