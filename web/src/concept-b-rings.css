@@ -47,12 +47,10 @@
 
 /* =============================================================================
    2. RING CONTAINER — SVG viewport & center text
-   
-   FIX #1 (LAYOUT): Increased from 160px to 180px to give the concentric rings
-   more breathing room. The outermost ring (calories) now uses r=80 sw=10,
-   protein r=64 sw=8, fat r=50 sw=7, carbs r=37 sw=6. This leaves a center
-   area of ~60px diameter for the "kcal eaten" text — comfortably fitting
-   4-digit calorie numbers like "1,397" without clipping.
+
+   LAYOUT FIX: 180×180px container with ring radii spread to
+   cal r=80, protein r=64, fat r=50, carbs r=37 — giving ~62px
+   clear center diameter for "1,397 kcal eaten" text.
    ============================================================================= */
 
 .concept-b-ring-container {
@@ -70,23 +68,34 @@
   }
 }
 
-/* Ring fill transition (delay is applied inline per ring) */
+/*
+ * RING FILL — Smooth CSS transition on stroke-dashoffset.
+ *
+ * This is the SAME technique used in the Concept B HTML reference:
+ * a single CSS transition property on stroke-dashoffset. The React
+ * component updates the strokeDashoffset style prop and the browser
+ * smoothly interpolates between old and new values.
+ *
+ * The per-ring stagger delay is applied inline via the style prop
+ * (transition-delay) so each ring starts its fill slightly after
+ * the previous one — cal → protein → fat → carbs.
+ *
+ * IMPORTANT: No @keyframes needed. No key-based remount. The circle
+ * elements stay mounted and CSS transitions handle everything.
+ */
 .concept-b-ring-fill {
-  /* transition set inline with per-ring stagger delay */
+  fill: none;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.7s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /*
- * FIX #1 — Center text overlay.
+ * Center text overlay.
  *
  * The SVG is rotated -90deg so ring arcs start at 12-o'clock.
  * The center text div is a SIBLING positioned absolutely over the
  * ring container — it is NOT a child of the SVG element.
  * Therefore it must NOT have any counter-rotation.
- *
- * PREVIOUS BUG: `transform: rotate(90deg)` was applied here,
- * causing "kcal eaten" to render sideways.
- *
- * FIX: No transform at all. The div sits naturally upright.
  */
 .concept-b-ring-center {
   position: absolute;
@@ -96,7 +105,6 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  /* NO transform — text reads normally */
 }
 
 .concept-b-ring-center-num {
@@ -105,11 +113,7 @@
   color: #111827;
   line-height: 1;
   letter-spacing: -0.02em;
-  /* Prevent layout shift during number animation */
   font-variant-numeric: tabular-nums;
-  /* Smooth transition for day-switch pop animation */
-  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
-              opacity 0.25s ease;
 }
 
 .concept-b-ring-center-label {
@@ -174,7 +178,6 @@
 .concept-b-label-value {
   font-size: 14px;
   white-space: nowrap;
-  /* Tabular nums for stable width during animation */
   font-variant-numeric: tabular-nums;
 }
 
@@ -226,18 +229,6 @@
 
 /* =============================================================================
    5. STICKY FIX — Override overflow-hidden on ancestor
-   
-   MainApp renders the content inside:
-     <div class="max-w-7xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden">
-   
-   overflow:hidden creates a new scroll container which prevents 
-   position:sticky from working on the DayTabBar inside it.
-   
-   FIX: Override to overflow:clip which provides the same visual
-   clipping for border-radius but does NOT create a scroll container,
-   allowing position:sticky to work correctly.
-   
-   overflow:clip is supported in Chrome 90+, Firefox 81+, Safari 16+.
    ============================================================================= */
 
 .max-w-7xl.overflow-hidden {
@@ -246,25 +237,13 @@
 
 
 /* =============================================================================
-   6. RING ANIMATION — Day-switch entrance & stagger
-   
-   FIX #2: When switching days, rings animate from zero via a key-based
-   remount. This keyframe handles the stroke-dashoffset entrance so rings
-   "draw in" from empty. The stagger delays are applied inline per ring.
+   6. DAY-SWITCH ENTRANCE ANIMATIONS
+
+   These fire on day change via a key-based remount of ONLY the
+   wrapper elements (the labels container and center number span).
+   The ring <circle> elements themselves NEVER remount — they stay
+   mounted and rely purely on CSS transition for smooth filling.
    ============================================================================= */
-
-@keyframes ringDrawIn {
-  from {
-    stroke-dashoffset: var(--ring-circ);
-  }
-  to {
-    stroke-dashoffset: var(--ring-target-offset);
-  }
-}
-
-.concept-b-ring-fill-animate {
-  animation: ringDrawIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-}
 
 /* Center number pop-in on day switch */
 @keyframes centerNumPop {
@@ -282,7 +261,7 @@
   }
 }
 
-.concept-b-ring-center-num.pop-animate {
+.concept-b-center-pop {
   animation: centerNumPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -309,10 +288,8 @@
    ============================================================================= */
 
 @media (prefers-reduced-motion: reduce) {
-  .concept-b-ring-fill,
-  .concept-b-ring-fill-animate {
+  .concept-b-ring-fill {
     transition: none !important;
-    animation: none !important;
   }
 
   .concept-b-seg-pill {
@@ -327,7 +304,7 @@
     transition: none !important;
   }
 
-  .concept-b-ring-center-num.pop-animate {
+  .concept-b-center-pop {
     animation: none !important;
   }
 
