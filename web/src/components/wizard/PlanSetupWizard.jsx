@@ -13,6 +13,7 @@ import WizardStepHeader from './WizardStepHeader';
 import PersonalInfoStep from './PersonalInfoStep';
 import FitnessGoalsStep from './FitnessGoalsStep';
 import MealPreferencesStep from './MealPreferencesStep';
+import MealInspirationStep from './MealInspirationStep';
 import ReviewStep from './ReviewStep';
 
 /**
@@ -155,6 +156,10 @@ const PlanSetupWizard = ({
       case 'preferences':
         return (
           <MealPreferencesStep formData={formData} onChange={handleFieldChange} />
+        );
+      case 'inspiration':
+        return (
+          <MealInspirationStep formData={formData} onChange={handleFieldChange} />
         );
       case 'review':
         return <ReviewStep formData={formData} />;
@@ -327,7 +332,7 @@ const PlanSetupWizard = ({
                   : 'none',
               }}
             >
-              Continue
+              {stepConfig.id === 'inspiration' ? 'Continue' : 'Continue'}
               <ChevronRight size={16} />
             </button>
           )}
