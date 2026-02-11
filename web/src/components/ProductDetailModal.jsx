@@ -1,10 +1,14 @@
 // web/src/components/ProductDetailModal.jsx
-// Modal for displaying full product details
+// Modal for displaying full product details with:
+// - Total Needed section
+// - Units to Purchase with +/- controls
+// - Your Selection product card with price, size, price/100g, cheapest badge
+// - View Product link
+// - Show Alternatives collapsible
+// NO "Nutritional Value" section
 
-import React, { useEffect } from 'react';
-import { X, ShoppingBag, AlertTriangle } from 'lucide-react';
-import ProductCard from './ProductCard';
-import SubstituteMenu from './SubstituteMenu';
+import React, { useEffect, useState } from 'react';
+import { X, ShoppingBag, AlertTriangle, ExternalLink, ChevronDown, ChevronUp, Minus, Plus, Tag } from 'lucide-react';
 
 /**
  * Modal/Drawer for displaying complete product details
@@ -24,6 +28,8 @@ const ProductDetailModal = ({
   onSelectSubstitute,
   onQuantityChange,
 }) => {
+  const [showAlternatives, setShowAlternatives] = useState(false);
+
   // Close on Escape key
   useEffect(() => {
     const handleEscape = (e) => {
@@ -53,34 +59,38 @@ const ProductDetailModal = ({
     }
     
     return () => {
-      const scrollY = document.body.style.top;
       document.body.style.overflow = '';
       document.body.style.position = '';
       document.body.style.width = '';
       document.body.style.top = '';
-      if (scrollY) {
-        window.scrollTo(0, parseInt(scrollY) * -1);
-      }
     };
   }, [isOpen]);
+
+  // Reset alternatives when modal opens/changes
+  useEffect(() => {
+    setShowAlternatives(false);
+  }, [normalizedKey]);
 
   if (!isOpen) return null;
 
   const isFailed = result?.source === 'failed' || result?.source === 'error';
+  const isAbsoluteCheapest = absoluteCheapestProduct && currentSelection && currentSelection.url === absoluteCheapestProduct.url;
+
+  // Compute total needed display
+  const totalGrams = result?.totalGramsRequired || 0;
+  const quantityUnits = result?.quantityUnits || '';
 
   return (
     <>
       {/* Backdrop */}
       <div
-        className="product-modal-overlay"
         onClick={onClose}
         style={{
           position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
+          inset: 0,
           background: 'rgba(0, 0, 0, 0.5)',
+          backdropFilter: 'blur(4px)',
+          WebkitBackdropFilter: 'blur(4px)',
           zIndex: 1000,
           animation: 'fadeIn 0.2s ease',
         }}
@@ -94,27 +104,27 @@ const ProductDetailModal = ({
           bottom: 0,
           left: 0,
           right: 0,
-          top: 0,
-          background: 'white',
-          borderRadius: '0',
+          background: '#ffffff',
+          borderRadius: '20px 20px 0 0',
+          zIndex: 1001,
           display: 'flex',
           flexDirection: 'column',
-          zIndex: 1001,
-          animation: 'slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          maxHeight: '100dvh',
+          maxHeight: '92vh',
+          animation: 'slideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1)',
+          fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         }}
       >
-        {/* Swipe Handle (Mobile) */}
+        {/* Drag Handle */}
         <div style={{
           display: 'flex',
           justifyContent: 'center',
-          padding: '12px 0 8px 0',
+          padding: '12px 0 4px',
           flexShrink: 0,
         }}>
           <div style={{
             width: '40px',
             height: '4px',
-            background: '#cbd5e0',
+            background: '#d1d5db',
             borderRadius: '2px',
           }} />
         </div>
@@ -124,287 +134,557 @@ const ProductDetailModal = ({
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '16px 24px',
-          borderBottom: '1px solid #e2e8f0',
+          padding: '12px 24px 16px',
+          borderBottom: '1px solid #f1f5f9',
           flexShrink: 0,
         }}>
-          <h2 style={{
-            fontSize: '20px',
-            fontWeight: '700',
-            color: '#1a1a1a',
-            margin: 0,
-          }}>
-            Product Details
-          </h2>
+          <div>
+            <h2 style={{
+              fontSize: '20px',
+              fontWeight: '700',
+              color: '#0f172a',
+              margin: 0,
+              lineHeight: 1.3,
+            }}>
+              {ingredientKey}
+            </h2>
+          </div>
           <button
             onClick={onClose}
             style={{
-              width: '32px',
-              height: '32px',
+              width: '36px',
+              height: '36px',
               borderRadius: '50%',
               border: 'none',
-              background: '#f7fafc',
+              background: '#f1f5f9',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               transition: 'all 0.15s ease',
+              flexShrink: 0,
             }}
             className="modal-close-button"
           >
-            <X size={18} color="#4a5568" />
+            <X size={18} color="#64748b" />
           </button>
         </div>
 
         {/* Content — scrollable area */}
-        <div style={{ 
-          padding: '24px',
+        <div style={{
+          padding: '20px 24px 32px',
           overflowY: 'auto',
           flex: '1 1 auto',
           minHeight: 0,
           WebkitOverflowScrolling: 'touch',
           overscrollBehavior: 'contain',
         }}>
-          {/* Product Name & Badge */}
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            marginBottom: '16px',
-            gap: '12px',
-          }}>
-            <h3 style={{
-              fontSize: '24px',
-              fontWeight: '700',
-              color: '#1a1a1a',
-              margin: 0,
-              flex: 1,
-            }}>
-              {ingredientKey}
-            </h3>
-            
-            {!isFailed && currentSelection && absoluteCheapestProduct && 
-             currentSelection.url === absoluteCheapestProduct.url && (
-              <div style={{
-                background: 'linear-gradient(135deg, #48bb78 0%, #38a169 100%)',
-                color: '#ffffff',
-                padding: '6px 12px',
-                borderRadius: '12px',
-                fontSize: '12px',
-                fontWeight: '700',
-                textTransform: 'uppercase',
-                letterSpacing: '0.5px',
-                boxShadow: '0 2px 8px rgba(72, 187, 120, 0.3)',
-                whiteSpace: 'nowrap',
-              }}>
-                Cheapest
-              </div>
-            )}
-
-            {isFailed && (
-              <span style={{
-                padding: '6px 12px',
-                fontSize: '12px',
-                fontWeight: '700',
-                background: '#fee',
-                color: '#c00',
-                borderRadius: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-              }}>
-                <AlertTriangle size={14} /> Failed
-              </span>
-            )}
-          </div>
-
-          {/* Failed State */}
           {isFailed ? (
+            /* Failed ingredient state */
             <div style={{
               padding: '20px',
               background: '#fef2f2',
-              border: '1px solid #fecaca',
               borderRadius: '12px',
-              marginBottom: '16px',
+              border: '1px solid #fecaca',
             }}>
-              <p style={{
-                color: '#991b1b',
-                fontWeight: '600',
-                marginBottom: '8px',
-              }}>
-                Could not find a suitable product automatically.
-              </p>
-              <p style={{
-                fontSize: '14px',
-                color: '#7f1d1d',
-                margin: 0,
-              }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <AlertTriangle size={20} color="#dc2626" />
+                <span style={{ fontSize: '16px', fontWeight: '600', color: '#991b1b' }}>
+                  Product Not Found
+                </span>
+              </div>
+              <p style={{ fontSize: '14px', color: '#7f1d1d', margin: 0 }}>
                 Please check the "Failed Ingredient History" for details on the search attempts.
               </p>
             </div>
           ) : (
             <>
-              {/* Quantity Selector */}
+              {/* ── Total Needed ── */}
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                padding: '12px 16px',
-                background: '#f0f4ff',
+                padding: '14px 16px',
+                background: '#f8fafc',
                 borderRadius: '12px',
-                marginBottom: '20px',
+                marginBottom: '12px',
+                border: '1px solid #e2e8f0',
               }}>
                 <span style={{
                   fontSize: '14px',
                   fontWeight: '600',
-                  color: '#1e40af',
+                  color: '#475569',
                 }}>
-                  Quantity
+                  Total Needed:
                 </span>
+                <span style={{
+                  fontSize: '14px',
+                  fontWeight: '700',
+                  color: '#0f172a',
+                  background: '#e2e8f0',
+                  padding: '4px 12px',
+                  borderRadius: '20px',
+                }}>
+                  {totalGrams > 0 ? `${totalGrams}g` : 'N/A'}
+                  {quantityUnits ? ` (${quantityUnits})` : ''}
+                </span>
+              </div>
+
+              {/* ── Units to Purchase ── */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '14px 16px',
+                background: '#eef2ff',
+                borderRadius: '12px',
+                marginBottom: '20px',
+                border: '1px solid #c7d2fe',
+              }}>
+                <div>
+                  <div style={{
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    color: '#3730a3',
+                  }}>
+                    Units to Purchase:
+                  </div>
+                  <div style={{
+                    fontSize: '12px',
+                    color: '#6366f1',
+                    marginTop: '2px',
+                  }}>
+                    (Purchase {currentQuantity} × One Unit)
+                  </div>
+                </div>
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '12px',
+                  gap: '14px',
                 }}>
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '16px',
+                  <button
+                    onClick={() => onQuantityChange(normalizedKey, -1)}
+                    disabled={currentQuantity <= 1}
+                    style={{
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: '50%',
+                      border: 'none',
+                      background: currentQuantity <= 1 ? '#e2e8f0' : '#fecaca',
+                      color: currentQuantity <= 1 ? '#94a3b8' : '#991b1b',
+                      fontSize: '20px',
+                      fontWeight: '700',
+                      cursor: currentQuantity <= 1 ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.15s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    className="quantity-button"
+                  >
+                    −
+                  </button>
+                  <span style={{
+                    fontSize: '24px',
+                    fontWeight: '800',
+                    color: '#3730a3',
+                    minWidth: '36px',
+                    textAlign: 'center',
+                    fontVariantNumeric: 'tabular-nums',
                   }}>
-                    <button
-                      onClick={() => onQuantityChange(normalizedKey, -1)}
-                      disabled={currentQuantity <= 1}
-                      style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '50%',
-                        border: 'none',
-                        background: currentQuantity <= 1 ? '#d1d5db' : '#fecaca',
-                        color: '#1f2937',
-                        fontSize: '20px',
-                        fontWeight: '700',
-                        cursor: currentQuantity <= 1 ? 'not-allowed' : 'pointer',
-                        transition: 'all 0.15s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                      className="quantity-button"
-                    >
-                      −
-                    </button>
-                    <span style={{
-                      fontSize: '24px',
-                      fontWeight: '800',
-                      color: '#1e40af',
-                      minWidth: '40px',
-                      textAlign: 'center',
-                    }}>
-                      {currentQuantity}
-                    </span>
-                    <button
-                      onClick={() => onQuantityChange(normalizedKey, 1)}
-                      style={{
-                        width: '36px',
-                        height: '36px',
-                        borderRadius: '50%',
-                        border: 'none',
-                        background: '#bbf7d0',
-                        color: '#1f2937',
-                        fontSize: '20px',
-                        fontWeight: '700',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                      className="quantity-button"
-                    >
-                      +
-                    </button>
-                  </div>
+                    {currentQuantity}
+                  </span>
+                  <button
+                    onClick={() => onQuantityChange(normalizedKey, 1)}
+                    style={{
+                      width: '36px',
+                      height: '36px',
+                      borderRadius: '50%',
+                      border: 'none',
+                      background: '#bbf7d0',
+                      color: '#166534',
+                      fontSize: '20px',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    className="quantity-button"
+                  >
+                    +
+                  </button>
                 </div>
               </div>
 
-              {/* Current Selection */}
+              {/* ── Your Selection — Detailed Product Card ── */}
               <div style={{ marginBottom: '20px' }}>
                 <h5 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  fontSize: '16px',
-                  fontWeight: '600',
+                  fontSize: '15px',
+                  fontWeight: '700',
                   marginBottom: '12px',
-                  color: '#1a1a1a',
+                  color: '#0f172a',
+                  letterSpacing: '-0.01em',
                 }}>
-                  <ShoppingBag size={18} style={{ marginRight: '8px' }} />
+                  <ShoppingBag size={18} style={{ marginRight: '8px', color: '#6366f1' }} />
                   Your Selection
                 </h5>
+
                 {currentSelection ? (
-                  <ProductCard 
-                    product={currentSelection} 
-                    isCurrentSelection={true} 
-                    isAbsoluteCheapest={absoluteCheapestProduct && currentSelection.url === absoluteCheapestProduct.url}
-                  />
+                  <div style={{
+                    background: '#ffffff',
+                    borderRadius: '14px',
+                    border: isAbsoluteCheapest ? '2px solid #22c55e' : '2px solid #e2e8f0',
+                    overflow: 'hidden',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+                  }}>
+                    {/* Product Header */}
+                    <div style={{
+                      padding: '16px 18px 12px',
+                    }}>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        marginBottom: '4px',
+                      }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontSize: '17px',
+                            fontWeight: '700',
+                            color: '#0f172a',
+                            lineHeight: 1.3,
+                            marginBottom: '3px',
+                          }}>
+                            {currentSelection.name}
+                          </div>
+                          <div style={{
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            color: '#6366f1',
+                          }}>
+                            {currentSelection.brand || ''}
+                          </div>
+                        </div>
+
+                        {isAbsoluteCheapest && (
+                          <div style={{
+                            background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                            color: '#fff',
+                            padding: '4px 10px',
+                            borderRadius: '10px',
+                            fontSize: '11px',
+                            fontWeight: '700',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                            marginLeft: '10px',
+                            boxShadow: '0 2px 6px rgba(34, 197, 94, 0.3)',
+                          }}>
+                            Cheapest
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Product Details Grid */}
+                    <div style={{
+                      padding: '0 18px 16px',
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 1fr',
+                      gap: '10px',
+                    }}>
+                      {/* Price */}
+                      <div style={{
+                        background: '#f8fafc',
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        border: '1px solid #f1f5f9',
+                      }}>
+                        <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                          Price
+                        </div>
+                        <div style={{ fontSize: '20px', fontWeight: '800', color: '#dc2626', fontVariantNumeric: 'tabular-nums' }}>
+                          ${currentSelection.price ? currentSelection.price.toFixed(2) : 'N/A'}
+                        </div>
+                      </div>
+
+                      {/* Size */}
+                      <div style={{
+                        background: '#f8fafc',
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        border: '1px solid #f1f5f9',
+                      }}>
+                        <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                          Size
+                        </div>
+                        <div style={{ fontSize: '20px', fontWeight: '800', color: '#0f172a' }}>
+                          {currentSelection.size || currentSelection.package_size || 'N/A'}
+                        </div>
+                      </div>
+
+                      {/* Price per 100g/ml */}
+                      <div style={{
+                        background: '#f0fdf4',
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        border: '1px solid #bbf7d0',
+                        gridColumn: '1 / -1',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}>
+                        <div>
+                          <div style={{ fontSize: '11px', fontWeight: '600', color: '#64748b', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                            Price/100g
+                          </div>
+                          <div style={{ fontSize: '20px', fontWeight: '800', color: '#16a34a', fontVariantNumeric: 'tabular-nums' }}>
+                            ${currentSelection.unit_price_per_100 ? currentSelection.unit_price_per_100.toFixed(2) : 'N/A'}
+                          </div>
+                        </div>
+                        {isAbsoluteCheapest && (
+                          <Tag size={20} color="#16a34a" style={{ opacity: 0.6 }} />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* View Product Link */}
+                    {currentSelection.url && currentSelection.url !== '#api_down_mock_product' && (
+                      <div style={{
+                        borderTop: '1px solid #f1f5f9',
+                        padding: '12px 18px',
+                      }}>
+                        <a
+                          href={currentSelection.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px',
+                            padding: '10px 16px',
+                            background: 'linear-gradient(135deg, #6366f1, #7c3aed)',
+                            color: '#ffffff',
+                            borderRadius: '10px',
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            textDecoration: 'none',
+                            transition: 'all 0.2s ease',
+                            boxShadow: '0 2px 8px rgba(99, 102, 241, 0.3)',
+                          }}
+                          className="view-product-link"
+                        >
+                          <ExternalLink size={16} />
+                          View Product
+                        </a>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <div style={{
-                    padding: '16px',
+                    padding: '24px',
                     textAlign: 'center',
                     background: '#fef2f2',
-                    color: '#991b1b',
-                    borderRadius: '8px',
+                    borderRadius: '12px',
+                    border: '1px solid #fecaca',
                   }}>
-                    <AlertTriangle size={24} style={{ margin: '0 auto 8px' }} />
-                    No product found.
+                    <AlertTriangle size={24} style={{ color: '#dc2626', marginBottom: '8px' }} />
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#991b1b' }}>
+                      No product found.
+                    </div>
                   </div>
                 )}
               </div>
 
-              {/* Alternatives */}
+              {/* ── Alternatives Section ── */}
               {substitutes && substitutes.length > 0 && (
-                <SubstituteMenu substituteCount={substitutes.length}>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-                    gap: '16px',
-                  }}>
-                    {substitutes.map((sub, index) => (
-                      <ProductCard 
-                        key={sub.url + index} 
-                        product={sub}
-                        isAbsoluteCheapest={absoluteCheapestProduct && sub.url === absoluteCheapestProduct.url}
-                        onSelect={(p) => onSelectSubstitute(normalizedKey, p)}
-                      />
-                    ))}
-                  </div>
-                </SubstituteMenu>
+                <div style={{ marginBottom: '20px' }}>
+                  <button
+                    onClick={() => setShowAlternatives(!showAlternatives)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      width: '100%',
+                      padding: '12px 16px',
+                      background: showAlternatives ? '#f1f5f9' : '#ffffff',
+                      border: '1.5px solid #e2e8f0',
+                      borderRadius: '12px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      color: '#475569',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                    }}
+                    className="alternatives-toggle"
+                  >
+                    {showAlternatives ? (
+                      <ChevronUp size={16} />
+                    ) : (
+                      <ChevronDown size={16} />
+                    )}
+                    {showAlternatives ? 'Hide' : 'Show'} {substitutes.length} Alternative{substitutes.length !== 1 ? 's' : ''}
+                  </button>
+
+                  {showAlternatives && (
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      marginTop: '12px',
+                      animation: 'fadeInDown 0.2s ease',
+                    }}>
+                      {substitutes.map((sub, index) => {
+                        const isSubCheapest = absoluteCheapestProduct && sub.url === absoluteCheapestProduct.url;
+                        return (
+                          <div
+                            key={sub.url + index}
+                            style={{
+                              background: '#ffffff',
+                              borderRadius: '12px',
+                              border: isSubCheapest ? '2px solid #22c55e' : '1.5px solid #e2e8f0',
+                              padding: '14px 16px',
+                              transition: 'all 0.2s ease',
+                              cursor: 'pointer',
+                            }}
+                            className="substitute-card"
+                            onClick={() => onSelectSubstitute && onSelectSubstitute(normalizedKey, sub)}
+                          >
+                            <div style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-start',
+                              marginBottom: '6px',
+                            }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                  fontSize: '15px',
+                                  fontWeight: '600',
+                                  color: '#0f172a',
+                                  lineHeight: 1.3,
+                                  marginBottom: '2px',
+                                }}>
+                                  {sub.name}
+                                </div>
+                                <div style={{
+                                  fontSize: '12px',
+                                  fontWeight: '500',
+                                  color: '#6366f1',
+                                }}>
+                                  {sub.brand || ''}
+                                </div>
+                              </div>
+                              {isSubCheapest && (
+                                <div style={{
+                                  background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                                  color: '#fff',
+                                  padding: '3px 8px',
+                                  borderRadius: '8px',
+                                  fontSize: '10px',
+                                  fontWeight: '700',
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.4px',
+                                  flexShrink: 0,
+                                  marginLeft: '8px',
+                                }}>
+                                  Cheapest
+                                </div>
+                              )}
+                            </div>
+
+                            <div style={{
+                              display: 'flex',
+                              gap: '16px',
+                              fontSize: '13px',
+                              color: '#64748b',
+                            }}>
+                              <span>
+                                <strong style={{ color: '#dc2626' }}>${sub.price ? sub.price.toFixed(2) : 'N/A'}</strong>
+                              </span>
+                              <span>{sub.size || sub.package_size || 'N/A'}</span>
+                              <span>
+                                /100g: <strong style={{ color: '#16a34a' }}>${sub.unit_price_per_100 ? sub.unit_price_per_100.toFixed(2) : 'N/A'}</strong>
+                              </span>
+                            </div>
+
+                            <div style={{
+                              marginTop: '10px',
+                              display: 'flex',
+                              gap: '8px',
+                            }}>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectSubstitute && onSelectSubstitute(normalizedKey, sub);
+                                }}
+                                style={{
+                                  flex: 1,
+                                  padding: '8px 12px',
+                                  background: '#6366f1',
+                                  color: '#ffffff',
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  fontSize: '13px',
+                                  fontWeight: '600',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.15s ease',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '6px',
+                                }}
+                                className="select-substitute-btn"
+                              >
+                                <ShoppingBag size={14} />
+                                Select
+                              </button>
+                              {sub.url && sub.url !== '#api_down_mock_product' && (
+                                <a
+                                  href={sub.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={{
+                                    padding: '8px 12px',
+                                    background: '#f1f5f9',
+                                    color: '#475569',
+                                    border: '1px solid #e2e8f0',
+                                    borderRadius: '8px',
+                                    fontSize: '13px',
+                                    fontWeight: '600',
+                                    textDecoration: 'none',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    transition: 'all 0.15s ease',
+                                  }}
+                                  className="view-sub-link"
+                                >
+                                  <ExternalLink size={13} />
+                                  View
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
             </>
           )}
-
-          {/* Close Button */}
-          <button
-            onClick={onClose}
-            style={{
-              width: '100%',
-              padding: '14px',
-              marginTop: '24px',
-              background: '#f7fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: '10px',
-              fontSize: '16px',
-              fontWeight: '600',
-              color: '#4a5568',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
-            className="modal-close-full-button"
-          >
-            Close
-          </button>
         </div>
       </div>
 
+      {/* Styles */}
       <style>{`
         @keyframes fadeIn {
           from { opacity: 0; }
@@ -412,33 +692,22 @@ const ProductDetailModal = ({
         }
 
         @keyframes slideUp {
-          from {
-            transform: translateY(100%);
-          }
-          to {
-            transform: translateY(0);
-          }
+          from { transform: translateY(100%); }
+          to { transform: translateY(0); }
+        }
+
+        @keyframes fadeInDown {
+          from { opacity: 0; transform: translateY(-8px); }
+          to { opacity: 1; transform: translateY(0); }
         }
 
         @keyframes fadeInScale {
-          from {
-            opacity: 0;
-            transform: translate(-50%, -50%) scale(0.9);
-          }
-          to {
-            opacity: 1;
-            transform: translate(-50%, -50%) scale(1);
-          }
+          from { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+          to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
         }
 
         .modal-close-button:hover {
           background: #e2e8f0 !important;
-        }
-
-        .modal-close-full-button:hover {
-          background: #e2e8f0 !important;
-          border-color: #cbd5e0 !important;
-          color: #2d3748 !important;
         }
 
         .quantity-button:not(:disabled):hover {
@@ -447,6 +716,29 @@ const ProductDetailModal = ({
 
         .quantity-button:active {
           transform: scale(0.95);
+        }
+
+        .view-product-link:hover {
+          box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4) !important;
+          transform: translateY(-1px);
+        }
+
+        .alternatives-toggle:hover {
+          background: #f8fafc !important;
+          border-color: #cbd5e0 !important;
+        }
+
+        .substitute-card:hover {
+          border-color: #c7d2fe !important;
+          box-shadow: 0 2px 8px rgba(99, 102, 241, 0.1);
+        }
+
+        .select-substitute-btn:hover {
+          background: #4f46e5 !important;
+        }
+
+        .view-sub-link:hover {
+          background: #e2e8f0 !important;
         }
 
         /* Mobile: full-screen bottom sheet */
@@ -466,9 +758,8 @@ const ProductDetailModal = ({
             transform: translate(-50%, -50%) !important;
             bottom: auto !important;
             right: auto !important;
-            width: 600px !important;
-            height: 90vh !important;
-            max-height: 90vh !important;
+            width: 520px !important;
+            max-height: 88vh !important;
             border-radius: 16px !important;
             animation: fadeInScale 0.2s ease !important;
           }
