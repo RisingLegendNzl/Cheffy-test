@@ -33,7 +33,7 @@ import BottomNav from './BottomNav';
 import PullToRefresh from './PullToRefresh';
 import SettingsPanel from './SettingsPanel';
 import SuccessModal from './SuccessModal';
-import ToastContainer from './ToastContainer';
+import ToastContainer from './Toast';
 
 import { COLORS, SHADOWS, Z_INDEX, APP_CONFIG } from '../constants';
 
