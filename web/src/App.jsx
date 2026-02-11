@@ -5,6 +5,7 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore, setLogLevel } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 
 // --- Component Imports ---
 import LandingPage from './pages/LandingPage';
@@ -38,6 +39,11 @@ const App = () => {
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [appId, setAppId] = useState('default-app-id');
 
+    // --- New User Onboarding State ---
+    const [isNewUser, setIsNewUser] = useState(false);
+    const [profileSetupComplete, setProfileSetupComplete] = useState(true); // default true so returning users aren't gated
+    const [profileSetupSaving, setProfileSetupSaving] = useState(false);
+
     // --- Form Data State (needed by hook and MainApp) ---
     const [formData, setFormData] = useState({ 
         name: '', height: '180', weight: '75', age: '30', gender: 'male', 
@@ -65,54 +71,78 @@ const App = () => {
             
         const currentAppId = typeof __app_id !== 'undefined' 
             ? __app_id 
-            : (import.meta.env.VITE_APP_ID || 'default-app-id');
+            : import.meta.env.VITE_APP_ID || 'default-app-id';
         
         setAppId(currentAppId);
         globalAppId = currentAppId;
-        
-        try {
-            if (firebaseConfigStr && firebaseConfigStr.trim() !== '') {
-                firebaseConfig = JSON.parse(firebaseConfigStr);
-            } else {
-                console.warn("[FIREBASE] __firebase_config is not defined or is empty.");
-                firebaseInitializationError = 'Firebase config environment variable is missing.';
-            }
-        } catch (e) {
-            console.error("CRITICAL: Failed to parse Firebase config:", e);
-            firebaseInitializationError = `Failed to parse Firebase config: ${e.message}`;
-        }
-        
-        if (firebaseInitializationError) {
-            console.error("[FIREBASE] Firebase init failed:", firebaseInitializationError);
-            setIsAuthReady(true);
-            return;
-        }
 
-        if (firebaseConfig) {
+        if (firebaseConfigStr) {
             try {
-                const app = initializeApp(firebaseConfig);
+                const parsedConfig = typeof firebaseConfigStr === 'string' 
+                    ? JSON.parse(firebaseConfigStr) 
+                    : firebaseConfigStr;
+                firebaseConfig = parsedConfig;
+
+                const app = initializeApp(parsedConfig);
                 const authInstance = getAuth(app);
                 const dbInstance = getFirestore(app);
-                setDb(dbInstance);
-                setAuth(authInstance);
-                setLogLevel('debug');
-                console.log("[FIREBASE] Initialized.");
 
-                setPersistence(authInstance, browserLocalPersistence)
-                    .then(() => {
-                        console.log("[FIREBASE] Persistence set to browserLocalPersistence.");
-                    })
-                    .catch((persistErr) => {
-                        console.warn("[FIREBASE] Failed to set persistence (falling back to default):", persistErr);
-                    });
+                // Suppress verbose Firestore logs in production
+                try { setLogLevel('error'); } catch (e) { /* ignore */ }
+
+                setAuth(authInstance);
+                setDb(dbInstance);
+
+                // Set persistence to local so sessions survive page reloads
+                setPersistence(authInstance, browserLocalPersistence).catch(err => {
+                    console.warn("[FIREBASE] Failed to set persistence:", err);
+                });
 
                 const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
                     if (user) {
-                        console.log("[FIREBASE] User is signed in:", user.uid);
+                        console.log("[FIREBASE] User authenticated:", user.uid);
                         setUserId(user.uid);
+
+                        // --- NEW USER DETECTION ---
+                        // Check the 'users' Firestore document to determine if profile setup is complete.
+                        try {
+                            const userDocRef = doc(dbInstance, 'users', user.uid);
+                            const userSnap = await getDoc(userDocRef);
+
+                            if (userSnap.exists()) {
+                                const userData = userSnap.data();
+                                const hasCompletedSetup = userData.profileSetupComplete === true;
+
+                                if (!hasCompletedSetup) {
+                                    // New user who hasn't completed profile setup yet
+                                    console.log("[ONBOARDING] New user detected — showing profile gate.");
+                                    setIsNewUser(true);
+                                    setProfileSetupComplete(false);
+                                } else {
+                                    // Returning user who already completed setup
+                                    console.log("[ONBOARDING] Returning user — profile setup already complete.");
+                                    setIsNewUser(false);
+                                    setProfileSetupComplete(true);
+                                }
+                            } else {
+                                // No user doc at all (edge case: legacy user or doc not created)
+                                // Treat as returning user — don't block them
+                                console.log("[ONBOARDING] No user doc found — treating as returning user.");
+                                setIsNewUser(false);
+                                setProfileSetupComplete(true);
+                            }
+                        } catch (err) {
+                            console.error("[ONBOARDING] Error checking user doc:", err);
+                            // On error, don't block the user
+                            setIsNewUser(false);
+                            setProfileSetupComplete(true);
+                        }
                     } else {
-                        console.log("[FIREBASE] User is signed out.");
+                        console.log("[FIREBASE] No user signed in.");
                         setUserId(null);
+                        // Reset onboarding state on sign-out
+                        setIsNewUser(false);
+                        setProfileSetupComplete(true);
                     }
                     if (!isAuthReady) {
                         setIsAuthReady(true);
@@ -166,6 +196,11 @@ const App = () => {
         setAuthError(null);
         try {
             await logic.handleSignUp(credentials);
+            // After sign-up, the onAuthStateChanged callback will detect the new user
+            // via the 'users' doc (which handleSignUp creates WITHOUT profileSetupComplete).
+            // Force the profile gate to appear.
+            setIsNewUser(true);
+            setProfileSetupComplete(false);
             setContentView('profile');
         } catch (error) {
             setAuthError(error.message);
@@ -179,6 +214,7 @@ const App = () => {
         setAuthError(null);
         try {
             await logic.handleSignIn(credentials);
+            // The onAuthStateChanged callback handles new-user detection for sign-in too
             setContentView('profile');
         } catch (error) {
             setAuthError(error.message);
@@ -195,7 +231,41 @@ const App = () => {
         await logic.handleSignOut();
         setContentView('profile');
         setAuthError(null);
+        // Reset onboarding state
+        setIsNewUser(false);
+        setProfileSetupComplete(true);
     }, [logic]);
+
+    // --- Complete Profile Setup Handler (called from NewUserProfileGate) ---
+    const handleCompleteProfileSetup = useCallback(async () => {
+        if (!db || !userId) return;
+
+        setProfileSetupSaving(true);
+        try {
+            // 1. Save the name to the profile document
+            await logic.handleSaveProfile(true); // silent save
+
+            // 2. Mark profileSetupComplete in the 'users' document
+            const userDocRef = doc(db, 'users', userId);
+            await updateDoc(userDocRef, {
+                profileSetupComplete: true,
+                profileSetupCompletedAt: new Date().toISOString()
+            });
+
+            console.log("[ONBOARDING] Profile setup marked as complete.");
+
+            // 3. Update local state
+            setIsNewUser(false);
+            setProfileSetupComplete(true);
+
+            logic.showToast('Profile saved! Welcome to Cheffy!', 'success');
+        } catch (err) {
+            console.error("[ONBOARDING] Error completing profile setup:", err);
+            logic.showToast('Failed to save profile. Please try again.', 'error');
+        } finally {
+            setProfileSetupSaving(false);
+        }
+    }, [db, userId, logic]);
 
     // --- Edit Profile Handler ---
     const handleEditProfile = useCallback(() => {
@@ -336,6 +406,12 @@ const App = () => {
                     // Responsive
                     isMobile={isMobile}
                     isDesktop={isDesktop}
+
+                    // --- NEW: Onboarding / New User Props ---
+                    isNewUser={isNewUser}
+                    profileSetupComplete={profileSetupComplete}
+                    profileSetupSaving={profileSetupSaving}
+                    onCompleteProfileSetup={handleCompleteProfileSetup}
                 />
             )}
         </>
