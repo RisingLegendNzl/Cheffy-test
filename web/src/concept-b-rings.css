@@ -32,7 +32,7 @@
 .concept-b-rings-layout {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 28px;
 }
 
 /* Stack vertically on narrow screens */
@@ -40,27 +40,33 @@
   .concept-b-rings-layout {
     flex-direction: column;
     text-align: center;
-    gap: 16px;
+    gap: 18px;
   }
 }
 
 
 /* =============================================================================
    2. RING CONTAINER — SVG viewport & center text
+   
+   FIX #1 (LAYOUT): Increased from 160px to 180px to give the concentric rings
+   more breathing room. The outermost ring (calories) now uses r=80 sw=10,
+   protein r=64 sw=8, fat r=50 sw=7, carbs r=37 sw=6. This leaves a center
+   area of ~60px diameter for the "kcal eaten" text — comfortably fitting
+   4-digit calorie numbers like "1,397" without clipping.
    ============================================================================= */
 
 .concept-b-ring-container {
   position: relative;
-  width: 160px;
-  height: 160px;
+  width: 180px;
+  height: 180px;
   flex-shrink: 0;
 }
 
-/* Slightly smaller on very small screens */
+/* Slightly smaller on very small screens but still adequate */
 @media (max-width: 380px) {
   .concept-b-ring-container {
-    width: 130px;
-    height: 130px;
+    width: 150px;
+    height: 150px;
   }
 }
 
@@ -101,6 +107,9 @@
   letter-spacing: -0.02em;
   /* Prevent layout shift during number animation */
   font-variant-numeric: tabular-nums;
+  /* Smooth transition for day-switch pop animation */
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.25s ease;
 }
 
 .concept-b-ring-center-label {
@@ -237,12 +246,73 @@
 
 
 /* =============================================================================
-   6. ACCESSIBILITY — Respect reduced motion
+   6. RING ANIMATION — Day-switch entrance & stagger
+   
+   FIX #2: When switching days, rings animate from zero via a key-based
+   remount. This keyframe handles the stroke-dashoffset entrance so rings
+   "draw in" from empty. The stagger delays are applied inline per ring.
+   ============================================================================= */
+
+@keyframes ringDrawIn {
+  from {
+    stroke-dashoffset: var(--ring-circ);
+  }
+  to {
+    stroke-dashoffset: var(--ring-target-offset);
+  }
+}
+
+.concept-b-ring-fill-animate {
+  animation: ringDrawIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Center number pop-in on day switch */
+@keyframes centerNumPop {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.3;
+  }
+  60% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.concept-b-ring-center-num.pop-animate {
+  animation: centerNumPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Label row stagger fade-in on day switch */
+@keyframes labelFadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.concept-b-label-row-animate {
+  animation: labelFadeSlideIn 0.35s ease forwards;
+  opacity: 0;
+}
+
+
+/* =============================================================================
+   7. ACCESSIBILITY — Respect reduced motion
    ============================================================================= */
 
 @media (prefers-reduced-motion: reduce) {
-  .concept-b-ring-fill {
+  .concept-b-ring-fill,
+  .concept-b-ring-fill-animate {
     transition: none !important;
+    animation: none !important;
   }
 
   .concept-b-seg-pill {
@@ -255,5 +325,14 @@
 
   .concept-b-rings-card {
     transition: none !important;
+  }
+
+  .concept-b-ring-center-num.pop-animate {
+    animation: none !important;
+  }
+
+  .concept-b-label-row-animate {
+    animation: none !important;
+    opacity: 1;
   }
 }
