@@ -11,7 +11,7 @@
 
 .concept-b-rings-card {
   position: relative;
-  padding: 20px;
+  padding: 24px;
   background: #ffffff;
   border-radius: 16px;
   border: 1px solid #e5e7eb;
@@ -64,12 +64,24 @@
   }
 }
 
-/* Ring fill transition (set inline for per-ring stagger via delay) */
+/* Ring fill transition (delay is applied inline per ring) */
 .concept-b-ring-fill {
-  /* transition is applied inline with per-ring delay */
+  /* transition set inline with per-ring stagger delay */
 }
 
-/* Center overlay text */
+/*
+ * FIX #1 — Center text overlay.
+ *
+ * The SVG is rotated -90deg so ring arcs start at 12-o'clock.
+ * The center text div is a SIBLING positioned absolutely over the
+ * ring container — it is NOT a child of the SVG element.
+ * Therefore it must NOT have any counter-rotation.
+ *
+ * PREVIOUS BUG: `transform: rotate(90deg)` was applied here,
+ * causing "kcal eaten" to render sideways.
+ *
+ * FIX: No transform at all. The div sits naturally upright.
+ */
 .concept-b-ring-center {
   position: absolute;
   inset: 0;
@@ -78,8 +90,7 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  /* Counter-rotate to cancel the SVG rotation */
-  transform: rotate(90deg);
+  /* NO transform — text reads normally */
 }
 
 .concept-b-ring-center-num {
@@ -88,6 +99,8 @@
   color: #111827;
   line-height: 1;
   letter-spacing: -0.02em;
+  /* Prevent layout shift during number animation */
+  font-variant-numeric: tabular-nums;
 }
 
 .concept-b-ring-center-label {
@@ -117,7 +130,7 @@
   flex-direction: column;
   gap: 6px;
   flex: 1;
-  min-width: 0; /* prevent overflow */
+  min-width: 0;
 }
 
 .concept-b-label-row {
@@ -152,6 +165,8 @@
 .concept-b-label-value {
   font-size: 14px;
   white-space: nowrap;
+  /* Tabular nums for stable width during animation */
+  font-variant-numeric: tabular-nums;
 }
 
 .concept-b-label-current {
@@ -167,6 +182,10 @@
 
 /* On mobile stacked layout, center the labels */
 @media (max-width: 480px) {
+  .concept-b-rings-card {
+    padding: 20px 16px;
+  }
+
   .concept-b-ring-labels {
     width: 100%;
   }
@@ -197,16 +216,23 @@
 
 
 /* =============================================================================
-   5. RING ENTRANCE ANIMATION — Initial draw on mount
+   5. STICKY FIX — Override overflow-hidden on ancestor
+   
+   MainApp renders the content inside:
+     <div class="max-w-7xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden">
+   
+   overflow:hidden creates a new scroll container which prevents 
+   position:sticky from working on the DayTabBar inside it.
+   
+   FIX: Override to overflow:clip which provides the same visual
+   clipping for border-radius but does NOT create a scroll container,
+   allowing position:sticky to work correctly.
+   
+   overflow:clip is supported in Chrome 90+, Firefox 81+, Safari 16+.
    ============================================================================= */
 
-@keyframes conceptBRingDraw {
-  from {
-    stroke-dashoffset: var(--ring-circ);
-  }
-  to {
-    stroke-dashoffset: var(--ring-target);
-  }
+.max-w-7xl.overflow-hidden {
+  overflow: clip !important;
 }
 
 
