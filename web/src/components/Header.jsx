@@ -1,5 +1,5 @@
 // web/src/components/Header.jsx
-// Modified to include "My Saved Plans" menu item
+// Modified to display user name instead of userId, and include "My Saved Plans" menu item
 
 import React, { useState, useEffect } from 'react';
 import { ChefHat, Menu, X, User, Settings, LogOut, Bookmark } from 'lucide-react';
@@ -9,8 +9,13 @@ import { APP_CONFIG } from '../constants';
 /**
  * Main app header with branding, user menu, and scroll behavior
  * Becomes compact when user scrolls down
+ *
+ * Props:
+ *  - userId       {string}  Firebase UID (used for sign-out gating)
+ *  - userName     {string}  Display name from formData.name (About You)
+ *  - onOpenSettings, onNavigateToProfile, onSignOut, onOpenSavedPlans
  */
-const Header = ({ userId, onOpenSettings, onNavigateToProfile, onSignOut, onOpenSavedPlans }) => {
+const Header = ({ userId, userName, onOpenSettings, onNavigateToProfile, onSignOut, onOpenSavedPlans }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -23,6 +28,13 @@ const Header = ({ userId, onOpenSettings, onNavigateToProfile, onSignOut, onOpen
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // Derive display name: prefer userName from profile, fall back gracefully
+  const displayName = (() => {
+    if (userName && userName.trim()) return userName.trim();
+    if (userId && userId.startsWith('local_')) return 'Local User';
+    return userId || 'User';
+  })();
 
   return (
     <>
@@ -109,7 +121,7 @@ const Header = ({ userId, onOpenSettings, onNavigateToProfile, onSignOut, onOpen
                     className="text-sm font-semibold truncate"
                     style={{ color: COLORS.gray[900] }}
                   >
-                    {userId.startsWith('local_') ? 'Local User' : userId}
+                    {displayName}
                   </p>
                 </div>
               )}
@@ -130,7 +142,7 @@ const Header = ({ userId, onOpenSettings, onNavigateToProfile, onSignOut, onOpen
                 <span style={{ color: COLORS.gray[900] }}>Edit Profile</span>
               </button>
 
-              {/* My Saved Plans - NEW */}
+              {/* My Saved Plans */}
               <button
                 onClick={() => {
                   setIsMenuOpen(false);
