@@ -1,12 +1,13 @@
 // web/src/components/ShoppingListWithDetails.jsx
-// FIX v3: Two critical fixes for "View Product" detail display.
+// FIXED: Product detail modal now displays correctly when "View Product" is clicked
 //
-// BUG 1 (Critical): isOpen prop was `!selectedProductModal` — always false when
-//   a product is selected. Changed to `!!selectedProductModal`.
+// BUG 1 (Critical): isOpen prop was `!selectedProductModal` — this inverted boolean meant
+//   the modal would CLOSE when a product was selected and OPEN when nothing was selected.
+//   Changed to `!!selectedProductModal` to properly convert to boolean.
 //
-// BUG 2 (Resilience): modalProductData silently returned null when data lookup
-//   hit any of 3 early-exit paths. Hardened with layered fallbacks so the modal
-//   opens even with partial data (showing the error state if needed).
+// BUG 2 (Resilience): modalProductData returned null silently when data lookup failed,
+//   leaving users with no visual feedback. Now provides fallback error-state data so
+//   modal always opens and can display appropriate error messages.
 
 import React, { useState, useMemo } from 'react';
 import { 
@@ -63,13 +64,10 @@ const ShoppingListWithDetails = ({
     
     Object.entries(categorizedResults).forEach(([category, items]) => {
       items.forEach(({ normalizedKey, ingredient, ...result }) => {
-        // Prefer live results prop (updated by substitute/quantity handlers)
-        // over the snapshot baked into categorizedResults.
         const freshResult = results[normalizedKey] || result;
         const allProducts = freshResult.allProducts || freshResult.products || [];
         const selectedIndex = freshResult.selectedIndex || 0;
 
-        // Resolve current product: URL-match first, then index, then first item
         let selectedProduct = null;
         if (freshResult.currentSelectionURL) {
           selectedProduct = allProducts.find(p => p && p.url === freshResult.currentSelectionURL);
@@ -159,25 +157,18 @@ const ShoppingListWithDetails = ({
 
   // ============================================================================
   // MODAL DATA
-  // FIX v3: Hardened with layered fallbacks. Previously returned null silently
-  // when any lookup step failed, leaving the user with no feedback.
-  // Now: always returns *something* when selectedProductModal is set, so the
-  // modal can at least render its error/empty state.
+  // FIX v3: Hardened with layered fallbacks to ensure modal always receives data
   // ============================================================================
   const modalProductData = useMemo(() => {
     if (!selectedProductModal) return null;
     
-    // Step 1: Find product in local products list (built from categorizedResults)
     const product = products.find(p => p.normalizedKey === selectedProductModal);
     
-    // Step 2: Get the freshest result — try results prop first, then product cache
     const freshResult = results[selectedProductModal]
       || (product && results[product.normalizedKey])
       || (product && product.result)
       || null;
 
-    // Step 3: If we have zero data, return a minimal error-state object so the
-    // modal still opens and shows "Product Not Found" instead of nothing.
     if (!freshResult) {
       console.warn('[SHOPPING_LIST] Modal: no result data for key:', selectedProductModal);
       return {
@@ -193,7 +184,6 @@ const ShoppingListWithDetails = ({
 
     const allProducts = freshResult.allProducts || freshResult.products || (product?.allProducts) || [];
     
-    // Step 4: If no products array at all, still open with error state
     if (allProducts.length === 0) {
       console.warn('[SHOPPING_LIST] Modal: empty allProducts for:', selectedProductModal);
       return {
@@ -207,7 +197,6 @@ const ShoppingListWithDetails = ({
       };
     }
 
-    // Step 5: Resolve current selection by URL (authoritative), then index, then first
     let currentSelection = null;
     if (freshResult.currentSelectionURL) {
       currentSelection = allProducts.find(p => p && p.url === freshResult.currentSelectionURL);
@@ -217,14 +206,12 @@ const ShoppingListWithDetails = ({
       currentSelection = allProducts[idx] || allProducts[0];
     }
     
-    // Step 6: Find cheapest by unit price
     const cheapest = allProducts.reduce((best, current) => {
       if (!current) return best;
       return (current.unit_price_per_100 ?? Infinity) < (best?.unit_price_per_100 ?? Infinity) 
         ? current : best;
     }, allProducts[0]);
     
-    // Step 7: Build substitutes excluding current selection
     const substitutes = allProducts
       .filter(p => p && p.url !== currentSelection?.url)
       .sort((a, b) => (a.unit_price_per_100 ?? Infinity) - (b.unit_price_per_100 ?? Infinity))
@@ -315,7 +302,6 @@ const ShoppingListWithDetails = ({
         borderRadius: '0 0 24px 24px',
         boxShadow: '0 4px 20px rgba(102, 126, 234, 0.25)',
       }}>
-        {/* Store Name */}
         <div style={{
           fontSize: '14px',
           fontWeight: '500',
@@ -326,7 +312,6 @@ const ShoppingListWithDetails = ({
           {actualStoreName}
         </div>
 
-        {/* Title & Cost */}
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -369,7 +354,6 @@ const ShoppingListWithDetails = ({
           </div>
         </div>
 
-        {/* Action Buttons */}
         <div style={{
           display: 'flex',
           gap: '8px',
@@ -408,7 +392,6 @@ const ShoppingListWithDetails = ({
 
       {/* MAIN CONTENT */}
       <div style={{ padding: '20px 16px' }}>
-        {/* Category Filter Pills */}
         <div style={{ marginBottom: '20px' }}>
           <div 
             className="shopping-category-pills"
@@ -451,7 +434,6 @@ const ShoppingListWithDetails = ({
           </div>
         </div>
 
-        {/* INGREDIENT CARDS */}
         <div style={{
           display: 'flex',
           flexDirection: 'column',
@@ -504,9 +486,7 @@ const ShoppingListWithDetails = ({
         </div>
       </div>
 
-      {/* PRODUCT DETAIL MODAL
-          FIX v3: isOpen changed from `!selectedProductModal` to `!!selectedProductModal`.
-          The negation meant the modal was told to CLOSE whenever a product was selected. */}
+      {/* PRODUCT DETAIL MODAL - CRITICAL FIX: Changed isOpen from !selectedProductModal to !!selectedProductModal */}
       {modalProductData && (
         <ProductDetailModal
           isOpen={!!selectedProductModal}
