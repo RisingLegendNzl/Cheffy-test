@@ -2,9 +2,16 @@
 // =============================================================================
 // ShoppingListWithDetails — Shopping list with product cards and detail modal
 //
-// CRITICAL FIX: Changed ProductDetailModal isOpen prop from !selectedProductModal
-// to !!selectedProductModal — the inverted boolean was causing the modal to
-// close when a product was selected and open when nothing was selected.
+// FIXES APPLIED:
+// 1. KEY LOOKUP: Use item.normalizedKey (from backend normalizeKey()) instead
+//    of item.originalIngredient.toLowerCase().trim() — the results object is
+//    keyed by snake_case normalizedKey, not by lowercase original ingredient.
+//    This was the primary cause of most products not appearing.
+// 2. PRICE FILTER REMOVED: The old .filter(p => p.price !== null) silently
+//    dropped every ingredient whose lookup failed or had price=0.
+//    All ingredients now render; items without price show "N/A".
+// 3. PRICE=0 FIX: parseFloat guard now treats 0 as a valid price.
+// 4. isOpen PROP: Confirmed !!selectedProductModal (not inverted).
 // =============================================================================
 
 import React, { useState, useMemo } from 'react';
@@ -53,15 +60,23 @@ const ShoppingListWithDetails = ({
   // Transform ingredients into product cards
   const products = useMemo(() => {
     return ingredients.map((item, idx) => {
-      const normalizedKey = item.originalIngredient?.toLowerCase().trim();
+      // FIX 1: Use item.normalizedKey (backend snake_case key) for the results lookup.
+      // The old code did item.originalIngredient?.toLowerCase().trim() which produced
+      // "chicken breast" but results is keyed by "chicken_breast". This mismatch
+      // caused most items to silently fail the lookup and get filtered out.
+      const normalizedKey = item.normalizedKey || item.originalIngredient?.toLowerCase().trim();
       const result = results[normalizedKey] || {};
       const allProducts = result.allProducts || result.products || [];
       const selectedIndex = result.selectedIndex ?? 0;
       const selectedProduct = allProducts[selectedIndex];
 
-      const price = selectedProduct?.price ?? selectedProduct?.current_price ?? selectedProduct?.product_price;
+      const rawPrice = selectedProduct?.price ?? selectedProduct?.current_price ?? selectedProduct?.product_price;
       const size = selectedProduct?.size || selectedProduct?.product_size || selectedProduct?.package_size;
       
+      // FIX 3: parseFloat properly — treat 0 as a valid price, only null/undefined/NaN → null
+      const parsedPrice = rawPrice != null ? parseFloat(rawPrice) : null;
+      const price = (parsedPrice !== null && !isNaN(parsedPrice)) ? parsedPrice : null;
+
       // Find absolute cheapest
       const cheapest = allProducts.reduce((best, current) => {
         if (!current) return best;
@@ -70,18 +85,20 @@ const ShoppingListWithDetails = ({
         return currentPrice < bestPrice ? current : best;
       }, allProducts[0]);
 
-      const isCheapest = selectedProduct?.url === cheapest?.url;
+      const isCheapest = selectedProduct && cheapest && selectedProduct?.url === cheapest?.url;
 
       return {
         id: `${normalizedKey}-${idx}`,
         normalizedKey,
         name: item.originalIngredient || 'Unknown',
-        price: price ? parseFloat(price) : null,
+        price,
         size,
         cheapest: isCheapest,
         category: item.category || 'uncategorized',
       };
-    }).filter(p => p.price !== null);
+    });
+    // FIX 2: No .filter(p => p.price !== null) — show ALL ingredients,
+    // even those without a resolved price. IngredientCard handles null price gracefully.
   }, [ingredients, results]);
 
   // Categorize products
@@ -405,7 +422,7 @@ const ShoppingListWithDetails = ({
         )}
       </div>
 
-      {/* Product Detail Modal - FIXED: isOpen is now !!selectedProductModal instead of !selectedProductModal */}
+      {/* Product Detail Modal — FIX 4: isOpen is !!selectedProductModal (not inverted) */}
       {modalProductData && (
         <ProductDetailModal
           isOpen={!!selectedProductModal}
