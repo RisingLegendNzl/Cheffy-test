@@ -2,15 +2,22 @@
 // =============================================================================
 // ProductDetailModal — Full-screen product detail overlay
 //
+// FIX: Renders via ReactDOM.createPortal to document.body so the modal
+// escapes any ancestor overflow:hidden / overflow:clip / transform
+// containers that were clipping it to a partial viewport height.
+//
 // FIXES APPLIED:
-// 1. Added visible 3.5px colored top border matching RecipeModal
-// 2. Fixed total cost calculation to properly multiply quantity × unit price
-// 3. Proper viewport encapsulation using RecipeModal scroll pattern
-// 4. Independent scrolling with touch-action:pan-y
-// 5. z-index 9998 for proper layering
+// 1. Portal rendering — modal is no longer trapped by parent layout
+// 2. Full viewport coverage using 100dvh with vh fallback
+// 3. Smooth alternatives expansion via CSS max-height transition
+// 4. Independent scrolling with overscrollBehavior:contain
+// 5. z-index 9998 for proper layering below RecipeModal (9999)
+// 6. Total cost = quantity × unit price
+// 7. 3.5px indigo top border matching RecipeModal
 // =============================================================================
 
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X, ShoppingBag, AlertTriangle, ExternalLink,
   ChevronDown, ChevronUp, Minus, Plus, Tag,
@@ -76,7 +83,7 @@ const ProductDetailModal = ({
         .pdm-card {
           max-width: 520px;
           height: auto;
-          max-height: min(85vh, 85dvh);
+          max-height: min(90vh, 90dvh);
           border-radius: 16px;
         }
       }
@@ -113,7 +120,7 @@ const ProductDetailModal = ({
 
   const totalGrams = result?.totalGramsRequired || 0;
   const quantityUnits = result?.quantityUnits || '';
-  
+
   // Calculate total cost: unit price × quantity
   const unitPrice = getPrice(currentSelection);
   const totalCost = unitPrice !== null ? unitPrice * currentQuantity : null;
@@ -122,7 +129,8 @@ const ProductDetailModal = ({
     if (e.target === e.currentTarget) onClose();
   };
 
-  return (
+  // ── Modal content (rendered via portal) ──
+  const modalContent = (
     <>
       {/* Full-screen overlay */}
       <div
@@ -141,7 +149,7 @@ const ProductDetailModal = ({
           padding: 0,
         }}
       >
-        {/* Modal card with visible border */}
+        {/* Modal card */}
         <div
           className="pdm-card"
           onClick={(e) => e.stopPropagation()}
@@ -286,23 +294,21 @@ const ProductDetailModal = ({
                       disabled={currentQuantity <= 1}
                       style={{
                         width: 36, height: 36, borderRadius: '8px',
-                        border: '2px solid #f59e0b', 
+                        border: '2px solid #f59e0b',
                         background: currentQuantity <= 1 ? '#f3f4f6' : '#ffffff',
                         color: currentQuantity <= 1 ? '#9ca3af' : '#92400e',
                         cursor: currentQuantity <= 1 ? 'not-allowed' : 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         transition: 'all 0.15s',
                       }}
-                      onMouseEnter={(e) => { if (currentQuantity > 1) e.currentTarget.style.background = '#fef3c7'; }}
-                      onMouseLeave={(e) => { if (currentQuantity > 1) e.currentTarget.style.background = '#ffffff'; }}
                     >
                       <Minus size={16} />
                     </button>
                     <div style={{
                       fontSize: '32px', fontWeight: 800, color: '#78350f',
-                      fontVariantNumeric: 'tabular-nums', minWidth: '60px', textAlign: 'center',
+                      fontVariantNumeric: 'tabular-nums', minWidth: '48px', textAlign: 'center',
                     }}>
-                      {currentQuantity || 1}
+                      {currentQuantity}
                     </div>
                     <button
                       onClick={() => onQuantityChange?.(normalizedKey, currentQuantity + 1)}
@@ -319,7 +325,7 @@ const ProductDetailModal = ({
                       <Plus size={16} />
                     </button>
                   </div>
-                  
+
                   {/* Total Cost Display */}
                   {totalCost !== null && (
                     <div style={{
@@ -331,18 +337,13 @@ const ProductDetailModal = ({
                       alignItems: 'center',
                     }}>
                       <span style={{
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        color: '#92400e',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.3px',
+                        fontSize: '13px', fontWeight: 600, color: '#92400e',
+                        textTransform: 'uppercase', letterSpacing: '0.3px',
                       }}>
                         Total Cost
                       </span>
                       <span style={{
-                        fontSize: '24px',
-                        fontWeight: 800,
-                        color: '#78350f',
+                        fontSize: '24px', fontWeight: 800, color: '#78350f',
                         fontVariantNumeric: 'tabular-nums',
                       }}>
                         ${totalCost.toFixed(2)}
@@ -443,7 +444,7 @@ const ProductDetailModal = ({
                   )}
                 </div>
 
-                {/* Alternatives */}
+                {/* Alternatives — smooth expand/collapse via CSS transition */}
                 {substitutes && substitutes.length > 0 && (
                   <div style={{ marginBottom: '20px' }}>
                     <button
@@ -458,11 +459,25 @@ const ProductDetailModal = ({
                       }}
                     >
                       <span>Alternatives ({substitutes.length})</span>
-                      {showAlternatives ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                      <ChevronDown
+                        size={20}
+                        style={{
+                          transition: 'transform 0.25s ease',
+                          transform: showAlternatives ? 'rotate(180deg)' : 'rotate(0deg)',
+                        }}
+                      />
                     </button>
 
-                    {showAlternatives && (
-                      <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {/* Wrapper with CSS max-height transition to prevent layout jumps */}
+                    <div
+                      className="pdm-alternatives-drawer"
+                      style={{
+                        overflow: 'hidden',
+                        maxHeight: showAlternatives ? `${substitutes.length * 200}px` : '0px',
+                        transition: 'max-height 0.3s ease-in-out',
+                      }}
+                    >
+                      <div style={{ paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {substitutes.map((sub, idx) => {
                           const subPrice = getPrice(sub);
                           const subSize = getSize(sub);
@@ -557,7 +572,7 @@ const ProductDetailModal = ({
                           );
                         })}
                       </div>
-                    )}
+                    </div>
                   </div>
                 )}
               </>
@@ -585,6 +600,9 @@ const ProductDetailModal = ({
       `}</style>
     </>
   );
+
+  // Portal to document.body — escapes all parent overflow/transform constraints
+  return createPortal(modalContent, document.body);
 };
 
 export default ProductDetailModal;
