@@ -5,7 +5,7 @@ import { useInView } from '../../hooks/useResponsive';
 
 /**
  * Pricing Section Component
- * Clean editorial pricing cards — warm organic palette
+ * Clean editorial pricing cards — theme aligned to Cheffy app indigo/purple palette
  */
 const PricingSection = ({ onGetStarted }) => {
   const sectionRef = useRef(null);
@@ -44,7 +44,7 @@ const PricingSection = ({ onGetStarted }) => {
       id="pricing"
       ref={sectionRef}
       className="py-20 md:py-28"
-      style={{ backgroundColor: '#FAFAF7' }}
+      style={{ backgroundColor: '#f9fafb' }}
     >
       <div className="max-w-7xl mx-auto px-5 md:px-10">
         {/* Section Header */}
@@ -58,7 +58,7 @@ const PricingSection = ({ onGetStarted }) => {
           <span
             className="text-xs font-semibold tracking-widest uppercase block mb-4"
             style={{
-              color: '#2D6A4F',
+              color: '#6366f1',
               fontFamily: "'Georgia', serif",
               letterSpacing: '0.12em',
             }}
@@ -77,7 +77,7 @@ const PricingSection = ({ onGetStarted }) => {
           >
             Simple, transparent
             <br />
-            <span style={{ color: '#2D6A4F' }}>pricing for everyone</span>
+            <span style={{ color: '#6366f1' }}>pricing for everyone</span>
           </h2>
           <p
             className="text-base md:text-lg max-w-xl mx-auto"
@@ -106,18 +106,18 @@ const PricingSection = ({ onGetStarted }) => {
               key={plan.name}
               className="relative rounded-2xl p-7 md:p-8 transition-all duration-300"
               style={{
-                backgroundColor: plan.isPrimary ? '#2D6A4F' : '#FFFFFF',
+                backgroundColor: plan.isPrimary ? '#4f46e5' : '#FFFFFF',
                 border: plan.isPrimary
-                  ? '1px solid #2D6A4F'
+                  ? '1px solid #4f46e5'
                   : '1px solid rgba(0,0,0,0.08)',
                 boxShadow: plan.isPrimary
-                  ? '0 16px 48px -8px rgba(45, 106, 79, 0.25)'
+                  ? '0 16px 48px -8px rgba(79, 70, 229, 0.3)'
                   : 'none',
               }}
               onMouseEnter={(e) => {
                 if (!plan.isPrimary) {
                   e.currentTarget.style.boxShadow =
-                    '0 10px 30px -6px rgba(0,0,0,0.07)';
+                    '0 10px 30px -6px rgba(99,102,241,0.1)';
                   e.currentTarget.style.transform = 'translateY(-2px)';
                 }
               }}
@@ -133,7 +133,7 @@ const PricingSection = ({ onGetStarted }) => {
                 <div
                   className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-xs font-bold"
                   style={{
-                    backgroundColor: '#D4A373',
+                    backgroundColor: '#a855f7',
                     color: '#FFFFFF',
                     fontFamily: "'Georgia', serif",
                     letterSpacing: '0.03em',
@@ -201,8 +201,8 @@ const PricingSection = ({ onGetStarted }) => {
                 style={{
                   backgroundColor: plan.isPrimary
                     ? '#FFFFFF'
-                    : '#2D6A4F',
-                  color: plan.isPrimary ? '#2D6A4F' : '#FFFFFF',
+                    : '#6366f1',
+                  color: plan.isPrimary ? '#4f46e5' : '#FFFFFF',
                   fontFamily: "'Georgia', serif",
                 }}
                 onMouseEnter={(e) => {
@@ -255,7 +255,7 @@ const PricingSection = ({ onGetStarted }) => {
                       size={16}
                       className="flex-shrink-0"
                       style={{
-                        color: plan.isPrimary ? '#A3D9B1' : '#2D6A4F',
+                        color: plan.isPrimary ? '#c7d2fe' : '#6366f1',
                       }}
                     />
                     <span
