@@ -3,12 +3,11 @@
 // ProductDetailModal — Full-screen product detail overlay
 //
 // FIXES APPLIED:
-// 1. Modal now properly fills the viewport on all screen sizes
-// 2. Independent scrolling within the modal content area
-// 3. z-index 9998 ensures proper layering (below RecipeModal, above everything else)
-// 4. Mobile-first design: 100% viewport on mobile, centered card on desktop
-// 5. Body scroll lock prevents background scrolling on iOS/Android
-// 6. Touch-friendly scrolling with explicit touch-action:pan-y
+// 1. Added visible 3.5px colored top border matching RecipeModal
+// 2. Fixed total cost calculation to properly multiply quantity × unit price
+// 3. Proper viewport encapsulation using RecipeModal scroll pattern
+// 4. Independent scrolling with touch-action:pan-y
+// 5. z-index 9998 for proper layering
 // =============================================================================
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -43,7 +42,7 @@ const ProductDetailModal = ({
     return () => window.removeEventListener('keydown', handler);
   }, [isOpen, onClose]);
 
-  // Body scroll lock + responsive styling
+  // Body scroll lock + responsive styling (matches RecipeModal pattern)
   useEffect(() => {
     if (!isOpen) return;
 
@@ -114,6 +113,10 @@ const ProductDetailModal = ({
 
   const totalGrams = result?.totalGramsRequired || 0;
   const quantityUnits = result?.quantityUnits || '';
+  
+  // Calculate total cost: unit price × quantity
+  const unitPrice = getPrice(currentSelection);
+  const totalCost = unitPrice !== null ? unitPrice * currentQuantity : null;
 
   const handleBackdropClick = (e) => {
     if (e.target === e.currentTarget) onClose();
@@ -138,7 +141,7 @@ const ProductDetailModal = ({
           padding: 0,
         }}
       >
-        {/* Modal card */}
+        {/* Modal card with visible border */}
         <div
           className="pdm-card"
           onClick={(e) => e.stopPropagation()}
@@ -147,12 +150,12 @@ const ProductDetailModal = ({
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            borderTop: '3px solid #6366f1',
+            borderTop: '3.5px solid #6366f1',
             boxShadow: '0 0 0 1px rgba(99,102,241,0.12), 0 24px 48px -12px rgba(0,0,0,0.3)',
             fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
           }}
         >
-          {/* Header - pinned */}
+          {/* Header - pinned, never scrolls */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -161,14 +164,16 @@ const ProductDetailModal = ({
             padding: '1rem 1.25rem',
             paddingTop: 'max(1rem, calc(env(safe-area-inset-top, 0px) + 0.5rem))',
             borderBottom: '1px solid #e5e7eb',
+            background: '#ffffff',
             flexShrink: 0,
-            minHeight: '60px',
+            minHeight: '64px',
+            zIndex: 2,
           }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h2 style={{
-                fontSize: '1.15rem',
+                fontSize: '1.2rem',
                 fontWeight: 700,
-                color: '#0f172a',
+                color: '#111827',
                 margin: 0,
                 lineHeight: 1.3,
                 overflow: 'hidden',
@@ -194,7 +199,7 @@ const ProductDetailModal = ({
               onClick={onClose}
               aria-label="Close"
               style={{
-                width: 40, height: 40, minWidth: 40,
+                width: 40, height: 40, minWidth: 40, minHeight: 40,
                 borderRadius: '50%',
                 border: '2px solid #e5e7eb',
                 background: '#f3f4f6',
@@ -207,7 +212,7 @@ const ProductDetailModal = ({
               onMouseEnter={(e) => { e.currentTarget.style.background = '#e5e7eb'; e.currentTarget.style.borderColor = '#d1d5db'; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = '#f3f4f6'; e.currentTarget.style.borderColor = '#e5e7eb'; }}
             >
-              <X size={18} color="#64748b" />
+              <X size={20} color="#374151" strokeWidth={2.5} />
             </button>
           </div>
 
@@ -222,8 +227,8 @@ const ProductDetailModal = ({
               WebkitOverflowScrolling: 'touch',
               overscrollBehavior: 'contain',
               touchAction: 'pan-y',
-              padding: '1.25rem',
-              paddingBottom: 'max(1.25rem, calc(1.25rem + env(safe-area-inset-bottom, 0px)))',
+              padding: '1.5rem',
+              paddingBottom: 'max(2rem, calc(2rem + env(safe-area-inset-bottom, 0px)))',
             }}
           >
             {isFailed ? (
@@ -278,16 +283,20 @@ const ProductDetailModal = ({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <button
                       onClick={() => onQuantityChange?.(normalizedKey, Math.max(1, currentQuantity - 1))}
+                      disabled={currentQuantity <= 1}
                       style={{
                         width: 36, height: 36, borderRadius: '8px',
-                        border: '2px solid #f59e0b', background: '#ffffff',
+                        border: '2px solid #f59e0b', 
+                        background: currentQuantity <= 1 ? '#f3f4f6' : '#ffffff',
+                        color: currentQuantity <= 1 ? '#9ca3af' : '#92400e',
+                        cursor: currentQuantity <= 1 ? 'not-allowed' : 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        cursor: 'pointer', transition: 'all 0.15s',
+                        transition: 'all 0.15s',
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = '#fef3c7'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = '#ffffff'; }}
+                      onMouseEnter={(e) => { if (currentQuantity > 1) e.currentTarget.style.background = '#fef3c7'; }}
+                      onMouseLeave={(e) => { if (currentQuantity > 1) e.currentTarget.style.background = '#ffffff'; }}
                     >
-                      <Minus size={16} color="#92400e" />
+                      <Minus size={16} />
                     </button>
                     <div style={{
                       fontSize: '32px', fontWeight: 800, color: '#78350f',
@@ -300,15 +309,46 @@ const ProductDetailModal = ({
                       style={{
                         width: 36, height: 36, borderRadius: '8px',
                         border: '2px solid #f59e0b', background: '#ffffff',
+                        color: '#92400e', cursor: 'pointer',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        cursor: 'pointer', transition: 'all 0.15s',
+                        transition: 'all 0.15s',
                       }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = '#fef3c7'; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = '#ffffff'; }}
                     >
-                      <Plus size={16} color="#92400e" />
+                      <Plus size={16} />
                     </button>
                   </div>
+                  
+                  {/* Total Cost Display */}
+                  {totalCost !== null && (
+                    <div style={{
+                      marginTop: '12px',
+                      paddingTop: '12px',
+                      borderTop: '1px solid #fde68a',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                    }}>
+                      <span style={{
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        color: '#92400e',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.3px',
+                      }}>
+                        Total Cost
+                      </span>
+                      <span style={{
+                        fontSize: '24px',
+                        fontWeight: 800,
+                        color: '#78350f',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        ${totalCost.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Selected Product */}
@@ -341,7 +381,7 @@ const ProductDetailModal = ({
                         {currentSelection.name || currentSelection.product_name || 'Product'}
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
-                        {getPrice(currentSelection) !== null && (
+                        {unitPrice !== null && (
                           <div style={{
                             display: 'inline-flex', alignItems: 'center', gap: '4px',
                             background: '#dcfce7', color: '#166534',
@@ -349,7 +389,7 @@ const ProductDetailModal = ({
                             fontSize: '13px', fontWeight: 600,
                           }}>
                             <Tag size={12} />
-                            ${getPrice(currentSelection).toFixed(2)}
+                            ${unitPrice.toFixed(2)}
                           </div>
                         )}
                         {getSize(currentSelection) && (
