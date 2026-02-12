@@ -1,6 +1,6 @@
 // web/src/components/MealPlanDisplay.jsx
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { BookOpen, Target, CheckCircle, AlertTriangle, Soup, Droplet, Wheat, Copy } from 'lucide-react';
+import { BookOpen, Target, CheckCircle, AlertTriangle, Soup, Droplet, Wheat, Copy, ChevronLeft, ChevronRight } from 'lucide-react';
 import { COLORS } from '../constants';
 import { exportMealPlanToClipboard } from '../utils/mealPlanExporter';
 
@@ -318,11 +318,182 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// MEAL PLAN DISPLAY — Main component
+// INLINE DAY SELECTOR — Compact pill-based day switcher
+//
+// Renders only when totalDays > 1. Uses horizontally scrollable
+// pills with arrow navigation for accessibility. Visually
+// connected to the active day via gradient highlight + scale.
 // ─────────────────────────────────────────────────────────────
 
-const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals, onToggleMealEaten, onViewRecipe, showToast }) => {
+const InlineDaySelector = ({ totalDays, selectedDay, onSelectDay }) => {
+    const scrollRef = useRef(null);
+
+    // Auto-scroll to keep active pill visible
+    useEffect(() => {
+        if (!scrollRef.current) return;
+        const activeBtn = scrollRef.current.querySelector('[data-active="true"]');
+        if (activeBtn) {
+            activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        }
+    }, [selectedDay]);
+
+    const canGoPrev = selectedDay > 1;
+    const canGoNext = selectedDay < totalDays;
+
+    return (
+        <div className="mealplan-day-selector">
+            {/* Arrow Left */}
+            <button
+                onClick={() => canGoPrev && onSelectDay(selectedDay - 1)}
+                disabled={!canGoPrev}
+                className="mealplan-day-selector__arrow"
+                style={{
+                    opacity: canGoPrev ? 1 : 0.3,
+                    cursor: canGoPrev ? 'pointer' : 'not-allowed',
+                }}
+                aria-label="Previous day"
+            >
+                <ChevronLeft size={18} />
+            </button>
+
+            {/* Scrollable pill track */}
+            <div
+                ref={scrollRef}
+                className="mealplan-day-selector__track"
+            >
+                {Array.from({ length: totalDays }, (_, i) => i + 1).map((day) => {
+                    const isActive = day === selectedDay;
+                    return (
+                        <button
+                            key={day}
+                            data-active={isActive}
+                            onClick={() => onSelectDay(day)}
+                            className={`mealplan-day-selector__pill ${isActive ? 'mealplan-day-selector__pill--active' : ''}`}
+                        >
+                            Day {day}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {/* Arrow Right */}
+            <button
+                onClick={() => canGoNext && onSelectDay(selectedDay + 1)}
+                disabled={!canGoNext}
+                className="mealplan-day-selector__arrow"
+                style={{
+                    opacity: canGoNext ? 1 : 0.3,
+                    cursor: canGoNext ? 'pointer' : 'not-allowed',
+                }}
+                aria-label="Next day"
+            >
+                <ChevronRight size={18} />
+            </button>
+
+            {/* Scoped styles for the day selector */}
+            <style>{`
+                .mealplan-day-selector {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 12px 0;
+                }
+
+                .mealplan-day-selector__arrow {
+                    flex-shrink: 0;
+                    width: 32px;
+                    height: 32px;
+                    border-radius: 50%;
+                    border: 1px solid #e5e7eb;
+                    background: #ffffff;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: #6366f1;
+                    transition: all 0.2s ease;
+                }
+
+                .mealplan-day-selector__arrow:not(:disabled):hover {
+                    background: #eef2ff;
+                    border-color: #c7d2fe;
+                    transform: scale(1.08);
+                }
+
+                .mealplan-day-selector__arrow:not(:disabled):active {
+                    transform: scale(0.95);
+                }
+
+                .mealplan-day-selector__track {
+                    display: flex;
+                    gap: 8px;
+                    overflow-x: auto;
+                    flex: 1;
+                    padding: 4px 2px;
+                    scroll-behavior: smooth;
+                    -ms-overflow-style: none;
+                    scrollbar-width: none;
+                }
+
+                .mealplan-day-selector__track::-webkit-scrollbar {
+                    display: none;
+                }
+
+                .mealplan-day-selector__pill {
+                    flex-shrink: 0;
+                    padding: 6px 16px;
+                    border-radius: 20px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    border: 1.5px solid #e5e7eb;
+                    background: #ffffff;
+                    color: #4b5563;
+                    cursor: pointer;
+                    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+                    white-space: nowrap;
+                }
+
+                .mealplan-day-selector__pill:hover:not(.mealplan-day-selector__pill--active) {
+                    border-color: #c7d2fe;
+                    background: #f5f3ff;
+                    color: #4338ca;
+                    transform: translateY(-1px);
+                }
+
+                .mealplan-day-selector__pill--active {
+                    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+                    color: #ffffff;
+                    border-color: transparent;
+                    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+                    transform: scale(1.05);
+                }
+
+                .mealplan-day-selector__pill:active {
+                    transform: scale(0.96);
+                }
+
+                @media (prefers-reduced-motion: reduce) {
+                    .mealplan-day-selector__pill,
+                    .mealplan-day-selector__arrow {
+                        transition: none !important;
+                    }
+                }
+            `}</style>
+        </div>
+    );
+};
+
+
+// ─────────────────────────────────────────────────────────────
+// MEAL PLAN DISPLAY — Main component
+//
+// FIX: Added `setSelectedDay` to destructured props so the day
+// selector can be rendered and day switching works correctly.
+// ─────────────────────────────────────────────────────────────
+
+const MealPlanDisplay = ({ mealPlan, selectedDay, setSelectedDay, nutritionalTargets, eatenMeals, onToggleMealEaten, onViewRecipe, showToast }) => {
     const [copying, setCopying] = useState(false);
+
+    const totalDays = mealPlan ? mealPlan.length : 0;
 
     // ── CRITICAL BOUNDS CHECK ──
     if (!mealPlan || mealPlan.length === 0) {
@@ -447,6 +618,15 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
                 </button>
             </div>
 
+            {/* ════════ Day Selector — only when multiple days ════════ */}
+            {totalDays > 1 && setSelectedDay && (
+                <InlineDaySelector
+                    totalDays={totalDays}
+                    selectedDay={selectedDay}
+                    onSelectDay={setSelectedDay}
+                />
+            )}
+
             {/* ════════ Concept B: Concentric Rings Progress Card ════════ */}
             <ConcentricRingsCard
                 calories={dailyMacrosEaten.calories}
@@ -468,42 +648,23 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
 
                     return (
                         <div
-                            key={`${meal.name}-${index}`}
-                            className={`p-5 rounded-xl border-2 transition-all ${
-                                mealEaten
-                                    ? 'bg-green-50 border-green-300 opacity-60'
-                                    : 'bg-white border-gray-200 hover:border-indigo-300 hover:shadow-lg'
-                            }`}
+                            key={`${selectedDay}-${meal.name}-${index}`}
+                            className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 transition-all duration-200 hover:shadow-md"
                         >
-                            <div className="flex items-start justify-between mb-3">
-                                <div className="flex-1">
-                                    <h4 className="text-xl font-bold text-gray-900 mb-1">
-                                        {meal.name}
-                                    </h4>
-                                    {meal.description && (
-                                        <p className="text-sm text-gray-600 mb-2">
-                                            {meal.description}
-                                        </p>
-                                    )}
-                                    <div className="flex flex-wrap gap-3 text-sm">
-                                        <span className="px-3 py-1 bg-indigo-100 text-indigo-800 rounded-full font-semibold">
-                                            {Math.round(meal.subtotal_kcal || 0)} kcal
-                                        </span>
-                                        <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full font-semibold">
-                                            P: {Math.round(meal.subtotal_protein || 0)}g
-                                        </span>
-                                        <span className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full font-semibold">
-                                            F: {Math.round(meal.subtotal_fat || 0)}g
-                                        </span>
-                                        <span className="px-3 py-1 bg-green-100 text-green-800 rounded-full font-semibold">
-                                            C: {Math.round(meal.subtotal_carbs || 0)}g
-                                        </span>
-                                    </div>
+                            {/* Meal Header */}
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 uppercase tracking-wide">
+                                        {meal.type || 'Meal'}
+                                    </span>
+                                    <h4 className="font-bold text-gray-900 text-lg">{meal.name}</h4>
                                 </div>
-
                                 <button
-                                    onClick={() => onToggleMealEaten && onToggleMealEaten(selectedDay, meal.name)}
-                                    className={`ml-4 p-2 rounded-full transition-all ${
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onToggleMealEaten && onToggleMealEaten(selectedDay, meal.name);
+                                    }}
+                                    className={`p-2 rounded-full transition-all duration-200 ${
                                         mealEaten
                                             ? 'bg-green-500 text-white'
                                             : 'bg-gray-200 text-gray-400 hover:bg-gray-300'
