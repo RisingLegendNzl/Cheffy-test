@@ -5,7 +5,7 @@ import { useInView } from '../../hooks/useResponsive';
 
 /**
  * Features Section Component
- * Bento-grid inspired layout with warm editorial aesthetic
+ * Bento-grid inspired layout — theme aligned to Cheffy app indigo/purple palette
  */
 const FeaturesSection = () => {
   const features = [
@@ -14,8 +14,8 @@ const FeaturesSection = () => {
       title: 'AI Meal Generation',
       description:
         'Intelligent suggestions shaped by your preferences, restrictions, and nutritional targets — no two plans are the same.',
-      accent: '#2D6A4F',
-      accentBg: 'rgba(45, 106, 79, 0.07)',
+      accent: '#6366f1',
+      accentBg: 'rgba(99, 102, 241, 0.07)',
       span: 'md:col-span-2',
     },
     {
@@ -23,8 +23,8 @@ const FeaturesSection = () => {
       title: 'Precision Macro Tracking',
       description:
         'Visual breakdowns of protein, carbs, and fats with real-time progress toward your daily goals.',
-      accent: '#D4A373',
-      accentBg: 'rgba(212, 163, 115, 0.1)',
+      accent: '#a855f7',
+      accentBg: 'rgba(168, 85, 247, 0.08)',
       span: '',
     },
     {
@@ -32,8 +32,8 @@ const FeaturesSection = () => {
       title: 'Weekly Meal Calendar',
       description:
         'Drag-and-drop meal scheduling with automatic grocery list generation based on real local prices.',
-      accent: '#BC6C25',
-      accentBg: 'rgba(188, 108, 37, 0.08)',
+      accent: '#7e22ce',
+      accentBg: 'rgba(126, 34, 206, 0.07)',
       span: '',
     },
     {
@@ -41,8 +41,8 @@ const FeaturesSection = () => {
       title: 'Goal Alignment',
       description:
         'Whether you\'re cutting, bulking, or maintaining — every plan adapts dynamically to keep you on track.',
-      accent: '#9B2226',
-      accentBg: 'rgba(155, 34, 38, 0.06)',
+      accent: '#4f46e5',
+      accentBg: 'rgba(79, 70, 229, 0.06)',
       span: 'md:col-span-2',
     },
   ];
@@ -55,7 +55,7 @@ const FeaturesSection = () => {
       id="features"
       ref={sectionRef}
       className="py-20 md:py-28 relative"
-      style={{ backgroundColor: '#FAFAF7' }}
+      style={{ backgroundColor: '#f9fafb' }}
     >
       {/* Subtle divider line */}
       <div
@@ -75,7 +75,7 @@ const FeaturesSection = () => {
           <span
             className="text-xs font-semibold tracking-widest uppercase block mb-4"
             style={{
-              color: '#2D6A4F',
+              color: '#6366f1',
               fontFamily: "'Georgia', serif",
               letterSpacing: '0.12em',
             }}
@@ -94,7 +94,7 @@ const FeaturesSection = () => {
           >
             Everything you need to
             <br />
-            <span style={{ color: '#2D6A4F' }}>master your nutrition</span>
+            <span style={{ color: '#6366f1' }}>master your nutrition</span>
           </h2>
           <p
             className="text-base md:text-lg leading-relaxed"
@@ -120,21 +120,23 @@ const FeaturesSection = () => {
                 border: '1px solid rgba(0,0,0,0.06)',
                 opacity: isInView ? 1 : 0,
                 transform: isInView ? 'translateY(0)' : 'translateY(20px)',
-                transitionDelay: `${index * 100}ms`,
+                transitionDelay: `${100 + index * 100}ms`,
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.boxShadow =
-                  '0 12px 40px -8px rgba(0,0,0,0.08)';
+                  '0 12px 32px -6px rgba(99, 102, 241, 0.08)';
                 e.currentTarget.style.transform = 'translateY(-3px)';
+                e.currentTarget.style.borderColor = `${feature.accent}22`;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.boxShadow = 'none';
                 e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.borderColor = 'rgba(0,0,0,0.06)';
               }}
             >
               {/* Icon */}
               <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center mb-5 transition-transform duration-300 group-hover:scale-110"
+                className="w-14 h-14 rounded-xl flex items-center justify-center mb-5 transition-transform duration-300 group-hover:scale-105"
                 style={{
                   backgroundColor: feature.accentBg,
                   color: feature.accent,
@@ -150,7 +152,6 @@ const FeaturesSection = () => {
                   fontFamily: "'Georgia', serif",
                   fontWeight: 700,
                   color: '#1B1B18',
-                  letterSpacing: '-0.01em',
                 }}
               >
                 {feature.title}
