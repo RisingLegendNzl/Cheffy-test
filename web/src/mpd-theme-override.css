@@ -1,0 +1,136 @@
+/* =============================================================================
+   mpd-theme-override.css
+   
+   Overrides the dark (#1a1d2a) "Your Nutrition" section card in
+   MealPlanDisplay to align with Cheffy's light indigo/purple theme.
+   
+   Import in index.jsx AFTER concept-b-rings.css:
+     import './mpd-theme-override.css';
+   
+   The scoped <style> in MealPlanDisplay uses flat class selectors,
+   so we use doubled-class specificity (.mpd-root .mpd-*) to cleanly
+   override without !important.
+   ============================================================================= */
+
+
+/* ── Section Card: dark → light glass ── */
+.mpd-root .mpd-section-card {
+  background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+  border: 1px solid #e0e7ff;
+  box-shadow:
+    0 2px 8px rgba(99, 102, 241, 0.06),
+    0 0 0 1px rgba(99, 102, 241, 0.04);
+}
+
+/* ── Header title: light text → dark text ── */
+.mpd-root .mpd-header-title {
+  color: #1f2937;
+}
+
+/* ── Header subtitle ── */
+.mpd-root .mpd-header-sub {
+  color: #6b7280;
+}
+
+/* ── Copy button: dark glass → light glass ── */
+.mpd-root .mpd-copy-btn {
+  background: rgba(99, 102, 241, 0.08);
+  border-color: rgba(99, 102, 241, 0.18);
+  color: #4f46e5;
+}
+
+.mpd-root .mpd-copy-btn:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+/* ── Calendar Strip ── */
+.mpd-root .mpd-cal-strip {
+  background: rgba(99, 102, 241, 0.04);
+  border-color: #e0e7ff;
+}
+
+/* ── Calendar Day buttons ── */
+.mpd-root .mpd-cal-day {
+  background: transparent;
+  border-color: transparent;
+}
+
+.mpd-root .mpd-cal-day:hover:not(.mpd-cal-day--active) {
+  background: rgba(99, 102, 241, 0.06);
+  border-color: rgba(99, 102, 241, 0.12);
+}
+
+/* Active day keeps its gradient — no change needed */
+
+/* ── Day-of-week label ── */
+.mpd-root .mpd-cal-dow {
+  color: #9ca3af;
+}
+
+.mpd-root .mpd-cal-day--active .mpd-cal-dow {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* ── Day number ── */
+.mpd-root .mpd-cal-num {
+  color: #374151;
+}
+
+.mpd-root .mpd-cal-day--active .mpd-cal-num {
+  color: #ffffff;
+}
+
+/* ── Eaten check dot ── */
+.mpd-root .mpd-cal-check {
+  color: #10b981;
+}
+
+.mpd-root .mpd-cal-day--active .mpd-cal-check {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+
+/* ── Neon Tiles Grid ── */
+.mpd-root .mpd-neon-grid {
+  gap: 10px;
+}
+
+/* ── Individual Neon Tiles: dark glass → frosted light ── */
+.mpd-root .mpd-neon-tile {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: #e5e7eb;
+  backdrop-filter: none;
+}
+
+.mpd-root .mpd-neon-tile:hover {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: #c7d2fe;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.08);
+}
+
+/* ── Tile label text ── */
+.mpd-root .mpd-neon-tile-label {
+  color: #6b7280;
+}
+
+/* ── Tile target subtext ── */
+.mpd-root .mpd-neon-tile-target {
+  color: #9ca3af;
+}
+
+/* ── Tile progress bar track ── */
+.mpd-root .mpd-neon-tile-bar {
+  background: #e5e7eb;
+}
+
+
+/* ── Hero tile (Calories) special treatment ── */
+.mpd-root .mpd-neon-tile--hero {
+  background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
+  border-color: #c7d2fe;
+}
+
+.mpd-root .mpd-neon-tile--hero:hover {
+  border-color: #a5b4fc;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.12);
+}
