@@ -1,20 +1,14 @@
 // web/src/components/ProductDetailModal.jsx
-// Modal for displaying full product details with:
-// - Total Needed section
-// - Units to Purchase with +/- controls
-// - Your Selection product card with price, size, price/100g, cheapest badge
-// - View Product link
-// - Show Alternatives collapsible
-// NO "Nutritional Value" section
+// FIX v3: Defensive rendering improvements.
+// - Normalises price access (price || current_price || product_price)
+// - Handles null currentSelection gracefully (shows error card, not blank modal)
+// - Product URL always displayed when available
+// - All detail sections render: Total Needed, Units to Purchase, Your Selection,
+//   Price/Size/Unit price grid, View Product link, Alternatives
 
 import React, { useEffect, useState } from 'react';
 import { X, ShoppingBag, AlertTriangle, ExternalLink, ChevronDown, ChevronUp, Minus, Plus, Tag } from 'lucide-react';
 
-/**
- * Modal/Drawer for displaying complete product details
- * Mobile: Full-height bottom sheet with smooth independent scroll
- * Desktop: Center modal
- */
 const ProductDetailModal = ({
   isOpen,
   onClose,
@@ -33,11 +27,8 @@ const ProductDetailModal = ({
   // Close on Escape key
   useEffect(() => {
     const handleEscape = (e) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-      }
+      if (e.key === 'Escape' && isOpen) onClose();
     };
-    
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
@@ -57,7 +48,6 @@ const ProductDetailModal = ({
       document.body.style.top = '';
       window.scrollTo(0, parseInt(scrollY || '0') * -1);
     }
-    
     return () => {
       document.body.style.overflow = '';
       document.body.style.position = '';
@@ -66,7 +56,7 @@ const ProductDetailModal = ({
     };
   }, [isOpen]);
 
-  // Reset alternatives when modal opens/changes
+  // Reset alternatives when modal opens for a different product
   useEffect(() => {
     setShowAlternatives(false);
   }, [normalizedKey]);
@@ -74,7 +64,19 @@ const ProductDetailModal = ({
   if (!isOpen) return null;
 
   const isFailed = result?.source === 'failed' || result?.source === 'error';
-  const isAbsoluteCheapest = absoluteCheapestProduct && currentSelection && currentSelection.url === absoluteCheapestProduct.url;
+  const isAbsoluteCheapest = absoluteCheapestProduct && currentSelection &&
+    currentSelection.url === absoluteCheapestProduct.url;
+
+  // Normalise price access — API products use `price`, but some paths set
+  // `current_price` or `product_price`. Always resolve to a number.
+  const getPrice = (p) => {
+    if (!p) return null;
+    const raw = p.price ?? p.current_price ?? p.product_price;
+    const num = parseFloat(raw);
+    return isNaN(num) ? null : num;
+  };
+
+  const getSize = (p) => p?.size || p?.product_size || p?.package_size || null;
 
   // Compute total needed display
   const totalGrams = result?.totalGramsRequired || 0;
@@ -342,9 +344,7 @@ const ProductDetailModal = ({
                     boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
                   }}>
                     {/* Product Header */}
-                    <div style={{
-                      padding: '16px 18px 12px',
-                    }}>
+                    <div style={{ padding: '16px 18px 12px' }}>
                       <div style={{
                         display: 'flex',
                         justifyContent: 'space-between',
@@ -409,7 +409,9 @@ const ProductDetailModal = ({
                           Price
                         </div>
                         <div style={{ fontSize: '20px', fontWeight: '800', color: '#dc2626', fontVariantNumeric: 'tabular-nums' }}>
-                          ${currentSelection.price ? currentSelection.price.toFixed(2) : 'N/A'}
+                          {getPrice(currentSelection) != null
+                            ? `$${getPrice(currentSelection).toFixed(2)}`
+                            : 'N/A'}
                         </div>
                       </div>
 
@@ -424,7 +426,7 @@ const ProductDetailModal = ({
                           Size
                         </div>
                         <div style={{ fontSize: '20px', fontWeight: '800', color: '#0f172a' }}>
-                          {currentSelection.size || currentSelection.package_size || 'N/A'}
+                          {getSize(currentSelection) || 'N/A'}
                         </div>
                       </div>
 
@@ -454,7 +456,7 @@ const ProductDetailModal = ({
                     </div>
 
                     {/* View Product Link */}
-                    {currentSelection.url && currentSelection.url !== '#api_down_mock_product' && (
+                    {currentSelection.url && currentSelection.url !== '#api_down_mock_product' && currentSelection.url !== '#' && (
                       <div style={{
                         borderTop: '1px solid #f1f5f9',
                         padding: '12px 18px',
@@ -481,8 +483,19 @@ const ProductDetailModal = ({
                           className="view-product-link"
                         >
                           <ExternalLink size={16} />
-                          View Product
+                          View on Store Website
                         </a>
+                        {/* Show raw URL so the user can copy it */}
+                        <div style={{
+                          marginTop: '6px',
+                          fontSize: '11px',
+                          color: '#94a3b8',
+                          textAlign: 'center',
+                          wordBreak: 'break-all',
+                          lineHeight: 1.4,
+                        }}>
+                          {currentSelection.url}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -525,11 +538,7 @@ const ProductDetailModal = ({
                     }}
                     className="alternatives-toggle"
                   >
-                    {showAlternatives ? (
-                      <ChevronUp size={16} />
-                    ) : (
-                      <ChevronDown size={16} />
-                    )}
+                    {showAlternatives ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     {showAlternatives ? 'Hide' : 'Show'} {substitutes.length} Alternative{substitutes.length !== 1 ? 's' : ''}
                   </button>
 
@@ -543,6 +552,8 @@ const ProductDetailModal = ({
                     }}>
                       {substitutes.map((sub, index) => {
                         const isSubCheapest = absoluteCheapestProduct && sub.url === absoluteCheapestProduct.url;
+                        const subPrice = getPrice(sub);
+                        const subSize = getSize(sub);
                         return (
                           <div
                             key={sub.url + index}
@@ -606,11 +617,15 @@ const ProductDetailModal = ({
                               color: '#64748b',
                             }}>
                               <span>
-                                <strong style={{ color: '#dc2626' }}>${sub.price ? sub.price.toFixed(2) : 'N/A'}</strong>
+                                <strong style={{ color: '#dc2626' }}>
+                                  {subPrice != null ? `$${subPrice.toFixed(2)}` : 'N/A'}
+                                </strong>
                               </span>
-                              <span>{sub.size || sub.package_size || 'N/A'}</span>
+                              <span>{subSize || 'N/A'}</span>
                               <span>
-                                /100g: <strong style={{ color: '#16a34a' }}>${sub.unit_price_per_100 ? sub.unit_price_per_100.toFixed(2) : 'N/A'}</strong>
+                                /100g: <strong style={{ color: '#16a34a' }}>
+                                  ${sub.unit_price_per_100 ? sub.unit_price_per_100.toFixed(2) : 'N/A'}
+                                </strong>
                               </span>
                             </div>
 
@@ -645,7 +660,7 @@ const ProductDetailModal = ({
                                 <ShoppingBag size={14} />
                                 Select
                               </button>
-                              {sub.url && sub.url !== '#api_down_mock_product' && (
+                              {sub.url && sub.url !== '#api_down_mock_product' && sub.url !== '#' && (
                                 <a
                                   href={sub.url}
                                   target="_blank"
@@ -741,7 +756,6 @@ const ProductDetailModal = ({
           background: #e2e8f0 !important;
         }
 
-        /* Mobile: full-screen bottom sheet */
         .product-modal {
           touch-action: none;
         }
@@ -750,7 +764,7 @@ const ProductDetailModal = ({
           touch-action: pan-y;
         }
 
-        /* Desktop modal styles */
+        /* Desktop: centered modal instead of bottom sheet */
         @media (min-width: 768px) {
           .product-modal {
             top: 50% !important;
