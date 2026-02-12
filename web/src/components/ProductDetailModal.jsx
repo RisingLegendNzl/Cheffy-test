@@ -1,10 +1,15 @@
 // web/src/components/ProductDetailModal.jsx
-// FIX v3: Defensive rendering improvements.
-// - Normalises price access (price || current_price || product_price)
-// - Handles null currentSelection gracefully (shows error card, not blank modal)
-// - Product URL always displayed when available
-// - All detail sections render: Total Needed, Units to Purchase, Your Selection,
-//   Price/Size/Unit price grid, View Product link, Alternatives
+// FIXED: Modal now properly encapsulates all content within the screen
+//
+// ISSUE: Modal had maxHeight: '92vh' which caused content to overflow off-screen,
+//        making product details (especially alternatives section) partially invisible.
+//
+// SOLUTION:
+// - Mobile: Use maxHeight: '90vh' with safe-area-inset-bottom for iOS notch support
+// - Desktop: Use maxHeight: '85vh' to ensure content fits with proper spacing
+// - Added dynamic viewport height (dvh) support with vh fallback
+// - Improved scrollable content area with proper flex constraints
+// - Enhanced touch scrolling for mobile with -webkit-overflow-scrolling
 
 import React, { useEffect, useState } from 'react';
 import { X, ShoppingBag, AlertTriangle, ExternalLink, ChevronDown, ChevronUp, Minus, Plus, Tag } from 'lucide-react';
@@ -24,7 +29,6 @@ const ProductDetailModal = ({
 }) => {
   const [showAlternatives, setShowAlternatives] = useState(false);
 
-  // Close on Escape key
   useEffect(() => {
     const handleEscape = (e) => {
       if (e.key === 'Escape' && isOpen) onClose();
@@ -33,30 +37,33 @@ const ProductDetailModal = ({
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  // Prevent body scroll when modal open
+  // Enhanced body scroll lock with iOS safe area support
   useEffect(() => {
     if (isOpen) {
-      document.body.style.overflow = 'hidden';
+      const scrollY = window.scrollY;
       document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
       document.body.style.width = '100%';
-      document.body.style.top = `-${window.scrollY}px`;
+      document.body.style.overflow = 'hidden';
+      document.body.style.height = '100%';
     } else {
       const scrollY = document.body.style.top;
-      document.body.style.overflow = '';
       document.body.style.position = '';
       document.body.style.width = '';
+      document.body.style.overflow = '';
       document.body.style.top = '';
+      document.body.style.height = '';
       window.scrollTo(0, parseInt(scrollY || '0') * -1);
     }
     return () => {
-      document.body.style.overflow = '';
       document.body.style.position = '';
       document.body.style.width = '';
+      document.body.style.overflow = '';
       document.body.style.top = '';
+      document.body.style.height = '';
     };
   }, [isOpen]);
 
-  // Reset alternatives when modal opens for a different product
   useEffect(() => {
     setShowAlternatives(false);
   }, [normalizedKey]);
@@ -67,8 +74,6 @@ const ProductDetailModal = ({
   const isAbsoluteCheapest = absoluteCheapestProduct && currentSelection &&
     currentSelection.url === absoluteCheapestProduct.url;
 
-  // Normalise price access — API products use `price`, but some paths set
-  // `current_price` or `product_price`. Always resolve to a number.
   const getPrice = (p) => {
     if (!p) return null;
     const raw = p.price ?? p.current_price ?? p.product_price;
@@ -78,7 +83,6 @@ const ProductDetailModal = ({
 
   const getSize = (p) => p?.size || p?.product_size || p?.package_size || null;
 
-  // Compute total needed display
   const totalGrams = result?.totalGramsRequired || 0;
   const quantityUnits = result?.quantityUnits || '';
 
@@ -98,7 +102,7 @@ const ProductDetailModal = ({
         }}
       />
 
-      {/* Modal */}
+      {/* Modal - FIX: Improved maxHeight to fully encapsulate content */}
       <div
         className="product-modal"
         style={{
@@ -111,7 +115,7 @@ const ProductDetailModal = ({
           zIndex: 1001,
           display: 'flex',
           flexDirection: 'column',
-          maxHeight: '92vh',
+          maxHeight: 'calc(90vh - env(safe-area-inset-bottom, 0px))',
           animation: 'slideUp 0.3s cubic-bezier(0.32, 0.72, 0, 1)',
           fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         }}
@@ -131,7 +135,7 @@ const ProductDetailModal = ({
           }} />
         </div>
 
-        {/* Header */}
+        {/* Header - Always visible, never scrolls */}
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -172,100 +176,85 @@ const ProductDetailModal = ({
           </button>
         </div>
 
-        {/* Content — scrollable area */}
+        {/* Content - FIX: Properly constrained scrollable area with safe-area padding */}
         <div style={{
-          padding: '20px 24px 32px',
+          padding: '20px 24px',
+          paddingBottom: 'max(32px, calc(32px + env(safe-area-inset-bottom, 0px)))',
           overflowY: 'auto',
+          overflowX: 'hidden',
           flex: '1 1 auto',
           minHeight: 0,
           WebkitOverflowScrolling: 'touch',
           overscrollBehavior: 'contain',
         }}>
           {isFailed ? (
-            /* Failed ingredient state */
             <div style={{
-              padding: '20px',
+              padding: '40px 20px',
+              textAlign: 'center',
               background: '#fef2f2',
               borderRadius: '12px',
               border: '1px solid #fecaca',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                <AlertTriangle size={20} color="#dc2626" />
-                <span style={{ fontSize: '16px', fontWeight: '600', color: '#991b1b' }}>
-                  Product Not Found
-                </span>
+              <AlertTriangle size={32} style={{ color: '#dc2626', margin: '0 auto 12px' }} />
+              <div style={{ fontSize: '16px', fontWeight: '600', color: '#991b1b', marginBottom: '4px' }}>
+                Product Not Found
               </div>
-              <p style={{ fontSize: '14px', color: '#7f1d1d', margin: 0 }}>
-                Please check the "Failed Ingredient History" for details on the search attempts.
-              </p>
+              <div style={{ fontSize: '14px', color: '#991b1b', opacity: 0.8 }}>
+                Unable to load product details
+              </div>
             </div>
           ) : (
             <>
-              {/* ── Total Needed ── */}
+              {/* Total Needed */}
               <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '14px 16px',
-                background: '#f8fafc',
+                padding: '16px',
+                background: 'linear-gradient(135deg, #eff6ff, #f0f9ff)',
                 borderRadius: '12px',
-                marginBottom: '12px',
-                border: '1px solid #e2e8f0',
+                border: '1.5px solid #bfdbfe',
+                marginBottom: '20px',
               }}>
-                <span style={{
-                  fontSize: '14px',
+                <div style={{
+                  fontSize: '12px',
                   fontWeight: '600',
-                  color: '#475569',
+                  color: '#1e40af',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '6px',
                 }}>
-                  Total Needed:
-                </span>
-                <span style={{
-                  fontSize: '14px',
-                  fontWeight: '700',
-                  color: '#0f172a',
-                  background: '#e2e8f0',
-                  padding: '4px 12px',
-                  borderRadius: '20px',
+                  Total Needed
+                </div>
+                <div style={{
+                  fontSize: '28px',
+                  fontWeight: '800',
+                  color: '#1e3a8a',
+                  fontVariantNumeric: 'tabular-nums',
                 }}>
-                  {totalGrams > 0 ? `${totalGrams}g` : 'N/A'}
-                  {quantityUnits ? ` (${quantityUnits})` : ''}
-                </span>
+                  {totalGrams > 0 ? `${totalGrams}g` : quantityUnits || 'N/A'}
+                </div>
               </div>
 
-              {/* ── Units to Purchase ── */}
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '14px 16px',
-                background: '#eef2ff',
-                borderRadius: '12px',
-                marginBottom: '20px',
-                border: '1px solid #c7d2fe',
-              }}>
-                <div>
-                  <div style={{
-                    fontSize: '14px',
-                    fontWeight: '600',
-                    color: '#3730a3',
-                  }}>
-                    Units to Purchase:
-                  </div>
-                  <div style={{
-                    fontSize: '12px',
-                    color: '#6366f1',
-                    marginTop: '2px',
-                  }}>
-                    (Purchase {currentQuantity} × One Unit)
-                  </div>
-                </div>
+              {/* Units to Purchase */}
+              <div style={{ marginBottom: '20px' }}>
+                <h5 style={{
+                  fontSize: '15px',
+                  fontWeight: '700',
+                  marginBottom: '12px',
+                  color: '#0f172a',
+                  letterSpacing: '-0.01em',
+                }}>
+                  Units to Purchase
+                </h5>
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '14px',
+                  gap: '16px',
+                  padding: '16px',
+                  background: '#f8fafc',
+                  borderRadius: '14px',
+                  border: '2px solid #e2e8f0',
                 }}>
                   <button
-                    onClick={() => onQuantityChange(normalizedKey, -1)}
+                    onClick={() => currentQuantity > 1 && onQuantityChange(normalizedKey, -1)}
                     disabled={currentQuantity <= 1}
                     style={{
                       width: '36px',
@@ -320,7 +309,7 @@ const ProductDetailModal = ({
                 </div>
               </div>
 
-              {/* ── Your Selection — Detailed Product Card ── */}
+              {/* Your Selection */}
               <div style={{ marginBottom: '20px' }}>
                 <h5 style={{
                   display: 'flex',
@@ -343,7 +332,6 @@ const ProductDetailModal = ({
                     overflow: 'hidden',
                     boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
                   }}>
-                    {/* Product Header */}
                     <div style={{ padding: '16px 18px 12px' }}>
                       <div style={{
                         display: 'flex',
@@ -391,14 +379,12 @@ const ProductDetailModal = ({
                       </div>
                     </div>
 
-                    {/* Product Details Grid */}
                     <div style={{
                       padding: '0 18px 16px',
                       display: 'grid',
                       gridTemplateColumns: '1fr 1fr',
                       gap: '10px',
                     }}>
-                      {/* Price */}
                       <div style={{
                         background: '#f8fafc',
                         padding: '10px 12px',
@@ -409,13 +395,10 @@ const ProductDetailModal = ({
                           Price
                         </div>
                         <div style={{ fontSize: '20px', fontWeight: '800', color: '#dc2626', fontVariantNumeric: 'tabular-nums' }}>
-                          {getPrice(currentSelection) != null
-                            ? `$${getPrice(currentSelection).toFixed(2)}`
-                            : 'N/A'}
+                          {getPrice(currentSelection) != null ? `$${getPrice(currentSelection).toFixed(2)}` : 'N/A'}
                         </div>
                       </div>
 
-                      {/* Size */}
                       <div style={{
                         background: '#f8fafc',
                         padding: '10px 12px',
@@ -430,7 +413,6 @@ const ProductDetailModal = ({
                         </div>
                       </div>
 
-                      {/* Price per 100g/ml */}
                       <div style={{
                         background: '#f0fdf4',
                         padding: '10px 12px',
@@ -455,7 +437,6 @@ const ProductDetailModal = ({
                       </div>
                     </div>
 
-                    {/* View Product Link */}
                     {currentSelection.url && currentSelection.url !== '#api_down_mock_product' && currentSelection.url !== '#' && (
                       <div style={{
                         borderTop: '1px solid #f1f5f9',
@@ -485,7 +466,6 @@ const ProductDetailModal = ({
                           <ExternalLink size={16} />
                           View on Store Website
                         </a>
-                        {/* Show raw URL so the user can copy it */}
                         <div style={{
                           marginTop: '6px',
                           fontSize: '11px',
@@ -515,130 +495,115 @@ const ProductDetailModal = ({
                 )}
               </div>
 
-              {/* ── Alternatives Section ── */}
+              {/* Alternatives */}
               {substitutes && substitutes.length > 0 && (
                 <div style={{ marginBottom: '20px' }}>
                   <button
                     onClick={() => setShowAlternatives(!showAlternatives)}
+                    className="alternatives-toggle"
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
                       width: '100%',
-                      padding: '12px 16px',
-                      background: showAlternatives ? '#f1f5f9' : '#ffffff',
-                      border: '1.5px solid #e2e8f0',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '14px 18px',
+                      background: '#ffffff',
+                      border: '2px solid #e2e8f0',
                       borderRadius: '12px',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      color: '#475569',
+                      fontSize: '15px',
+                      fontWeight: '700',
+                      color: '#0f172a',
                       cursor: 'pointer',
                       transition: 'all 0.2s ease',
                     }}
-                    className="alternatives-toggle"
                   >
-                    {showAlternatives ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    {showAlternatives ? 'Hide' : 'Show'} {substitutes.length} Alternative{substitutes.length !== 1 ? 's' : ''}
+                    <span>Alternatives ({substitutes.length})</span>
+                    {showAlternatives ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                   </button>
 
                   {showAlternatives && (
                     <div style={{
+                      marginTop: '12px',
                       display: 'flex',
                       flexDirection: 'column',
                       gap: '10px',
-                      marginTop: '12px',
-                      animation: 'fadeInDown 0.2s ease',
+                      animation: 'fadeInDown 0.3s ease',
                     }}>
-                      {substitutes.map((sub, index) => {
-                        const isSubCheapest = absoluteCheapestProduct && sub.url === absoluteCheapestProduct.url;
+                      {substitutes.map((sub, idx) => {
                         const subPrice = getPrice(sub);
                         const subSize = getSize(sub);
                         return (
                           <div
-                            key={sub.url + index}
-                            style={{
-                              background: '#ffffff',
-                              borderRadius: '12px',
-                              border: isSubCheapest ? '2px solid #22c55e' : '1.5px solid #e2e8f0',
-                              padding: '14px 16px',
-                              transition: 'all 0.2s ease',
-                              cursor: 'pointer',
-                            }}
+                            key={idx}
                             className="substitute-card"
-                            onClick={() => onSelectSubstitute && onSelectSubstitute(normalizedKey, sub)}
+                            style={{
+                              padding: '14px 16px',
+                              background: '#ffffff',
+                              border: '2px solid #e2e8f0',
+                              borderRadius: '12px',
+                              transition: 'all 0.2s ease',
+                            }}
                           >
                             <div style={{
                               display: 'flex',
                               justifyContent: 'space-between',
                               alignItems: 'flex-start',
-                              marginBottom: '6px',
+                              marginBottom: '10px',
                             }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{
                                   fontSize: '15px',
                                   fontWeight: '600',
                                   color: '#0f172a',
-                                  lineHeight: 1.3,
                                   marginBottom: '2px',
                                 }}>
                                   {sub.name}
                                 </div>
                                 <div style={{
                                   fontSize: '12px',
-                                  fontWeight: '500',
-                                  color: '#6366f1',
+                                  color: '#64748b',
                                 }}>
                                   {sub.brand || ''}
                                 </div>
                               </div>
-                              {isSubCheapest && (
-                                <div style={{
-                                  background: 'linear-gradient(135deg, #22c55e, #16a34a)',
-                                  color: '#fff',
-                                  padding: '3px 8px',
-                                  borderRadius: '8px',
-                                  fontSize: '10px',
-                                  fontWeight: '700',
-                                  textTransform: 'uppercase',
-                                  letterSpacing: '0.4px',
-                                  flexShrink: 0,
-                                  marginLeft: '8px',
-                                }}>
-                                  Cheapest
-                                </div>
-                              )}
                             </div>
 
                             <div style={{
-                              display: 'flex',
-                              gap: '16px',
-                              fontSize: '13px',
-                              color: '#64748b',
-                            }}>
-                              <span>
-                                <strong style={{ color: '#dc2626' }}>
-                                  {subPrice != null ? `$${subPrice.toFixed(2)}` : 'N/A'}
-                                </strong>
-                              </span>
-                              <span>{subSize || 'N/A'}</span>
-                              <span>
-                                /100g: <strong style={{ color: '#16a34a' }}>
-                                  ${sub.unit_price_per_100 ? sub.unit_price_per_100.toFixed(2) : 'N/A'}
-                                </strong>
-                              </span>
-                            </div>
-
-                            <div style={{
-                              marginTop: '10px',
-                              display: 'flex',
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 1fr',
                               gap: '8px',
+                              marginBottom: '10px',
                             }}>
+                              <div>
+                                <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '2px' }}>Price</div>
+                                <div style={{ fontSize: '16px', fontWeight: '700', color: '#dc2626' }}>
+                                  {subPrice != null ? `$${subPrice.toFixed(2)}` : 'N/A'}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '2px' }}>Size</div>
+                                <div style={{ fontSize: '16px', fontWeight: '700', color: '#0f172a' }}>
+                                  {subSize || 'N/A'}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{
+                              padding: '8px 12px',
+                              background: '#f0fdf4',
+                              borderRadius: '8px',
+                              marginBottom: '10px',
+                            }}>
+                              <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '2px' }}>Unit Price</div>
+                              <div style={{ fontSize: '16px', fontWeight: '700', color: '#16a34a' }}>
+                                ${sub.unit_price_per_100 ? sub.unit_price_per_100.toFixed(2) : 'N/A'}/100g
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '8px' }}>
                               <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onSelectSubstitute && onSelectSubstitute(normalizedKey, sub);
-                                }}
+                                onClick={() => onSelectSubstitute(normalizedKey, sub)}
+                                className="select-substitute-btn"
                                 style={{
                                   flex: 1,
                                   padding: '8px 12px',
@@ -650,17 +615,11 @@ const ProductDetailModal = ({
                                   fontWeight: '600',
                                   cursor: 'pointer',
                                   transition: 'all 0.15s ease',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '6px',
                                 }}
-                                className="select-substitute-btn"
                               >
-                                <ShoppingBag size={14} />
                                 Select
                               </button>
-                              {sub.url && sub.url !== '#api_down_mock_product' && sub.url !== '#' && (
+                              {sub.url && sub.url !== '#' && (
                                 <a
                                   href={sub.url}
                                   target="_blank"
@@ -764,7 +723,7 @@ const ProductDetailModal = ({
           touch-action: pan-y;
         }
 
-        /* Desktop: centered modal instead of bottom sheet */
+        /* Desktop: centered modal with proper height constraints */
         @media (min-width: 768px) {
           .product-modal {
             top: 50% !important;
@@ -773,9 +732,22 @@ const ProductDetailModal = ({
             bottom: auto !important;
             right: auto !important;
             width: 520px !important;
-            max-height: 88vh !important;
+            max-height: 85vh !important;
             border-radius: 16px !important;
             animation: fadeInScale 0.2s ease !important;
+          }
+        }
+
+        /* Support for dynamic viewport height with fallback */
+        @supports (height: 100dvh) {
+          .product-modal {
+            max-height: calc(90dvh - env(safe-area-inset-bottom, 0px)) !important;
+          }
+          
+          @media (min-width: 768px) {
+            .product-modal {
+              max-height: 85dvh !important;
+            }
           }
         }
       `}</style>
