@@ -5,7 +5,7 @@ import { useInView } from '../../hooks/useResponsive';
 
 /**
  * How It Works Section Component
- * Clean horizontal timeline with organic warm palette
+ * Clean horizontal timeline — theme aligned to Cheffy app indigo/purple palette
  */
 const HowItWorksSection = () => {
   const steps = [
@@ -15,8 +15,8 @@ const HowItWorksSection = () => {
       title: 'Build Your Profile',
       description:
         'Tell us about your dietary preferences, goals, and lifestyle in under two minutes.',
-      accent: '#2D6A4F',
-      accentBg: 'rgba(45, 106, 79, 0.07)',
+      accent: '#6366f1',
+      accentBg: 'rgba(99, 102, 241, 0.07)',
     },
     {
       number: '02',
@@ -24,8 +24,8 @@ const HowItWorksSection = () => {
       title: 'Get Your Plan',
       description:
         'Our AI instantly crafts a weekly meal plan calibrated to your macros, budget, and local store prices.',
-      accent: '#D4A373',
-      accentBg: 'rgba(212, 163, 115, 0.1)',
+      accent: '#a855f7',
+      accentBg: 'rgba(168, 85, 247, 0.08)',
     },
     {
       number: '03',
@@ -33,8 +33,8 @@ const HowItWorksSection = () => {
       title: 'Track & Adapt',
       description:
         'Monitor your nutrition, mark meals as eaten, and watch your plan evolve with your progress.',
-      accent: '#BC6C25',
-      accentBg: 'rgba(188, 108, 37, 0.08)',
+      accent: '#7e22ce',
+      accentBg: 'rgba(126, 34, 206, 0.07)',
     },
   ];
 
@@ -46,7 +46,7 @@ const HowItWorksSection = () => {
       id="how-it-works"
       ref={sectionRef}
       className="py-20 md:py-28 relative"
-      style={{ backgroundColor: '#F5F3EE' }}
+      style={{ backgroundColor: '#eef2ff' }}
     >
       <div className="max-w-7xl mx-auto px-5 md:px-10">
         {/* Section Header */}
@@ -60,7 +60,7 @@ const HowItWorksSection = () => {
           <span
             className="text-xs font-semibold tracking-widest uppercase block mb-4"
             style={{
-              color: '#2D6A4F',
+              color: '#6366f1',
               fontFamily: "'Georgia', serif",
               letterSpacing: '0.12em',
             }}
@@ -79,7 +79,7 @@ const HowItWorksSection = () => {
           >
             From sign-up to your first
             <br />
-            <span style={{ color: '#2D6A4F' }}>meal plan in minutes</span>
+            <span style={{ color: '#6366f1' }}>meal plan in minutes</span>
           </h2>
         </div>
 
@@ -90,7 +90,7 @@ const HowItWorksSection = () => {
             className="hidden md:block absolute top-16 left-[20%] right-[20%] h-px transition-all duration-1000"
             style={{
               background:
-                'linear-gradient(to right, rgba(45,106,79,0.2), rgba(212,163,115,0.3), rgba(188,108,37,0.2))',
+                'linear-gradient(to right, rgba(99,102,241,0.3), rgba(168,85,247,0.3), rgba(126,34,206,0.2))',
               opacity: isInView ? 1 : 0,
               transform: isInView ? 'scaleX(1)' : 'scaleX(0)',
               transformOrigin: 'left',
@@ -131,7 +131,7 @@ const HowItWorksSection = () => {
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.boxShadow =
-                    '0 10px 30px -6px rgba(0,0,0,0.07)';
+                    '0 10px 30px -6px rgba(99,102,241,0.08)';
                   e.currentTarget.style.transform = 'translateY(-2px)';
                 }}
                 onMouseLeave={(e) => {
