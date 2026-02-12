@@ -2,23 +2,12 @@
 // Enhanced ingredient card with "Shadow Depth Breathing" visual concept
 // Features: two-layer shadow system, ambient breathing animation, green price,
 // purple "View Product" button, spring tap-back, cheapest variant, a11y motion support
+//
+// FIX: Graceful null price handling — shows "Price N/A" in muted gray
+// instead of a bare "$" when no price data is available.
 
 import React, { useRef, useCallback } from 'react';
 
-/**
- * Shadow Depth Breathing — Enhanced Ingredient Card
- *
- * Visual concept:
- *   - Two-layer box-shadow (contact + ambient) with slow breathing oscillation
- *   - Breathing wave is staggered per card index so the list ripples
- *   - Hover lifts the card and expands both shadow layers; breathing pauses
- *   - Tap-down collapses shadows and presses card into the surface
- *   - Release snaps back with spring easing
- *   - Price is rendered in success green (#10b981)
- *   - "View Product" button uses the secondary purple palette
- *   - Cheapest variant tints the ambient shadow green
- *   - All animations respect prefers-reduced-motion
- */
 const IngredientCard = ({
   ingredientName,
   price,
@@ -30,7 +19,6 @@ const IngredientCard = ({
   const cardRef = useRef(null);
   const buttonRef = useRef(null);
 
-  // ── Tap-down / Tap-up handlers (mobile + desktop pointer) ──────────
   const handleCardPointerDown = useCallback(() => {
     const el = cardRef.current;
     if (!el) return;
@@ -44,7 +32,7 @@ const IngredientCard = ({
   }, []);
 
   const handleButtonPointerDown = useCallback((e) => {
-    e.stopPropagation(); // don't trigger card press
+    e.stopPropagation();
     const el = buttonRef.current;
     if (!el) return;
     el.classList.add('ingredient-btn--pressed');
@@ -55,23 +43,18 @@ const IngredientCard = ({
     const el = buttonRef.current;
     if (!el) return;
     el.classList.remove('ingredient-btn--pressed');
-    // Confirmation ring-flash
     el.classList.add('ingredient-btn--confirm');
     setTimeout(() => {
       if (el) el.classList.remove('ingredient-btn--confirm');
     }, 350);
   }, []);
 
-  // ── Formatted price ────────────────────────────────────────────────
-  const formattedPrice =
-    typeof price === 'number' ? price.toFixed(2) : price;
+  // FIX: Null-safe price formatting
+  const hasPrice = typeof price === 'number' && !isNaN(price);
+  const formattedPrice = hasPrice ? price.toFixed(2) : null;
 
-  // ── Breathing animation delay (staggered wave) ────────────────────
   const breathingDelay = `${(index * 0.6).toFixed(1)}s`;
 
-  // ── Shadow tint colour depends on cheapest state ──────────────────
-  // Non-cheapest: primary indigo   rgba(99, 102, 241, ...)
-  // Cheapest:     success green    rgba(16, 185, 129, ...)
   const ambientTintClass = isCheapest
     ? 'ingredient-card--cheapest'
     : '';
@@ -88,7 +71,7 @@ const IngredientCard = ({
       onPointerUp={handleCardPointerUp}
       onPointerLeave={handleCardPointerUp}
     >
-      {/* ── Top Row: Product Name + Cheapest Badge ── */}
+      {/* Top Row: Product Name + Cheapest Badge */}
       <div className="ingredient-card__header">
         <div className="ingredient-card__name">
           {ingredientName}
@@ -101,11 +84,18 @@ const IngredientCard = ({
         )}
       </div>
 
-      {/* ── Second Row: Price (green) + Size ── */}
+      {/* Second Row: Price (green) + Size */}
       <div className="ingredient-card__meta">
-        <span className="ingredient-card__price">
-          ${formattedPrice}
-        </span>
+        {/* FIX: Show "$X.XX" in green when price exists, "Price N/A" in gray when null */}
+        {formattedPrice !== null ? (
+          <span className="ingredient-card__price">
+            ${formattedPrice}
+          </span>
+        ) : (
+          <span className="ingredient-card__price ingredient-card__price--na">
+            Price N/A
+          </span>
+        )}
         {size && (
           <>
             <span className="ingredient-card__dot">•</span>
@@ -114,10 +104,10 @@ const IngredientCard = ({
         )}
       </div>
 
-      {/* ── Divider ── */}
+      {/* Divider */}
       <div className="ingredient-card__divider" />
 
-      {/* ── View Product Button (purple) ── */}
+      {/* View Product Button (purple) */}
       <button
         ref={buttonRef}
         onClick={onViewProduct}
@@ -146,13 +136,12 @@ const IngredientCard = ({
         </svg>
       </button>
 
-      {/* ── Scoped styles ── */}
+      {/* Scoped styles */}
       <style>{`
         /* ==============================================
            KEYFRAMES — Shadow Depth Breathing
            ============================================== */
 
-        /* Card entry: slide-up + scale with spring feel */
         @keyframes sdb-cardEntry {
           from {
             opacity: 0;
@@ -164,10 +153,6 @@ const IngredientCard = ({
           }
         }
 
-        /* Ambient breathing — shadow Y & blur oscillation.
-           We animate a CSS custom property via a scale proxy
-           since box-shadow isn't directly animatable in keyframes.
-           Instead we animate transform subtly to simulate depth. */
         @keyframes sdb-breathe {
           0%, 100% {
             transform: translateY(0px);
@@ -177,7 +162,6 @@ const IngredientCard = ({
           }
         }
 
-        /* Chevron hint on hover */
         @keyframes sdb-chevronNudge {
           0%   { transform: translateX(0); }
           40%  { transform: translateX(5px); }
@@ -185,19 +169,15 @@ const IngredientCard = ({
           100% { transform: translateX(4px); }
         }
 
-        /* Button confirmation ring */
         @keyframes sdb-confirmRing {
           0% {
-            box-shadow:
-              0 0 0 0 rgba(192, 132, 252, 0.4);
+            box-shadow: 0 0 0 0 rgba(192, 132, 252, 0.4);
           }
           50% {
-            box-shadow:
-              0 0 0 4px rgba(192, 132, 252, 0.15);
+            box-shadow: 0 0 0 4px rgba(192, 132, 252, 0.15);
           }
           100% {
-            box-shadow:
-              0 0 0 6px rgba(192, 132, 252, 0);
+            box-shadow: 0 0 0 6px rgba(192, 132, 252, 0);
           }
         }
 
@@ -211,29 +191,23 @@ const IngredientCard = ({
           background: #ffffff;
           border-radius: 12px;
           padding: 16px;
-          border: 1px solid #f3e8ff;              /* secondary[100] — warm purple tint */
+          border: 1px solid #f3e8ff;
           cursor: default;
 
-          /* Two-layer shadow system */
-          /* Layer 1: contact shadow  |  Layer 2: ambient tinted shadow */
           box-shadow:
             0 1px 3px rgba(0, 0, 0, 0.06),
             0 4px 12px rgba(99, 102, 241, 0.04);
 
-          /* Entry animation */
           opacity: 0;
           animation:
             sdb-cardEntry 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards var(--entry-delay, 0s);
 
-          /* Transition for hover / press states */
           transition:
             box-shadow 0.2s ease,
             transform 0.2s ease,
             border-color 0.2s ease;
         }
 
-        /* Breathing animation — applied after entry completes
-           Uses a wrapper class so we can pause on hover */
         .ingredient-card--breathing {
           animation:
             sdb-cardEntry 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards var(--entry-delay, 0s),
@@ -247,14 +221,12 @@ const IngredientCard = ({
 
         .ingredient-card-compact:hover {
           transform: translateY(-3px);
-          border-color: #e9d5ff;                   /* secondary[200] */
+          border-color: #e9d5ff;
 
-          /* Expanded two-layer shadow */
           box-shadow:
             0 2px 6px rgba(0, 0, 0, 0.08),
             0 8px 24px rgba(99, 102, 241, 0.10);
 
-          /* Pause breathing while hovered for stability */
           animation-play-state: paused, paused;
         }
 
@@ -266,18 +238,15 @@ const IngredientCard = ({
         .ingredient-card--pressed {
           transform: translateY(1px) !important;
 
-          /* Collapsed shadows — pressed into surface */
           box-shadow:
             0 1px 2px rgba(0, 0, 0, 0.04),
             0 1px 4px rgba(99, 102, 241, 0.02) !important;
 
-          /* Instant press, spring release handled by removing class */
           transition:
             box-shadow 0.08s ease-out,
             transform 0.08s ease-out !important;
         }
 
-        /* Spring snap-back when press class is removed */
         .ingredient-card-compact:not(.ingredient-card--pressed) {
           transition:
             box-shadow 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55),
@@ -360,10 +329,18 @@ const IngredientCard = ({
 
         .ingredient-card__price {
           font-weight: 700;
-          color: #10b981;                          /* success.main — GREEN */
+          color: #10b981;
           font-size: 16px;
           font-variant-numeric: tabular-nums;
           letter-spacing: -0.01em;
+        }
+
+        /* FIX: Muted style for missing price */
+        .ingredient-card__price--na {
+          color: #a0aec0;
+          font-weight: 600;
+          font-size: 14px;
+          font-style: italic;
         }
 
         .ingredient-card__dot {
@@ -397,15 +374,15 @@ const IngredientCard = ({
           gap: 6px;
           width: 100%;
           padding: 10px;
-          background: #faf5ff;                     /* secondary[50] */
-          border: 1px solid #e9d5ff;               /* secondary[200] */
+          background: #faf5ff;
+          border: 1px solid #e9d5ff;
           border-radius: 10px;
           font-size: 14px;
           font-weight: 600;
-          color: #a855f7;                          /* secondary[500] */
+          color: #a855f7;
           cursor: pointer;
           position: relative;
-          overflow: hidden;                        /* clip shimmer */
+          overflow: hidden;
           transition:
             background 0.15s ease,
             border-color 0.15s ease,
@@ -422,7 +399,7 @@ const IngredientCard = ({
         .ingredient-card__chevron {
           position: relative;
           z-index: 1;
-          color: #d8b4fe;                          /* secondary[300] */
+          color: #d8b4fe;
           transition:
             transform 0.25s cubic-bezier(0.68, -0.55, 0.265, 1.55),
             color 0.15s ease;
@@ -430,17 +407,17 @@ const IngredientCard = ({
         }
 
 
-        /* ── Button hover (desktop) ── */
+        /* Button hover (desktop) */
 
         .ingredient-card__button:hover {
-          background: #f3e8ff;                     /* secondary[100] */
-          border-color: #d8b4fe;                   /* secondary[300] */
-          color: #9333ea;                          /* secondary[600] */
+          background: #f3e8ff;
+          border-color: #d8b4fe;
+          color: #9333ea;
         }
 
         .ingredient-card__button:hover .ingredient-card__chevron {
           animation: sdb-chevronNudge 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
-          color: #a855f7;                          /* secondary[500] */
+          color: #a855f7;
         }
 
         /* Shimmer pass on hover */
@@ -471,17 +448,16 @@ const IngredientCard = ({
         }
 
 
-        /* ── Button press state ── */
+        /* Button press state */
 
         .ingredient-btn--pressed {
           transform: scale(0.97) !important;
-          background: #e9d5ff !important;          /* secondary[200] */
+          background: #e9d5ff !important;
           transition:
             transform 0.08s ease-out,
             background 0s !important;
         }
 
-        /* Spring snap-back when released */
         .ingredient-card__button:not(.ingredient-btn--pressed) {
           transition:
             transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55),
@@ -492,22 +468,22 @@ const IngredientCard = ({
         }
 
 
-        /* ── Button confirmation ring-flash (mobile) ── */
+        /* Button confirmation ring-flash (mobile) */
 
         .ingredient-btn--confirm {
           animation: sdb-confirmRing 0.35s ease-out forwards;
         }
 
 
-        /* ── Button keyboard focus ── */
+        /* Button keyboard focus */
 
         .ingredient-card__button:focus-visible {
-          outline: 2px solid #c084fc;              /* secondary[400] */
+          outline: 2px solid #c084fc;
           outline-offset: 3px;
         }
 
 
-        /* ── Button active (fallback) ── */
+        /* Button active (fallback) */
 
         .ingredient-card__button:active {
           transform: scale(0.97);
