@@ -113,6 +113,51 @@ const PlanSetupWizard = ({
     }, 200);
   }, [isAnimating, isFirstStep]);
 
+  // --- Fast-step navigation ---
+
+  /**
+   * Determines whether the user is allowed to jump to `targetIndex`.
+   * Rule: every step *before* the target must be valid.
+   * Going backward is always allowed.
+   */
+  const canReachStep = useCallback(
+    (targetIndex) => {
+      // Always allow going to earlier (completed) steps
+      if (targetIndex < currentStep) return true;
+      // Don't allow clicking the current step (no-op)
+      if (targetIndex === currentStep) return false;
+      // For future steps, validate every preceding step including current
+      for (let i = 0; i < targetIndex; i++) {
+        const stepId = WIZARD_STEPS[i].id;
+        if (!isStepValid(stepId, formData)) return false;
+      }
+      return true;
+    },
+    [currentStep, formData]
+  );
+
+  /**
+   * Jump directly to a specific step index.
+   * Respects animation lock and validation via canReachStep.
+   */
+  const goToStep = useCallback(
+    (targetIndex) => {
+      if (isAnimating) return;
+      if (targetIndex === currentStep) return;
+      if (!canReachStep(targetIndex)) return;
+
+      const direction = targetIndex > currentStep ? 'right' : 'left';
+      setSlideDirection(direction);
+      setIsAnimating(true);
+      setTimeout(() => {
+        setCurrentStep(targetIndex);
+        setErrors({});
+        setTimeout(() => setIsAnimating(false), 50);
+      }, 200);
+    },
+    [isAnimating, currentStep, canReachStep]
+  );
+
   // --- Form submission (only on last step) ---
   const handleFormSubmit = useCallback(
     (e) => {
@@ -218,8 +263,13 @@ const PlanSetupWizard = ({
         </div>
       </div>
 
-      {/* ===== PROGRESS BAR ===== */}
-      <StepProgressBar currentStep={currentStep} steps={WIZARD_STEPS} />
+      {/* ===== PROGRESS BAR (with fast-step navigation) ===== */}
+      <StepProgressBar
+        currentStep={currentStep}
+        steps={WIZARD_STEPS}
+        onStepClick={goToStep}
+        canReachStep={canReachStep}
+      />
 
       {/* ===== CARD CONTAINER ===== */}
       <form
