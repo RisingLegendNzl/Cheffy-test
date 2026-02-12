@@ -1,6 +1,6 @@
 // web/src/components/wizard/MealInspirationStep.jsx
-import React, { useState } from 'react';
-import { ChefHat, Sparkles, Lightbulb } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { ChefHat, Sparkles, Lightbulb, X } from 'lucide-react';
 import { COLORS } from '../../constants';
 
 const INSPIRATION_EXAMPLES = [
@@ -24,8 +24,13 @@ const MealInspirationStep = ({ formData, onChange }) => {
     onChange(e);
   };
 
+  const handleClear = useCallback(() => {
+    onChange({
+      target: { name: 'cuisine', value: '' },
+    });
+  }, [onChange]);
+
   const applyExample = (example) => {
-    // Extract just the descriptive part before the dash
     const text = example;
     onChange({
       target: { name: 'cuisine', value: text },
@@ -124,6 +129,42 @@ const MealInspirationStep = ({ formData, onChange }) => {
               lineHeight: '1.6',
             }}
           />
+
+          {/* Clear button — positioned inside the textarea container, bottom-right */}
+          {hasValue && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="absolute flex items-center gap-1 rounded-lg transition-all"
+              style={{
+                bottom: '8px',
+                right: '8px',
+                padding: '4px 10px',
+                fontSize: '11px',
+                fontWeight: '600',
+                color: COLORS.gray[400],
+                background: COLORS.gray[50],
+                border: `1px solid ${COLORS.gray[200]}`,
+                cursor: 'pointer',
+                zIndex: 2,
+                letterSpacing: '0.01em',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = COLORS.error.main;
+                e.currentTarget.style.borderColor = COLORS.error.main + '40';
+                e.currentTarget.style.background = COLORS.error.main + '08';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = COLORS.gray[400];
+                e.currentTarget.style.borderColor = COLORS.gray[200];
+                e.currentTarget.style.background = COLORS.gray[50];
+              }}
+              title="Clear meal inspiration"
+            >
+              <X size={12} />
+              Clear
+            </button>
+          )}
         </div>
 
         {/* Character hint */}
