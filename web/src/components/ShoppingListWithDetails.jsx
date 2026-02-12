@@ -1,6 +1,9 @@
 // web/src/components/ShoppingListWithDetails.jsx
 // REDESIGNED - Clean Minimal Shopping Tab with Compact Ingredient Cards
-// FIX v2: View Product now reliably loads ingredient details.
+// FIX v3: Corrected inverted isOpen prop on ProductDetailModal.
+// - isOpen was `!selectedProductModal` (always false when a product is selected)
+// - Changed to `!!selectedProductModal` so the modal actually opens.
+// Prior fixes retained:
 // - modalProductData uses currentSelectionURL (authoritative) instead of selectedIndex
 // - Fallback to `results` prop when categorizedResults data is stale
 // - Guard against empty allProducts preventing blank modal
@@ -472,9 +475,13 @@ const ShoppingListWithDetails = ({
       </div>
 
       {/* PRODUCT DETAIL MODAL */}
+      {/* FIX v3: Changed isOpen from `!selectedProductModal` to `!!selectedProductModal`.
+         The `!` inverted the boolean — the modal was told to CLOSE whenever a product
+         was selected and OPEN when nothing was selected (but the outer guard prevented
+         that path from rendering at all). */}
       {modalProductData && (
         <ProductDetailModal
-          isOpen={!selectedProductModal}
+          isOpen={!!selectedProductModal}
           onClose={handleCloseModal}
           ingredientKey={modalProductData.ingredientKey}
           normalizedKey={modalProductData.normalizedKey}
