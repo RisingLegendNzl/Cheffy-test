@@ -1,7 +1,6 @@
 // web/src/components/ShoppingListWithDetails.jsx
 // REDESIGNED - Clean Minimal Shopping Tab with Compact Ingredient Cards
 // FIX: Enhanced with proper callback wiring for substitute product selection
-// FIX: Corrected inverted isOpen boolean on ProductDetailModal
 
 import React, { useState, useMemo } from 'react';
 import { 
@@ -550,9 +549,6 @@ const ShoppingListWithDetails = ({
 
       {/* PRODUCT DETAIL MODAL */}
       {/* FIX: Pass handleSelectSubstitute instead of onSelectSubstitute directly */}
-      {/* FIX: Changed isOpen from `!selectedProductModal` to `!!selectedProductModal` */}
-      {/*      The old code had an INVERTED boolean — modal was closed when a product  */}
-      {/*      was selected and open when nothing was selected.                        */}
       {modalProductData && (
         <ProductDetailModal
           isOpen={!!selectedProductModal}
@@ -564,7 +560,7 @@ const ShoppingListWithDetails = ({
           absoluteCheapestProduct={modalProductData.absoluteCheapestProduct}
           substitutes={modalProductData.substitutes}
           currentQuantity={modalProductData.currentQuantity}
-          onSelectSubstitute={handleSelectSubstitute}
+          onSelectSubstitute={handleSelectSubstitute}  // FIX: Use local handler
           onQuantityChange={onQuantityChange}
         />
       )}
