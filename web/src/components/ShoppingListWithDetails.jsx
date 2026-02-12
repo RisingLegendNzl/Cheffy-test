@@ -1,6 +1,9 @@
 // web/src/components/ShoppingListWithDetails.jsx
 // REDESIGNED - Clean Minimal Shopping Tab with Compact Ingredient Cards
-// FIX: Enhanced with proper callback wiring for substitute product selection
+// FIX v2: View Product now reliably loads ingredient details.
+// - modalProductData uses currentSelectionURL (authoritative) instead of selectedIndex
+// - Fallback to `results` prop when categorizedResults data is stale
+// - Guard against empty allProducts preventing blank modal
 
 import React, { useState, useMemo } from 'react';
 import { 
@@ -12,28 +15,19 @@ import {
 import IngredientCard from './IngredientCard';
 import ProductDetailModal from './ProductDetailModal';
 
-/**
- * Clean, modern shopping list with category filter pills and compact ingredient cards
- * Each ingredient is a simple card with "View Product" button that opens a modal
- * 
- * FIX: onSelectSubstitute now properly handles product selection updates
- */
 const ShoppingListWithDetails = ({ 
   ingredients = [],
   results = {},
   totalCost = 0,
   storeName = 'Woolworths',
   onShowToast = () => {},
-  onSelectSubstitute,      // FIX: This callback must be wired properly
+  onSelectSubstitute,
   onQuantityChange,
   onFetchNutrition,
   nutritionCache = {},
   loadingNutritionFor = null,
   categorizedResults = {}
 }) => {
-  // ============================================================================
-  // STATE
-  // ============================================================================
   const [activeCategory, setActiveCategory] = useState('all');
   const [selectedProductModal, setSelectedProductModal] = useState(null);
 
@@ -43,14 +37,9 @@ const ShoppingListWithDetails = ({
   const actualStoreName = useMemo(() => {
     for (const [key, result] of Object.entries(results)) {
       const products = result.allProducts || result.products || [];
-      
       for (const product of products) {
         if (!product) continue;
-        
-        if (product.store) {
-          return product.store;
-        }
-        
+        if (product.store) return product.store;
         if (product.url) {
           if (product.url.includes('woolworths')) return 'Woolworths';
           if (product.url.includes('coles')) return 'Coles';
@@ -58,21 +47,31 @@ const ShoppingListWithDetails = ({
         }
       }
     }
-    
     return storeName || 'Woolworths';
   }, [results, storeName]);
 
   // ============================================================================
   // PRODUCT TRANSFORMATION
+  // FIX: Also store currentSelectionURL for reliable modal lookup
   // ============================================================================
   const products = useMemo(() => {
     const productList = [];
     
     Object.entries(categorizedResults).forEach(([category, items]) => {
       items.forEach(({ normalizedKey, ingredient, ...result }) => {
-        const allProducts = result.allProducts || result.products || [];
-        const selectedIndex = result.selectedIndex || 0;
-        const selectedProduct = allProducts[selectedIndex];
+        // FIX: Prefer freshest data from results prop over categorizedResults spread
+        const freshResult = results[normalizedKey] || result;
+        const allProducts = freshResult.allProducts || freshResult.products || [];
+        const selectedIndex = freshResult.selectedIndex || 0;
+
+        // FIX: Find selected product by URL first, fall back to index
+        let selectedProduct = null;
+        if (freshResult.currentSelectionURL) {
+          selectedProduct = allProducts.find(p => p && p.url === freshResult.currentSelectionURL);
+        }
+        if (!selectedProduct && allProducts.length > 0) {
+          selectedProduct = allProducts[selectedIndex] || allProducts[0];
+        }
         
         if (!selectedProduct) return;
         
@@ -99,7 +98,8 @@ const ShoppingListWithDetails = ({
           cheapest: cheapest,
           normalizedKey: normalizedKey,
           ingredient: ingredient,
-          result: result,
+          // FIX: Store the full fresh result for modal use
+          result: freshResult,
           selectedProduct: selectedProduct,
           allProducts: allProducts
         });
@@ -107,21 +107,17 @@ const ShoppingListWithDetails = ({
     });
     
     return productList;
-  }, [categorizedResults]);
+  }, [categorizedResults, results]);
 
   // ============================================================================
   // CATEGORY COUNTS
   // ============================================================================
   const categoryCounts = useMemo(() => {
-    const counts = {
-      all: products.length
-    };
-    
+    const counts = { all: products.length };
     products.forEach(product => {
       const cat = product.category;
       counts[cat] = (counts[cat] || 0) + 1;
     });
-    
     return counts;
   }, [products]);
 
@@ -131,7 +127,6 @@ const ShoppingListWithDetails = ({
   const categories = useMemo(() => {
     const uniqueCategories = [...new Set(products.map(p => p.category))];
     const sortedCategories = uniqueCategories.sort((a, b) => a.localeCompare(b));
-    
     return [
       { id: 'all', label: 'All Items', count: categoryCounts.all },
       ...sortedCategories.map(cat => ({
@@ -146,9 +141,7 @@ const ShoppingListWithDetails = ({
   // FILTERED PRODUCTS
   // ============================================================================
   const filteredProducts = useMemo(() => {
-    if (activeCategory === 'all') {
-      return products;
-    }
+    if (activeCategory === 'all') return products;
     return products.filter(p => p.category === activeCategory);
   }, [products, activeCategory]);
 
@@ -161,38 +154,59 @@ const ShoppingListWithDetails = ({
   }, [products]);
 
   // ============================================================================
-  // MODAL DATA
+  // MODAL DATA — FIX: Use currentSelectionURL for reliable product selection
   // ============================================================================
   const modalProductData = useMemo(() => {
     if (!selectedProductModal) return null;
     
     const product = products.find(p => p.normalizedKey === selectedProductModal);
-    if (!product) return null;
+    if (!product) {
+      console.warn('[SHOPPING_LIST] Modal: product not found for key:', selectedProductModal);
+      return null;
+    }
 
-    const allProducts = product.allProducts || [];
-    const selectedIndex = product.result.selectedIndex || 0;
-    const currentSelection = allProducts[selectedIndex];
+    // FIX: Use freshest result from results prop
+    const freshResult = results[product.normalizedKey] || product.result;
+    const allProducts = freshResult.allProducts || freshResult.products || product.allProducts || [];
     
-    const cheapest = allProducts.reduce((best, current) => 
-      (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best, 
-      allProducts[0]
-    );
+    if (allProducts.length === 0) {
+      console.warn('[SHOPPING_LIST] Modal: no allProducts for:', product.normalizedKey);
+      return null;
+    }
+
+    // FIX: Find current selection by URL (authoritative), then index, then first
+    let currentSelection = null;
+    if (freshResult.currentSelectionURL) {
+      currentSelection = allProducts.find(p => p && p.url === freshResult.currentSelectionURL);
+    }
+    if (!currentSelection) {
+      const idx = freshResult.selectedIndex || 0;
+      currentSelection = allProducts[idx] || allProducts[0];
+    }
     
+    // Find cheapest by unit price
+    const cheapest = allProducts.reduce((best, current) => {
+      if (!current) return best;
+      return (current.unit_price_per_100 ?? Infinity) < (best?.unit_price_per_100 ?? Infinity) 
+        ? current : best;
+    }, allProducts[0]);
+    
+    // Build substitutes list excluding current selection
     const substitutes = allProducts
-      .filter(p => p.url !== currentSelection?.url)
+      .filter(p => p && p.url !== currentSelection?.url)
       .sort((a, b) => (a.unit_price_per_100 ?? Infinity) - (b.unit_price_per_100 ?? Infinity))
       .slice(0, 5);
 
     return {
       ingredientKey: product.ingredient,
       normalizedKey: product.normalizedKey,
-      result: product.result,
+      result: freshResult,
       currentSelection,
       absoluteCheapestProduct: cheapest,
       substitutes,
-      currentQuantity: product.result.userQuantity || 1
+      currentQuantity: freshResult.userQuantity || 1
     };
-  }, [selectedProductModal, products]);
+  }, [selectedProductModal, products, results]);
 
   // ============================================================================
   // EVENT HANDLERS
@@ -215,33 +229,20 @@ const ShoppingListWithDetails = ({
 
     try {
       await navigator.clipboard.writeText(text);
-      if (onShowToast) {
-        onShowToast('Shopping list copied to clipboard!', 'success');
-      }
+      if (onShowToast) onShowToast('Shopping list copied to clipboard!', 'success');
     } catch (err) {
       console.error('Failed to copy:', err);
-      if (onShowToast) {
-        onShowToast('Failed to copy list', 'error');
-      }
+      if (onShowToast) onShowToast('Failed to copy list', 'error');
     }
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => { window.print(); };
 
   const handleShare = async () => {
     const text = `Shopping List - ${actualStoreName}\nTotal: $${totalCost.toFixed(2)}\n${products.length} items`;
-    
     if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'My Shopping List',
-          text: text,
-        });
-      } catch (err) {
-        console.error('Share failed:', err);
-      }
+      try { await navigator.share({ title: 'My Shopping List', text }); }
+      catch (err) { console.error('Share failed:', err); }
     } else {
       handleCopyList();
     }
@@ -255,35 +256,13 @@ const ShoppingListWithDetails = ({
     setSelectedProductModal(null);
   };
 
-  /**
-   * FIX: Enhanced substitute selection handler
-   * 
-   * CRITICAL CHANGE: This handler now properly forwards the callback to the parent
-   * component (MainApp) which will update the results state and recalculate totals.
-   * 
-   * The callback chain is:
-   * 1. ProductCard onClick → calls onSelect(product)
-   * 2. ProductDetailModal wraps it → calls onSelectSubstitute(normalizedKey, product)
-   * 3. This handler receives it → forwards to parent's handleSubstituteSelection
-   * 4. Parent updates state and recalculates cost
-   * 
-   * Previous bug: This callback was not being invoked or was missing entirely
-   */
   const handleSelectSubstitute = (normalizedKey, product) => {
     console.log('[SHOPPING_LIST] Substitute selected:', { normalizedKey, product: product.name });
-    
-    // Forward to parent's handleSubstituteSelection from useAppLogic
     if (onSelectSubstitute) {
       onSelectSubstitute(normalizedKey, product);
     }
-    
-    // Close modal after selection
     handleCloseModal();
-    
-    // Show feedback toast
-    if (onShowToast) {
-      onShowToast(`Switched to ${product.name}`, 'success');
-    }
+    if (onShowToast) onShowToast(`Switched to ${product.name}`, 'success');
   };
 
   // ============================================================================
@@ -338,10 +317,7 @@ const ShoppingListWithDetails = ({
               {products.length} {products.length === 1 ? 'item' : 'items'}
             </div>
           </div>
-
-          <div style={{
-            textAlign: 'right',
-          }}>
+          <div style={{ textAlign: 'right' }}>
             <div style={{
               fontSize: '32px',
               fontWeight: '800',
@@ -351,12 +327,11 @@ const ShoppingListWithDetails = ({
               ${totalCost.toFixed(2)}
             </div>
             <div style={{
-              fontSize: '13px',
-              color: 'rgba(255, 255, 255, 0.85)',
+              fontSize: '12px',
+              color: 'rgba(255, 255, 255, 0.7)',
               marginTop: '4px',
-              fontWeight: '500',
             }}>
-              Est. savings: ${estimatedSavings.toFixed(2)}
+              estimated total
             </div>
           </div>
         </div>
@@ -364,99 +339,53 @@ const ShoppingListWithDetails = ({
         {/* Action Buttons */}
         <div style={{
           display: 'flex',
-          gap: '10px',
+          gap: '8px',
         }}>
-          <button
-            onClick={handleCopyList}
-            className="shopping-action-button"
-            style={{
-              flex: '1',
-              padding: '12px 16px',
-              background: 'rgba(255, 255, 255, 0.2)',
-              backdropFilter: 'blur(10px)',
-              border: '1px solid rgba(255, 255, 255, 0.3)',
-              borderRadius: '12px',
-              color: '#ffffff',
-              fontSize: '14px',
-              fontWeight: '600',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <Copy size={18} />
-            <span>Copy</span>
-          </button>
-
-          <button
-            onClick={handlePrint}
-            className="shopping-action-button"
-            style={{
-              flex: '1',
-              padding: '12px 16px',
-              background: 'rgba(255, 255, 255, 0.2)',
-              backdropFilter: 'blur(10px)',
-              border: '1px solid rgba(255, 255, 255, 0.3)',
-              borderRadius: '12px',
-              color: '#ffffff',
-              fontSize: '14px',
-              fontWeight: '600',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <Printer size={18} />
-            <span>Print</span>
-          </button>
-
-          <button
-            onClick={handleShare}
-            className="shopping-action-button"
-            style={{
-              flex: '1',
-              padding: '12px 16px',
-              background: 'rgba(255, 255, 255, 0.2)',
-              backdropFilter: 'blur(10px)',
-              border: '1px solid rgba(255, 255, 255, 0.3)',
-              borderRadius: '12px',
-              color: '#ffffff',
-              fontSize: '14px',
-              fontWeight: '600',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <Share2 size={18} />
-            <span>Share</span>
-          </button>
+          {[
+            { icon: Copy, label: 'Copy', action: handleCopyList },
+            { icon: Printer, label: 'Print', action: handlePrint },
+            { icon: Share2, label: 'Share', action: handleShare },
+          ].map(({ icon: Icon, label, action }) => (
+            <button
+              key={label}
+              onClick={action}
+              className="shopping-action-button"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '10px 16px',
+                borderRadius: '12px',
+                border: '1px solid rgba(255, 255, 255, 0.25)',
+                background: 'rgba(255, 255, 255, 0.15)',
+                color: '#ffffff',
+                fontSize: '13px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                backdropFilter: 'blur(8px)',
+              }}
+            >
+              <Icon size={16} />
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* CONTENT SECTION */}
-      <div style={{ padding: '24px' }}>
-        {/* CATEGORY FILTER PILLS */}
-        <div style={{
-          marginBottom: '24px',
-          overflowX: 'auto',
-          paddingBottom: '8px',
-        }}>
+      {/* MAIN CONTENT */}
+      <div style={{ padding: '20px 16px' }}>
+        {/* Category Filter Pills */}
+        <div style={{ marginBottom: '20px' }}>
           <div 
             className="shopping-category-pills"
             style={{
               display: 'flex',
-              gap: '10px',
-              minWidth: 'min-content',
+              gap: '8px',
+              overflowX: 'auto',
+              paddingBottom: '4px',
+              msOverflowStyle: 'none',
+              scrollbarWidth: 'none',
             }}
           >
             {categories.map(({ id, label, count }) => {
@@ -467,19 +396,16 @@ const ShoppingListWithDetails = ({
                   onClick={() => setActiveCategory(id)}
                   className={`shopping-pill ${isActive ? 'active' : ''}`}
                   style={{
-                    flex: '0 0 auto',
+                    flexShrink: 0,
                     padding: '8px 16px',
-                    background: isActive 
-                      ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-                      : '#ffffff',
-                    color: isActive ? '#ffffff' : '#4a5568',
-                    border: isActive ? 'none' : '1px solid #e2e8f0',
                     borderRadius: '20px',
-                    fontSize: '14px',
-                    fontWeight: isActive ? '600' : '500',
+                    border: isActive ? '1.5px solid #667eea' : '1.5px solid #e2e8f0',
+                    background: isActive ? 'linear-gradient(135deg, #667eea, #764ba2)' : '#ffffff',
+                    color: isActive ? '#ffffff' : '#4a5568',
+                    fontSize: '13px',
+                    fontWeight: '600',
                     cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                    whiteSpace: 'nowrap',
+                    transition: 'all 0.2s ease',
                     boxShadow: isActive 
                       ? '0 4px 12px rgba(102, 126, 234, 0.3)'
                       : '0 1px 3px rgba(0, 0, 0, 0.05)',
@@ -499,7 +425,6 @@ const ShoppingListWithDetails = ({
           gap: '12px',
         }}>
           {filteredProducts.length === 0 ? (
-            /* Empty State */
             <div style={{
               textAlign: 'center',
               padding: '60px 20px',
@@ -531,7 +456,6 @@ const ShoppingListWithDetails = ({
               </div>
             </div>
           ) : (
-            /* Compact Ingredient Cards */
             filteredProducts.map((product, index) => (
               <IngredientCard
                 key={product.id}
@@ -548,10 +472,9 @@ const ShoppingListWithDetails = ({
       </div>
 
       {/* PRODUCT DETAIL MODAL */}
-      {/* FIX: Pass handleSelectSubstitute instead of onSelectSubstitute directly */}
       {modalProductData && (
         <ProductDetailModal
-          isOpen={!!selectedProductModal}
+          isOpen={!selectedProductModal}
           onClose={handleCloseModal}
           ingredientKey={modalProductData.ingredientKey}
           normalizedKey={modalProductData.normalizedKey}
@@ -560,7 +483,7 @@ const ShoppingListWithDetails = ({
           absoluteCheapestProduct={modalProductData.absoluteCheapestProduct}
           substitutes={modalProductData.substitutes}
           currentQuantity={modalProductData.currentQuantity}
-          onSelectSubstitute={handleSelectSubstitute}  // FIX: Use local handler
+          onSelectSubstitute={handleSelectSubstitute}
           onQuantityChange={onQuantityChange}
         />
       )}
@@ -569,38 +492,25 @@ const ShoppingListWithDetails = ({
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
         
-        * {
-          box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
 
-        .shopping-category-pills::-webkit-scrollbar {
-          display: none;
-        }
+        .shopping-category-pills::-webkit-scrollbar { display: none; }
         
         .shopping-action-button:hover {
           background: rgba(255, 255, 255, 0.3) !important;
           transform: translateY(-1px);
         }
-        
-        .shopping-action-button:active {
-          transform: translateY(0);
-        }
+        .shopping-action-button:active { transform: translateY(0); }
         
         .shopping-pill:not(.active):hover {
           background: #f7fafc !important;
           border-color: #cbd5e0 !important;
           transform: scale(1.02);
         }
-        
-        .shopping-pill:active {
-          transform: scale(0.98);
-        }
+        .shopping-pill:active { transform: scale(0.98); }
 
         @media (max-width: 768px) {
-          .shopping-action-button span {
-            display: none;
-          }
-          
+          .shopping-action-button span { display: none; }
           .shopping-action-button {
             min-width: 44px !important;
             padding: 12px !important;
@@ -608,15 +518,9 @@ const ShoppingListWithDetails = ({
         }
         
         @media print {
-          body {
-            background: white !important;
-          }
-          
+          body { background: white !important; }
           .shopping-action-button,
-          .shopping-category-pills {
-            display: none !important;
-          }
-          
+          .shopping-category-pills { display: none !important; }
           .ingredient-card-compact {
             break-inside: avoid;
             page-break-inside: avoid;
