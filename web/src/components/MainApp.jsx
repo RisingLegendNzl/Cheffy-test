@@ -6,8 +6,6 @@ import { RefreshCw, Zap, AlertTriangle, CheckCircle, Package, DollarSign, Extern
 import MacroRing from './MacroRing';
 import MacroBar from './MacroBar';
 import InputField from './InputField';
-import DaySlider from './DaySlider';
-import DayTabBar from './DayTabBar';
 import ProductCard from './ProductCard';
 import CollapsibleSection from './CollapsibleSection';
 import SubstituteMenu from './SubstituteMenu';
@@ -27,7 +25,6 @@ import ProfileTab from './ProfileTab';
 import SavedPlansModal from './SavedPlansModal';
 import PlanSetupWizard from './wizard/PlanSetupWizard';
 import NewUserProfileGate from './NewUserProfileGate';
-// EnhancedTabs REMOVED — top tab bar no longer rendered.
 
 import Header from './Header';
 import BottomNav from './BottomNav';
@@ -369,8 +366,6 @@ const MainApp = ({
     
                             {/* --- RESULTS VIEW (RIGHT COLUMN) --- */}
                             <div className={`w-full md:w-1/2 ${isMenuOpen ? 'hidden md:block' : 'block'}`}>
-                                {/* Top tab bar REMOVED — navigation handled by BottomNav */}
-
                                 {hasInvalidMeals ? (
                                     <PlanCalculationErrorPanel />
                                 ) : (
