@@ -1,6 +1,12 @@
 // web/src/components/MealPlanDisplay.jsx
+// REDESIGN: Concept B (Split Neon Tiles) + Day Selector A (Calendar Strip)
+// - Neon tile grid replaces concentric rings for macro display
+// - Calendar strip day selector integrated into the section header
+// - Animated/pulsing borders on tiles
+// - Meal cards below are UNCHANGED
+
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { BookOpen, Target, CheckCircle, AlertTriangle, Soup, Droplet, Wheat, Copy } from 'lucide-react';
+import { BookOpen, CheckCircle, AlertTriangle, Copy } from 'lucide-react';
 import { COLORS } from '../constants';
 import { exportMealPlanToClipboard } from '../utils/mealPlanExporter';
 
@@ -8,16 +14,6 @@ import { exportMealPlanToClipboard } from '../utils/mealPlanExporter';
 // ─────────────────────────────────────────────────────────────
 // ANIMATED NUMBER — Smooth count-up/down on value change
 // ─────────────────────────────────────────────────────────────
-
-/**
- * Renders a number that smoothly animates between old and new values
- * using requestAnimationFrame. Transitions over `duration` ms with
- * an ease-out curve.
- *
- * @param {number}   value    - Target numeric value
- * @param {number}   duration - Animation duration in ms (default 500)
- * @param {function} format   - Optional formatter (default: toLocaleString)
- */
 const AnimatedNumber = ({ value, duration = 500, format }) => {
     const [displayValue, setDisplayValue] = useState(value);
     const prevValueRef = useRef(value);
@@ -32,36 +28,19 @@ const AnimatedNumber = ({ value, duration = 500, format }) => {
         const from = prevValueRef.current;
         const to = value;
         prevValueRef.current = value;
-
-        // If no change or component just mounted with same value, skip animation
-        if (from === to) {
-            setDisplayValue(to);
-            return;
-        }
-
+        if (from === to) { setDisplayValue(to); return; }
         const startTime = performance.now();
-
         const tick = (now) => {
             const elapsed = now - startTime;
             const t = Math.min(elapsed / duration, 1);
-            // Ease-out cubic
             const eased = 1 - Math.pow(1 - t, 3);
             const current = from + (to - from) * eased;
-
             setDisplayValue(current);
-
-            if (t < 1) {
-                rafRef.current = requestAnimationFrame(tick);
-            } else {
-                setDisplayValue(to);
-            }
+            if (t < 1) { rafRef.current = requestAnimationFrame(tick); }
+            else { setDisplayValue(to); }
         };
-
         rafRef.current = requestAnimationFrame(tick);
-
-        return () => {
-            if (rafRef.current) cancelAnimationFrame(rafRef.current);
-        };
+        return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
     }, [value, duration]);
 
     return <>{formatter(displayValue)}</>;
@@ -69,249 +48,158 @@ const AnimatedNumber = ({ value, duration = 500, format }) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// RING LAYER — Single concentric SVG ring
-//
-// ANIMATION FIX: The circle element stays mounted (no key-based
-// remount). strokeDashoffset is set as a style prop. The CSS
-// class .concept-b-ring-fill has:
-//   transition: stroke-dashoffset 0.7s cubic-bezier(0.22,1,0.36,1)
-// so whenever the offset value changes (day switch, meal toggled),
-// the browser smoothly interpolates between old and new values.
-// Per-ring stagger is achieved via inline transition-delay.
-//
-// This matches the Concept B HTML reference exactly.
+// CALENDAR STRIP DAY SELECTOR (Concept A)
+// Horizontal scrollable day cells with day-of-week labels,
+// gradient active state, and completion dots.
 // ─────────────────────────────────────────────────────────────
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-const RingLayer = ({ cx, cy, r, sw, bgColor, fillColor, pct, delay = 0 }) => {
-    const circ = 2 * Math.PI * r;
-    const clampedPct = Math.min(Math.max(pct, 0), 1);
-    const offset = circ - circ * clampedPct;
+const CalendarStripSelector = ({ totalDays, currentDay, onSelectDay, eatenMeals, mealPlan }) => {
+    const stripRef = useRef(null);
+
+    // Auto-scroll active day into view
+    useEffect(() => {
+        if (!stripRef.current) return;
+        const activeEl = stripRef.current.querySelector('[data-active="true"]');
+        if (activeEl) {
+            activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+    }, [currentDay]);
+
+    // Determine which days have all meals eaten
+    const completedDays = useMemo(() => {
+        if (!eatenMeals || !mealPlan) return [];
+        const completed = [];
+        for (let d = 1; d <= totalDays; d++) {
+            const dayData = mealPlan[d - 1];
+            if (!dayData || !Array.isArray(dayData.meals) || dayData.meals.length === 0) continue;
+            const dayEaten = eatenMeals[`day${d}`] || {};
+            const allEaten = dayData.meals.every(m => m && m.name && dayEaten[m.name]);
+            if (allEaten) completed.push(d);
+        }
+        return completed;
+    }, [eatenMeals, mealPlan, totalDays]);
+
+    if (totalDays <= 1) return null;
 
     return (
-        <>
-            <circle
-                cx={cx} cy={cy} r={r}
-                fill="none"
-                stroke={bgColor}
-                strokeWidth={sw}
-            />
-            <circle
-                cx={cx} cy={cy} r={r}
-                fill="none"
-                stroke={fillColor}
-                strokeWidth={sw}
-                strokeLinecap="round"
-                strokeDasharray={circ}
-                strokeDashoffset={offset}
-                className="concept-b-ring-fill"
-                style={{
-                    transitionDelay: `${delay}ms`,
-                }}
-            />
-        </>
+        <div className="mpd-cal-strip-wrapper">
+            <div ref={stripRef} className="mpd-cal-strip">
+                {Array.from({ length: totalDays }, (_, i) => {
+                    const day = i + 1;
+                    const isActive = day === currentDay;
+                    const isCompleted = completedDays.includes(day);
+                    const dowLabel = DAY_LABELS[i % 7];
+
+                    return (
+                        <button
+                            key={day}
+                            data-active={isActive}
+                            onClick={() => onSelectDay(day)}
+                            className={`mpd-cal-day ${isActive ? 'mpd-cal-day--active' : ''}`}
+                        >
+                            <span className="mpd-cal-dow">{dowLabel}</span>
+                            <span className="mpd-cal-num">{day}</span>
+                            {isCompleted && <span className="mpd-cal-check" />}
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
     );
 };
 
 
 // ─────────────────────────────────────────────────────────────
-// LABEL ROW — Right-side macro label with animated value
+// NEON TILE — Individual macro tile with pulsing border
 // ─────────────────────────────────────────────────────────────
+const NeonTile = ({ label, value, target, unit, color, colorRgb, pct, isHero, delay }) => {
+    const clampedPct = Math.min(pct * 100, 100);
 
-const RingLabelRow = ({ dotStyle, label, current, target, isNumeric = false, animDelay = 0 }) => (
-    <div
-        className="concept-b-label-row concept-b-label-row-animate"
-        style={{ animationDelay: `${animDelay}ms` }}
-    >
-        <span className="concept-b-label-dot" style={dotStyle} />
-        <span className="concept-b-label-text">{label}</span>
-        <span className="concept-b-label-value">
-            <span className="concept-b-label-current">
-                {isNumeric ? (
-                    <AnimatedNumber value={current} duration={500} />
-                ) : (
-                    current
-                )}
-            </span>{' '}
-            <span className="concept-b-label-target">{target}</span>
-        </span>
-    </div>
-);
+    return (
+        <div
+            className={`mpd-neon-tile ${isHero ? 'mpd-neon-tile--hero' : ''}`}
+            style={{
+                '--tile-color': color,
+                '--tile-rgb': colorRgb,
+                '--tile-delay': `${delay}s`,
+            }}
+        >
+            <div className="mpd-neon-tile-label">{label}</div>
+            <div className="mpd-neon-tile-value" style={{ color }}>
+                <AnimatedNumber value={value} duration={600} />
+                {!isHero && <span className="mpd-neon-tile-unit">{unit}</span>}
+            </div>
+            <div className="mpd-neon-tile-target">
+                of {isHero ? target.toLocaleString() + ' kcal' : target + unit}
+            </div>
+            <div className="mpd-neon-tile-bar">
+                <div
+                    className="mpd-neon-tile-bar-fill"
+                    style={{
+                        width: `${clampedPct}%`,
+                        background: color,
+                    }}
+                />
+            </div>
+        </div>
+    );
+};
 
 
 // ─────────────────────────────────────────────────────────────
-// CONCENTRIC RINGS CARD — Concept B progress visualization
-//
-// LAYOUT FIX: Container 180×180px. Ring radii:
-//   Calories (outer): r=80, sw=10
-//   Protein:          r=64, sw=8
-//   Fat:              r=50, sw=7
-//   Carbs (inner):    r=37, sw=6
-//   Center text area: ~62px diameter — fits "1,397" comfortably.
-//
-// ANIMATION FIX: Ring <circle> elements are stable (never
-// remounted). CSS transition on stroke-dashoffset handles smooth
-// filling. A separate animKey counter is used ONLY for:
-//   - The center number <span> (pop entrance animation)
-//   - The labels container <div> (stagger slide-in animation)
-// These cosmetic entrance animations use key-based remount
-// which is safe because they don't affect the ring fill.
+// NEON TILES CARD (Concept B — Split Neon Tiles)
+// Full-width calorie hero tile + 2-column P/F/C grid
 // ─────────────────────────────────────────────────────────────
-
-const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
+const NeonTilesCard = ({ calories, protein, fat, carbs, targets }) => {
     const calTarget = targets?.calories || 1;
     const proTarget = targets?.protein || 1;
     const fatTarget = targets?.fat || 1;
     const carbTarget = targets?.carbs || 1;
 
-    const calPct = calTarget > 0 ? calories / calTarget : 0;
-    const proPct = proTarget > 0 ? protein / proTarget : 0;
-    const fatPct = fatTarget > 0 ? fat / fatTarget : 0;
-    const carbPct = carbTarget > 0 ? carbs / carbTarget : 0;
-
-    // Enlarged SVG viewBox (was 160, now 180) for ring spacing
-    const size = 180;
-    const cx = 90;
-    const cy = 90;
-
-    // Animation key for entrance effects (center pop + label stagger).
-    // Only increments when macro values actually change.
-    // Does NOT affect ring circles — those stay mounted.
-    const animKeyRef = useRef(0);
-    const prevRef = useRef({ calories, protein, fat, carbs });
-
-    if (
-        prevRef.current.calories !== calories ||
-        prevRef.current.protein !== protein ||
-        prevRef.current.fat !== fat ||
-        prevRef.current.carbs !== carbs
-    ) {
-        animKeyRef.current += 1;
-        prevRef.current = { calories, protein, fat, carbs };
-    }
-
-    const animKey = animKeyRef.current;
-
-    // Dynamic calorie ring color
-    const getCalStroke = () => {
-        if (calPct > 1.05) return '#ef4444';
-        if (calPct >= 0.95) return '#22c55e';
-        return null; // use gradient
-    };
-    const calStrokeOverride = getCalStroke();
-
     return (
-        <div className="concept-b-rings-card">
-            {/* SVG Gradient Definition */}
-            <svg width="0" height="0" style={{ position: 'absolute' }}>
-                <defs>
-                    <linearGradient id="cheffyCalGrad" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stopColor={COLORS.primary[500]} />
-                        <stop offset="100%" stopColor={COLORS.secondary ? COLORS.secondary[500] : '#a855f7'} />
-                    </linearGradient>
-                </defs>
-            </svg>
-
-            <div className="concept-b-rings-layout">
-                {/* ── Left: Ring Visualization ── */}
-                <div className="concept-b-ring-container">
-                    {/*
-                     * The SVG is rotated -90deg so arcs start at 12-o'clock.
-                     * Ring radii (wider spacing for text room):
-                     *   Calories:  r=80, sw=10
-                     *   Protein:   r=64, sw=8
-                     *   Fat:       r=50, sw=7
-                     *   Carbs:     r=37, sw=6
-                     *   Center:    ~62px clear diameter
-                     *
-                     * Circle elements are STABLE — no key prop, no remount.
-                     * CSS transition on stroke-dashoffset does the smooth fill.
-                     */}
-                    <svg
-                        viewBox={`0 0 ${size} ${size}`}
-                        width="100%"
-                        height="100%"
-                        style={{ transform: 'rotate(-90deg)' }}
-                    >
-                        {/* Calories — outermost ring */}
-                        <RingLayer
-                            cx={cx} cy={cy} r={80} sw={10}
-                            bgColor={COLORS.gray ? COLORS.gray[100] : '#f3f4f6'}
-                            fillColor={calStrokeOverride || 'url(#cheffyCalGrad)'}
-                            pct={calPct} delay={0}
-                        />
-                        {/* Protein */}
-                        <RingLayer
-                            cx={cx} cy={cy} r={64} sw={8}
-                            bgColor="rgba(59, 130, 246, 0.1)"
-                            fillColor="#3b82f6"
-                            pct={proPct} delay={100}
-                        />
-                        {/* Fat */}
-                        <RingLayer
-                            cx={cx} cy={cy} r={50} sw={7}
-                            bgColor="rgba(245, 158, 11, 0.1)"
-                            fillColor="#f59e0b"
-                            pct={fatPct} delay={200}
-                        />
-                        {/* Carbs — innermost ring */}
-                        <RingLayer
-                            cx={cx} cy={cy} r={37} sw={6}
-                            bgColor="rgba(34, 197, 94, 0.1)"
-                            fillColor="#22c55e"
-                            pct={carbPct} delay={300}
-                        />
-                    </svg>
-
-                    {/* Center Text — NO rotation, positioned over the ring */}
-                    <div className="concept-b-ring-center">
-                        <span
-                            key={`center-num-${animKey}`}
-                            className="concept-b-ring-center-num concept-b-center-pop"
-                        >
-                            <AnimatedNumber value={calories} duration={600} />
-                        </span>
-                        <span className="concept-b-ring-center-label">
-                            kcal eaten
-                        </span>
-                    </div>
-                </div>
-
-                {/* ── Right: Label Rows with animated numbers ── */}
-                <div className="concept-b-ring-labels" key={`labels-${animKey}`}>
-                    <RingLabelRow
-                        dotStyle={{ background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary ? COLORS.secondary[500] : '#a855f7'})` }}
-                        label="Calories"
-                        current={calories}
-                        target={`/ ${calTarget.toLocaleString()} kcal`}
-                        isNumeric
-                        animDelay={50}
-                    />
-                    <RingLabelRow
-                        dotStyle={{ background: '#3b82f6' }}
-                        label="Protein"
-                        current={protein}
-                        target={`/ ${proTarget}g`}
-                        isNumeric
-                        animDelay={120}
-                    />
-                    <RingLabelRow
-                        dotStyle={{ background: '#f59e0b' }}
-                        label="Fat"
-                        current={fat}
-                        target={`/ ${fatTarget}g`}
-                        isNumeric
-                        animDelay={190}
-                    />
-                    <RingLabelRow
-                        dotStyle={{ background: '#22c55e' }}
-                        label="Carbs"
-                        current={carbs}
-                        target={`/ ${carbTarget}g`}
-                        isNumeric
-                        animDelay={260}
-                    />
-                </div>
-            </div>
+        <div className="mpd-neon-grid">
+            <NeonTile
+                label="Calories"
+                value={calories}
+                target={calTarget}
+                unit=" kcal"
+                color={COLORS.primary[400]}
+                colorRgb="99, 102, 241"
+                pct={calTarget > 0 ? calories / calTarget : 0}
+                isHero
+                delay={0}
+            />
+            <NeonTile
+                label="Protein"
+                value={protein}
+                target={proTarget}
+                unit="g"
+                color="#3b82f6"
+                colorRgb="59, 130, 246"
+                pct={proTarget > 0 ? protein / proTarget : 0}
+                delay={0.1}
+            />
+            <NeonTile
+                label="Fat"
+                value={fat}
+                target={fatTarget}
+                unit="g"
+                color="#f59e0b"
+                colorRgb="245, 158, 11"
+                pct={fatTarget > 0 ? fat / fatTarget : 0}
+                delay={0.2}
+            />
+            <NeonTile
+                label="Carbs"
+                value={carbs}
+                target={carbTarget}
+                unit="g"
+                color="#22c55e"
+                colorRgb="34, 197, 94"
+                pct={carbTarget > 0 ? carbs / carbTarget : 0}
+                delay={0.3}
+            />
         </div>
     );
 };
@@ -320,13 +208,25 @@ const ConcentricRingsCard = ({ calories, protein, fat, carbs, targets }) => {
 // ─────────────────────────────────────────────────────────────
 // MEAL PLAN DISPLAY — Main component
 // ─────────────────────────────────────────────────────────────
-
-const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals, onToggleMealEaten, onViewRecipe, showToast }) => {
+const MealPlanDisplay = ({
+    mealPlan,
+    selectedDay,
+    setSelectedDay,
+    nutritionalTargets,
+    eatenMeals,
+    onToggleMealEaten,
+    onViewRecipe,
+    showToast,
+    // These are passed by MainApp but unused here; accept to avoid console warnings
+    formData,
+    nutritionCache,
+    loadingNutritionFor,
+    onFetchNutrition,
+}) => {
     const [copying, setCopying] = useState(false);
 
     // ── CRITICAL BOUNDS CHECK ──
     if (!mealPlan || mealPlan.length === 0) {
-        console.warn('[MealPlanDisplay] mealPlan is empty or undefined');
         return (
             <div className="p-6 text-center bg-yellow-50 rounded-lg">
                 <AlertTriangle className="inline mr-2" />
@@ -336,7 +236,6 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
     }
 
     if (selectedDay < 1 || selectedDay > mealPlan.length) {
-        console.error(`[MealPlanDisplay] selectedDay ${selectedDay} is out of bounds (plan has ${mealPlan.length} days)`);
         return (
             <div className="p-6 text-center bg-red-50 text-red-800 rounded-lg">
                 <AlertTriangle className="inline mr-2" />
@@ -348,7 +247,6 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
     const dayData = mealPlan[selectedDay - 1];
 
     if (!dayData) {
-        console.warn(`[MealPlanDisplay] No valid data found for day ${selectedDay}.`);
         return (
             <div className="p-6 text-center bg-yellow-50 rounded-lg">
                 <AlertTriangle className="inline mr-2" />
@@ -358,7 +256,6 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
     }
 
     if (!Array.isArray(dayData.meals)) {
-        console.error(`[MealPlanDisplay] Invalid meals structure for day ${selectedDay}.`);
         return (
             <div className="p-6 text-center bg-red-50 text-red-800 rounded-lg">
                 <AlertTriangle className="inline mr-2" />
@@ -372,10 +269,8 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
         if (!dayData || !Array.isArray(dayData.meals) || !eatenMeals) {
             return { calories: 0, protein: 0, fat: 0, carbs: 0 };
         }
-
         const dayMealsEatenState = eatenMeals[`day${selectedDay}`] || {};
         let totals = { calories: 0, protein: 0, fat: 0, carbs: 0 };
-
         dayData.meals.forEach(meal => {
             if (meal && meal.name && dayMealsEatenState[meal.name]) {
                 totals.calories += meal.subtotal_kcal || 0;
@@ -384,7 +279,6 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
                 totals.carbs += meal.subtotal_carbs || 0;
             }
         });
-
         return {
             calories: Math.round(totals.calories),
             protein: Math.round(totals.protein),
@@ -393,7 +287,7 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
         };
     }, [dayData, eatenMeals, selectedDay]);
 
-    // Handle copy all meals
+    // Copy all meals handler
     const handleCopyAllMeals = async () => {
         setCopying(true);
         try {
@@ -403,61 +297,59 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
             }
         } catch (error) {
             console.error('[MealPlanDisplay] Error copying meals:', error);
-            if (showToast) {
-                showToast('Failed to copy meal plan', 'error');
-            }
+            if (showToast) showToast('Failed to copy meal plan', 'error');
         } finally {
             setCopying(false);
         }
     };
 
     return (
-        <div className="space-y-6">
-            {/* ════════ Premium Header with Copy Button ════════ */}
-            <div className="flex items-center justify-between pb-4 border-b border-gray-200">
-                <div className="flex items-center gap-3">
-                    <div
-                        className="p-2.5 rounded-xl shadow-md"
-                        style={{
-                            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)'
-                        }}
+        <div className="mpd-root">
+            {/* ════════ Concept B Section Card ════════ */}
+            <div className="mpd-section-card">
+                {/* Header Row: Title + Day Badge + Copy */}
+                <div className="mpd-header">
+                    <div className="mpd-header-left">
+                        <div className="mpd-header-pill">Day {selectedDay}</div>
+                        <div>
+                            <h3 className="mpd-header-title">Your Nutrition</h3>
+                            <p className="mpd-header-sub">Personalized daily plan</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={handleCopyAllMeals}
+                        disabled={copying || !mealPlan || mealPlan.length === 0}
+                        className="mpd-copy-btn"
+                        title="Copy all meals to clipboard"
                     >
-                        <BookOpen className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                        <h3 className="text-2xl font-bold text-gray-900 tracking-tight">
-                            Meals for Day {selectedDay}
-                        </h3>
-                        <p className="text-sm text-gray-500 font-medium mt-0.5">
-                            Your personalized nutrition plan
-                        </p>
-                    </div>
+                        <Copy className="w-4 h-4" />
+                        <span className="hidden sm:inline">
+                            {copying ? 'Copying...' : 'Copy'}
+                        </span>
+                    </button>
                 </div>
 
-                <button
-                    onClick={handleCopyAllMeals}
-                    disabled={copying || !mealPlan || mealPlan.length === 0}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Copy all meals to clipboard"
-                >
-                    <Copy className="w-4 h-4" />
-                    <span className="hidden sm:inline">
-                        {copying ? 'Copying...' : 'Copy Meals'}
-                    </span>
-                </button>
+                {/* Calendar Strip Day Selector */}
+                <CalendarStripSelector
+                    totalDays={mealPlan.length}
+                    currentDay={selectedDay}
+                    onSelectDay={setSelectedDay}
+                    eatenMeals={eatenMeals}
+                    mealPlan={mealPlan}
+                />
+
+                {/* Neon Tiles Macro Display */}
+                <NeonTilesCard
+                    calories={dailyMacrosEaten.calories}
+                    protein={dailyMacrosEaten.protein}
+                    fat={dailyMacrosEaten.fat}
+                    carbs={dailyMacrosEaten.carbs}
+                    targets={nutritionalTargets}
+                />
             </div>
 
-            {/* ════════ Concept B: Concentric Rings Progress Card ════════ */}
-            <ConcentricRingsCard
-                calories={dailyMacrosEaten.calories}
-                protein={dailyMacrosEaten.protein}
-                fat={dailyMacrosEaten.fat}
-                carbs={dailyMacrosEaten.carbs}
-                targets={nutritionalTargets}
-            />
-
             {/* ════════ Meal Cards (UNCHANGED — do not modify below) ════════ */}
-            <div className="space-y-4">
+            <div className="space-y-4 mt-6">
                 {dayData.meals.map((meal, index) => {
                     if (!meal || !meal.name) {
                         console.warn(`[MealPlanDisplay] Invalid meal at index ${index}:`, meal);
@@ -538,6 +430,226 @@ const MealPlanDisplay = ({ mealPlan, selectedDay, nutritionalTargets, eatenMeals
                     );
                 })}
             </div>
+
+            {/* ════════ Scoped Styles ════════ */}
+            <style>{`
+                /* ── Root ── */
+                .mpd-root {
+                    padding: 16px;
+                }
+
+                /* ── Section Card ── */
+                .mpd-section-card {
+                    background: #1a1d2a;
+                    border-radius: 20px;
+                    padding: 22px;
+                    border: 1px solid #262a3a;
+                    margin-bottom: 8px;
+                }
+
+                /* ── Header ── */
+                .mpd-header {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    margin-bottom: 16px;
+                }
+                .mpd-header-left {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                }
+                .mpd-header-pill {
+                    font-family: 'Inter', -apple-system, sans-serif;
+                    font-size: 0.7rem;
+                    font-weight: 700;
+                    padding: 5px 14px;
+                    border-radius: 999px;
+                    letter-spacing: 0.04em;
+                    background: linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]});
+                    color: white;
+                    white-space: nowrap;
+                }
+                .mpd-header-title {
+                    font-size: 1.15rem;
+                    font-weight: 700;
+                    color: #f0f1f5;
+                    line-height: 1.2;
+                }
+                .mpd-header-sub {
+                    font-size: 0.75rem;
+                    color: #7b809a;
+                    margin-top: 1px;
+                }
+                .mpd-copy-btn {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 8px 14px;
+                    border-radius: 10px;
+                    background: rgba(99, 102, 241, 0.12);
+                    border: 1px solid rgba(99, 102, 241, 0.2);
+                    color: #818cf8;
+                    font-size: 0.78rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .mpd-copy-btn:hover {
+                    background: rgba(99, 102, 241, 0.22);
+                }
+                .mpd-copy-btn:disabled {
+                    opacity: 0.4;
+                    cursor: not-allowed;
+                }
+
+                /* ── Calendar Strip ── */
+                .mpd-cal-strip-wrapper {
+                    margin: 0 -22px 18px;
+                    padding: 0 22px;
+                }
+                .mpd-cal-strip {
+                    display: flex;
+                    gap: 8px;
+                    padding: 8px;
+                    background: rgba(255, 255, 255, 0.04);
+                    border-radius: 14px;
+                    border: 1px solid #262a3a;
+                    overflow-x: auto;
+                    -ms-overflow-style: none;
+                    scrollbar-width: none;
+                }
+                .mpd-cal-strip::-webkit-scrollbar { display: none; }
+
+                .mpd-cal-day {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    padding: 8px 12px;
+                    border-radius: 12px;
+                    cursor: pointer;
+                    transition: all 0.25s ease;
+                    flex-shrink: 0;
+                    min-width: 50px;
+                    border: 1px solid transparent;
+                    background: transparent;
+                    -webkit-tap-highlight-color: transparent;
+                }
+                .mpd-cal-day:hover:not(.mpd-cal-day--active) {
+                    background: rgba(255, 255, 255, 0.06);
+                    border-color: rgba(255, 255, 255, 0.08);
+                }
+                .mpd-cal-day--active {
+                    background: linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]});
+                    border-color: rgba(99, 102, 241, 0.4);
+                    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
+                }
+                .mpd-cal-dow {
+                    font-size: 0.6rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.12em;
+                    color: #7b809a;
+                    margin-bottom: 3px;
+                    font-weight: 600;
+                    line-height: 1;
+                }
+                .mpd-cal-day--active .mpd-cal-dow { color: rgba(255,255,255,0.8); }
+                .mpd-cal-num {
+                    font-family: 'Inter', -apple-system, sans-serif;
+                    font-size: 1.15rem;
+                    font-weight: 700;
+                    color: #e8eaf0;
+                    line-height: 1;
+                }
+                .mpd-cal-day--active .mpd-cal-num { color: white; }
+                .mpd-cal-check {
+                    width: 5px;
+                    height: 5px;
+                    border-radius: 50%;
+                    margin-top: 5px;
+                    background: #22c55e;
+                }
+
+                /* ── Neon Tiles Grid ── */
+                .mpd-neon-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 10px;
+                }
+
+                /* ── Individual Tile ── */
+                .mpd-neon-tile {
+                    border-radius: 16px;
+                    padding: 14px 16px;
+                    position: relative;
+                    overflow: hidden;
+                    background: rgba(var(--tile-rgb), 0.06);
+                    border: 1px solid rgba(var(--tile-rgb), 0.15);
+                    transition: transform 0.2s ease, border-color 0.3s ease;
+                    animation: mpd-tile-border-pulse 3s ease-in-out infinite alternate;
+                    animation-delay: var(--tile-delay);
+                }
+                .mpd-neon-tile:hover {
+                    transform: translateY(-2px);
+                }
+                .mpd-neon-tile--hero {
+                    grid-column: 1 / -1;
+                    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(168, 85, 247, 0.06));
+                    border-color: rgba(99, 102, 241, 0.18);
+                }
+
+                @keyframes mpd-tile-border-pulse {
+                    0% { border-color: rgba(var(--tile-rgb), 0.12); }
+                    100% { border-color: rgba(var(--tile-rgb), 0.35); }
+                }
+
+                .mpd-neon-tile-label {
+                    font-size: 0.7rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.08em;
+                    color: #7b809a;
+                    margin-bottom: 4px;
+                    font-weight: 600;
+                }
+                .mpd-neon-tile-value {
+                    font-family: 'Inter', -apple-system, sans-serif;
+                    font-size: 1.4rem;
+                    font-weight: 700;
+                    line-height: 1;
+                    font-variant-numeric: tabular-nums;
+                }
+                .mpd-neon-tile--hero .mpd-neon-tile-value {
+                    font-size: 2rem;
+                }
+                .mpd-neon-tile-unit {
+                    font-size: 0.7rem;
+                    color: #7b809a;
+                    margin-left: 2px;
+                }
+                .mpd-neon-tile-target {
+                    font-size: 0.7rem;
+                    color: #5a5e75;
+                    margin-top: 3px;
+                }
+                .mpd-neon-tile-bar {
+                    margin-top: 10px;
+                    height: 4px;
+                    background: rgba(255, 255, 255, 0.06);
+                    border-radius: 99px;
+                    overflow: hidden;
+                }
+                .mpd-neon-tile-bar-fill {
+                    height: 100%;
+                    border-radius: 99px;
+                    transition: width 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+                    box-shadow: 0 0 8px currentColor;
+                    animation: mpd-neon-glow 2.5s ease-in-out infinite alternate;
+                }
+                @keyframes mpd-neon-glow {
+                    0% { box-shadow: 0 0 4px currentColor; opacity: 0.85; }
+                    100% { box-shadow: 0 0 14px currentColor; opacity: 1; }
+                }
+            `}</style>
         </div>
     );
 };
