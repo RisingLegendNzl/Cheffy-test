@@ -5,8 +5,7 @@ import { useInView } from '../../hooks/useResponsive';
 
 /**
  * Final CTA Section Component
- * Warm editorial full-bleed CTA
- * Removed: "Schedule a Demo" button, "Join 50,000+ happy users" benefit
+ * Full-bleed CTA — theme aligned to Cheffy app indigo/purple palette
  */
 const CTASection = ({ onGetStarted }) => {
   const benefits = [
@@ -22,13 +21,13 @@ const CTASection = ({ onGetStarted }) => {
     <section
       ref={sectionRef}
       className="py-20 md:py-28 relative overflow-hidden"
-      style={{ backgroundColor: '#1B1B18' }}
+      style={{ backgroundColor: '#1e1b4b' }}
     >
       {/* Subtle decorative elements */}
       <div
         className="absolute top-0 right-0 w-96 h-96 rounded-full opacity-8"
         style={{
-          background: 'radial-gradient(circle, #2D6A4F 0%, transparent 65%)',
+          background: 'radial-gradient(circle, #6366f1 0%, transparent 65%)',
           filter: 'blur(80px)',
           transform: 'translate(30%, -40%)',
         }}
@@ -36,7 +35,7 @@ const CTASection = ({ onGetStarted }) => {
       <div
         className="absolute bottom-0 left-0 w-72 h-72 rounded-full opacity-6"
         style={{
-          background: 'radial-gradient(circle, #D4A373 0%, transparent 65%)',
+          background: 'radial-gradient(circle, #a855f7 0%, transparent 65%)',
           filter: 'blur(60px)',
           transform: 'translate(-30%, 40%)',
         }}
@@ -53,7 +52,7 @@ const CTASection = ({ onGetStarted }) => {
         <span
           className="text-xs font-semibold tracking-widest uppercase block mb-5"
           style={{
-            color: '#A3D9B1',
+            color: '#c7d2fe',
             fontFamily: "'Georgia', serif",
             letterSpacing: '0.12em',
           }}
@@ -95,18 +94,18 @@ const CTASection = ({ onGetStarted }) => {
           onClick={onGetStarted}
           className="group inline-flex items-center space-x-2.5 px-8 py-4 rounded-xl font-semibold text-sm transition-all duration-300 hover:translate-y-[-2px] mb-12"
           style={{
-            backgroundColor: '#2D6A4F',
+            backgroundColor: '#6366f1',
             color: '#FFFFFF',
             fontFamily: "'Georgia', serif",
-            boxShadow: '0 6px 24px rgba(45, 106, 79, 0.35)',
+            boxShadow: '0 6px 24px rgba(99, 102, 241, 0.35)',
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.boxShadow =
-              '0 10px 32px rgba(45, 106, 79, 0.45)';
+              '0 10px 32px rgba(99, 102, 241, 0.45)';
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.boxShadow =
-              '0 6px 24px rgba(45, 106, 79, 0.35)';
+              '0 6px 24px rgba(99, 102, 241, 0.35)';
           }}
         >
           <span>Start Your Free Trial</span>
@@ -131,7 +130,7 @@ const CTASection = ({ onGetStarted }) => {
               <CheckCircle
                 size={15}
                 className="flex-shrink-0"
-                style={{ color: '#A3D9B1' }}
+                style={{ color: '#c7d2fe' }}
               />
               <span
                 className="text-xs md:text-sm"
