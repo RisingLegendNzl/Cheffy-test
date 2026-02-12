@@ -1,13 +1,11 @@
 // web/src/components/ShoppingListWithDetails.jsx
-// FIXED: Product detail modal now displays correctly when "View Product" is clicked
+// =============================================================================
+// ShoppingListWithDetails — Shopping list with product cards and detail modal
 //
-// BUG 1 (Critical): isOpen prop was `!selectedProductModal` — this inverted boolean meant
-//   the modal would CLOSE when a product was selected and OPEN when nothing was selected.
-//   Changed to `!!selectedProductModal` to properly convert to boolean.
-//
-// BUG 2 (Resilience): modalProductData returned null silently when data lookup failed,
-//   leaving users with no visual feedback. Now provides fallback error-state data so
-//   modal always opens and can display appropriate error messages.
+// CRITICAL FIX: Changed ProductDetailModal isOpen prop from !selectedProductModal
+// to !!selectedProductModal — the inverted boolean was causing the modal to
+// close when a product was selected and open when nothing was selected.
+// =============================================================================
 
 import React, { useState, useMemo } from 'react';
 import { 
@@ -35,9 +33,7 @@ const ShoppingListWithDetails = ({
   const [activeCategory, setActiveCategory] = useState('all');
   const [selectedProductModal, setSelectedProductModal] = useState(null);
 
-  // ============================================================================
-  // STORE NAME DETECTION
-  // ============================================================================
+  // Store name detection
   const actualStoreName = useMemo(() => {
     for (const [key, result] of Object.entries(results)) {
       const products = result.allProducts || result.products || [];
@@ -54,158 +50,89 @@ const ShoppingListWithDetails = ({
     return storeName || 'Woolworths';
   }, [results, storeName]);
 
-  // ============================================================================
-  // PRODUCT TRANSFORMATION
-  // Stores full result data + selectedProduct + allProducts per item so the
-  // modal can access them without a second lookup that might miss.
-  // ============================================================================
+  // Transform ingredients into product cards
   const products = useMemo(() => {
-    const productList = [];
-    
-    Object.entries(categorizedResults).forEach(([category, items]) => {
-      items.forEach(({ normalizedKey, ingredient, ...result }) => {
-        const freshResult = results[normalizedKey] || result;
-        const allProducts = freshResult.allProducts || freshResult.products || [];
-        const selectedIndex = freshResult.selectedIndex || 0;
+    return ingredients.map((item, idx) => {
+      const normalizedKey = item.originalIngredient?.toLowerCase().trim();
+      const result = results[normalizedKey] || {};
+      const allProducts = result.allProducts || result.products || [];
+      const selectedIndex = result.selectedIndex ?? 0;
+      const selectedProduct = allProducts[selectedIndex];
 
-        let selectedProduct = null;
-        if (freshResult.currentSelectionURL) {
-          selectedProduct = allProducts.find(p => p && p.url === freshResult.currentSelectionURL);
-        }
-        if (!selectedProduct && allProducts.length > 0) {
-          selectedProduct = allProducts[selectedIndex] || allProducts[0];
-        }
-        
-        if (!selectedProduct) return;
-        
-        const price = parseFloat(
-          selectedProduct.product_price || 
-          selectedProduct.price || 
-          selectedProduct.current_price || 
-          0
-        );
-        
-        const size = selectedProduct.size || 
-                    selectedProduct.product_size || 
-                    selectedProduct.package_size || 
-                    '';
-        
-        const cheapest = selectedProduct.cheapest || false;
-        
-        productList.push({
-          id: normalizedKey,
-          name: ingredient,
-          category: category.toLowerCase(),
-          price,
-          size,
-          cheapest,
-          normalizedKey,
-          ingredient,
-          result: freshResult,
-          selectedProduct,
-          allProducts
-        });
-      });
-    });
-    
-    return productList;
-  }, [categorizedResults, results]);
+      const price = selectedProduct?.price ?? selectedProduct?.current_price ?? selectedProduct?.product_price;
+      const size = selectedProduct?.size || selectedProduct?.product_size || selectedProduct?.package_size;
+      
+      // Find absolute cheapest
+      const cheapest = allProducts.reduce((best, current) => {
+        if (!current) return best;
+        const currentPrice = current.unit_price_per_100 ?? Infinity;
+        const bestPrice = best?.unit_price_per_100 ?? Infinity;
+        return currentPrice < bestPrice ? current : best;
+      }, allProducts[0]);
 
-  // ============================================================================
-  // CATEGORY COUNTS
-  // ============================================================================
-  const categoryCounts = useMemo(() => {
-    const counts = { all: products.length };
+      const isCheapest = selectedProduct?.url === cheapest?.url;
+
+      return {
+        id: `${normalizedKey}-${idx}`,
+        normalizedKey,
+        name: item.originalIngredient || 'Unknown',
+        price: price ? parseFloat(price) : null,
+        size,
+        cheapest: isCheapest,
+        category: item.category || 'uncategorized',
+      };
+    }).filter(p => p.price !== null);
+  }, [ingredients, results]);
+
+  // Categorize products
+  const categorizedProducts = useMemo(() => {
+    const cats = {};
     products.forEach(product => {
-      const cat = product.category;
-      counts[cat] = (counts[cat] || 0) + 1;
+      const cat = product.category || 'uncategorized';
+      if (!cats[cat]) cats[cat] = [];
+      cats[cat].push(product);
     });
-    return counts;
+    return cats;
   }, [products]);
 
-  // ============================================================================
-  // CATEGORY LIST FOR PILLS
-  // ============================================================================
   const categories = useMemo(() => {
-    const uniqueCategories = [...new Set(products.map(p => p.category))];
-    const sortedCategories = uniqueCategories.sort((a, b) => a.localeCompare(b));
-    return [
-      { id: 'all', label: 'All Items', count: categoryCounts.all },
-      ...sortedCategories.map(cat => ({
+    const cats = [{ id: 'all', label: 'All', count: products.length }];
+    Object.entries(categorizedProducts).forEach(([cat, items]) => {
+      cats.push({
         id: cat,
         label: cat.charAt(0).toUpperCase() + cat.slice(1),
-        count: categoryCounts[cat] || 0
-      }))
-    ];
-  }, [products, categoryCounts]);
+        count: items.length,
+      });
+    });
+    return cats;
+  }, [categorizedProducts, products.length]);
 
-  // ============================================================================
-  // FILTERED PRODUCTS
-  // ============================================================================
   const filteredProducts = useMemo(() => {
     if (activeCategory === 'all') return products;
-    return products.filter(p => p.category === activeCategory);
-  }, [products, activeCategory]);
+    return categorizedProducts[activeCategory] || [];
+  }, [activeCategory, products, categorizedProducts]);
 
-  // ============================================================================
-  // ESTIMATED SAVINGS
-  // ============================================================================
-  const estimatedSavings = useMemo(() => {
-    const cheapestCount = products.filter(p => p.cheapest).length;
-    return cheapestCount * 0.50;
-  }, [products]);
-
-  // ============================================================================
-  // MODAL DATA
-  // FIX v3: Hardened with layered fallbacks to ensure modal always receives data
-  // ============================================================================
+  // Modal data computation
   const modalProductData = useMemo(() => {
     if (!selectedProductModal) return null;
-    
-    const product = products.find(p => p.normalizedKey === selectedProductModal);
-    
-    const freshResult = results[selectedProductModal]
-      || (product && results[product.normalizedKey])
-      || (product && product.result)
-      || null;
 
+    const freshResult = results[selectedProductModal];
     if (!freshResult) {
-      console.warn('[SHOPPING_LIST] Modal: no result data for key:', selectedProductModal);
       return {
-        ingredientKey: product?.ingredient || selectedProductModal,
+        ingredientKey: selectedProductModal,
         normalizedKey: selectedProductModal,
-        result: { source: 'failed', allProducts: [] },
+        result: { source: 'failed' },
         currentSelection: null,
         absoluteCheapestProduct: null,
         substitutes: [],
-        currentQuantity: 1
+        currentQuantity: 1,
       };
     }
 
-    const allProducts = freshResult.allProducts || freshResult.products || (product?.allProducts) || [];
-    
-    if (allProducts.length === 0) {
-      console.warn('[SHOPPING_LIST] Modal: empty allProducts for:', selectedProductModal);
-      return {
-        ingredientKey: product?.ingredient || freshResult.originalIngredient || selectedProductModal,
-        normalizedKey: selectedProductModal,
-        result: freshResult,
-        currentSelection: null,
-        absoluteCheapestProduct: null,
-        substitutes: [],
-        currentQuantity: freshResult.userQuantity || 1
-      };
-    }
+    const allProducts = freshResult.allProducts || freshResult.products || [];
+    const selectedIndex = freshResult.selectedIndex ?? 0;
+    const currentSelection = allProducts[selectedIndex];
 
-    let currentSelection = null;
-    if (freshResult.currentSelectionURL) {
-      currentSelection = allProducts.find(p => p && p.url === freshResult.currentSelectionURL);
-    }
-    if (!currentSelection) {
-      const idx = freshResult.selectedIndex || 0;
-      currentSelection = allProducts[idx] || allProducts[0];
-    }
-    
     const cheapest = allProducts.reduce((best, current) => {
       if (!current) return best;
       return (current.unit_price_per_100 ?? Infinity) < (best?.unit_price_per_100 ?? Infinity) 
@@ -218,7 +145,7 @@ const ShoppingListWithDetails = ({
       .slice(0, 5);
 
     return {
-      ingredientKey: product?.ingredient || freshResult.originalIngredient || selectedProductModal,
+      ingredientKey: freshResult.originalIngredient || selectedProductModal,
       normalizedKey: selectedProductModal,
       result: freshResult,
       currentSelection,
@@ -226,12 +153,9 @@ const ShoppingListWithDetails = ({
       substitutes,
       currentQuantity: freshResult.userQuantity || 1
     };
-  }, [selectedProductModal, products, results]);
+  }, [selectedProductModal, results]);
 
-  // ============================================================================
-  // EVENT HANDLERS
-  // ============================================================================
-  
+  // Event handlers
   const handleCopyList = async () => {
     let text = `Shopping List - ${actualStoreName}\n`;
     text += `Total Cost: $${totalCost.toFixed(2)}\n`;
@@ -249,20 +173,29 @@ const ShoppingListWithDetails = ({
 
     try {
       await navigator.clipboard.writeText(text);
-      if (onShowToast) onShowToast('Shopping list copied to clipboard!', 'success');
+      if (onShowToast) onShowToast('Shopping list copied to clipboard!');
     } catch (err) {
-      console.error('Failed to copy:', err);
-      if (onShowToast) onShowToast('Failed to copy list', 'error');
+      console.error('Copy failed:', err);
+      if (onShowToast) onShowToast('Failed to copy list');
     }
   };
 
-  const handlePrint = () => { window.print(); };
+  const handlePrint = () => {
+    window.print();
+  };
 
   const handleShare = async () => {
-    const text = `Shopping List - ${actualStoreName}\nTotal: $${totalCost.toFixed(2)}\n${products.length} items`;
     if (navigator.share) {
-      try { await navigator.share({ title: 'My Shopping List', text }); }
-      catch (err) { console.error('Share failed:', err); }
+      try {
+        await navigator.share({
+          title: `${actualStoreName} Shopping List`,
+          text: `Shopping list with ${products.length} items - Total: $${totalCost.toFixed(2)}`,
+        });
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error('Share failed:', err);
+        }
+      }
     } else {
       handleCopyList();
     }
@@ -276,111 +209,98 @@ const ShoppingListWithDetails = ({
     setSelectedProductModal(null);
   };
 
-  const handleSelectSubstitute = (normalizedKey, product) => {
-    console.log('[SHOPPING_LIST] Substitute selected:', { normalizedKey, product: product.name });
+  const handleSelectSubstitute = (normalizedKey, substitute) => {
     if (onSelectSubstitute) {
-      onSelectSubstitute(normalizedKey, product);
+      onSelectSubstitute(normalizedKey, substitute);
     }
-    handleCloseModal();
-    if (onShowToast) onShowToast(`Switched to ${product.name}`, 'success');
+    setSelectedProductModal(null);
   };
 
-  // ============================================================================
-  // RENDER
-  // ============================================================================
-  
   return (
     <div style={{
       fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      minHeight: '100vh',
-      background: 'linear-gradient(to bottom, #f8fafc, #ffffff)',
+      padding: '20px',
+      maxWidth: '800px',
+      margin: '0 auto',
     }}>
-      {/* HEADER SECTION */}
+      {/* Header */}
       <div style={{
         background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        padding: '32px 24px',
-        borderRadius: '0 0 24px 24px',
-        boxShadow: '0 4px 20px rgba(102, 126, 234, 0.25)',
+        borderRadius: '20px',
+        padding: '24px',
+        marginBottom: '24px',
+        boxShadow: '0 8px 24px rgba(102, 126, 234, 0.25)',
       }}>
-        <div style={{
-          fontSize: '14px',
-          fontWeight: '500',
-          color: 'rgba(255, 255, 255, 0.8)',
-          marginBottom: '8px',
-          letterSpacing: '0.5px',
-        }}>
-          {actualStoreName}
-        </div>
-
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          marginBottom: '20px',
+          alignItems: 'center',
+          marginBottom: '16px',
         }}>
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <ShoppingBag size={28} color="#ffffff" />
             <h2 style={{
-              fontSize: '28px',
+              fontSize: '24px',
               fontWeight: '700',
               color: '#ffffff',
-              margin: '0 0 4px 0',
+              margin: 0,
             }}>
               Shopping List
             </h2>
-            <div style={{
-              fontSize: '14px',
-              color: 'rgba(255, 255, 255, 0.9)',
-              fontWeight: '500',
-            }}>
-              {products.length} {products.length === 1 ? 'item' : 'items'}
-            </div>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{
-              fontSize: '32px',
-              fontWeight: '800',
-              color: '#ffffff',
-              lineHeight: '1',
-            }}>
-              ${totalCost.toFixed(2)}
-            </div>
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.2)',
+            borderRadius: '12px',
+            padding: '8px 16px',
+            backdropFilter: 'blur(10px)',
+          }}>
             <div style={{
               fontSize: '12px',
-              color: 'rgba(255, 255, 255, 0.7)',
-              marginTop: '4px',
+              color: 'rgba(255, 255, 255, 0.9)',
+              fontWeight: '500',
+              marginBottom: '2px',
             }}>
-              estimated total
+              {actualStoreName}
+            </div>
+            <div style={{
+              fontSize: '20px',
+              fontWeight: '700',
+              color: '#ffffff',
+            }}>
+              ${totalCost.toFixed(2)}
             </div>
           </div>
         </div>
 
+        {/* Action buttons */}
         <div style={{
           display: 'flex',
           gap: '8px',
+          flexWrap: 'wrap',
         }}>
           {[
-            { icon: Copy, label: 'Copy', action: handleCopyList },
-            { icon: Printer, label: 'Print', action: handlePrint },
-            { icon: Share2, label: 'Share', action: handleShare },
-          ].map(({ icon: Icon, label, action }) => (
+            { icon: Copy, label: 'Copy', onClick: handleCopyList },
+            { icon: Printer, label: 'Print', onClick: handlePrint },
+            { icon: Share2, label: 'Share', onClick: handleShare },
+          ].map(({ icon: Icon, label, onClick }) => (
             <button
               key={label}
-              onClick={action}
+              onClick={onClick}
               className="shopping-action-button"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
                 padding: '10px 16px',
+                background: 'rgba(255, 255, 255, 0.2)',
+                border: '1.5px solid rgba(255, 255, 255, 0.3)',
                 borderRadius: '12px',
-                border: '1px solid rgba(255, 255, 255, 0.25)',
-                background: 'rgba(255, 255, 255, 0.15)',
                 color: '#ffffff',
-                fontSize: '13px',
+                fontSize: '14px',
                 fontWeight: '600',
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
-                backdropFilter: 'blur(8px)',
+                backdropFilter: 'blur(10px)',
               }}
             >
               <Icon size={16} />
@@ -390,103 +310,102 @@ const ShoppingListWithDetails = ({
         </div>
       </div>
 
-      {/* MAIN CONTENT */}
-      <div style={{ padding: '20px 16px' }}>
-        <div style={{ marginBottom: '20px' }}>
-          <div 
-            className="shopping-category-pills"
-            style={{
-              display: 'flex',
-              gap: '8px',
-              overflowX: 'auto',
-              paddingBottom: '4px',
-              msOverflowStyle: 'none',
-              scrollbarWidth: 'none',
-            }}
-          >
-            {categories.map(({ id, label, count }) => {
-              const isActive = activeCategory === id;
-              return (
-                <button
-                  key={id}
-                  onClick={() => setActiveCategory(id)}
-                  className={`shopping-pill ${isActive ? 'active' : ''}`}
-                  style={{
-                    flexShrink: 0,
-                    padding: '8px 16px',
-                    borderRadius: '20px',
-                    border: isActive ? '1.5px solid #667eea' : '1.5px solid #e2e8f0',
-                    background: isActive ? 'linear-gradient(135deg, #667eea, #764ba2)' : '#ffffff',
-                    color: isActive ? '#ffffff' : '#4a5568',
-                    fontSize: '13px',
-                    fontWeight: '600',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    boxShadow: isActive 
-                      ? '0 4px 12px rgba(102, 126, 234, 0.3)'
-                      : '0 1px 3px rgba(0, 0, 0, 0.05)',
-                  }}
-                >
-                  {label} ({count})
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '12px',
-        }}>
-          {filteredProducts.length === 0 ? (
-            <div style={{
-              textAlign: 'center',
-              padding: '60px 20px',
-              background: '#ffffff',
-              borderRadius: '16px',
-              border: '2px dashed #e2e8f0',
-            }}>
-              <ShoppingBag 
-                size={48} 
-                style={{ 
-                  color: '#cbd5e0',
-                  margin: '0 auto 16px',
-                  display: 'block',
-                }} 
-              />
-              <div style={{
-                fontSize: '18px',
-                fontWeight: '600',
-                color: '#4a5568',
-                marginBottom: '8px',
-              }}>
-                No {activeCategory !== 'all' ? activeCategory : ''} items yet
-              </div>
-              <div style={{
-                fontSize: '14px',
-                color: '#718096',
-              }}>
-                Add items to your list to get started
-              </div>
-            </div>
-          ) : (
-            filteredProducts.map((product, index) => (
-              <IngredientCard
-                key={product.id}
-                ingredientName={product.name}
-                price={product.price}
-                size={product.size}
-                isCheapest={product.cheapest}
-                onViewProduct={() => handleViewProduct(product.normalizedKey)}
-                index={index}
-              />
-            ))
-          )}
+      {/* Category filters */}
+      <div style={{ marginBottom: '20px' }}>
+        <div
+          className="shopping-category-pills"
+          style={{
+            display: 'flex',
+            gap: '8px',
+            overflowX: 'auto',
+            paddingBottom: '8px',
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none',
+          }}
+        >
+          {categories.map(({ id, label, count }) => {
+            const isActive = activeCategory === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveCategory(id)}
+                className={`shopping-pill ${isActive ? 'active' : ''}`}
+                style={{
+                  flexShrink: 0,
+                  padding: '8px 16px',
+                  borderRadius: '20px',
+                  border: isActive ? '1.5px solid #667eea' : '1.5px solid #e2e8f0',
+                  background: isActive ? 'linear-gradient(135deg, #667eea, #764ba2)' : '#ffffff',
+                  color: isActive ? '#ffffff' : '#4a5568',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  boxShadow: isActive 
+                    ? '0 4px 12px rgba(102, 126, 234, 0.3)'
+                    : '0 1px 3px rgba(0, 0, 0, 0.05)',
+                }}
+              >
+                {label} ({count})
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* PRODUCT DETAIL MODAL - CRITICAL FIX: Changed isOpen from !selectedProductModal to !!selectedProductModal */}
+      {/* Product list */}
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+      }}>
+        {filteredProducts.length === 0 ? (
+          <div style={{
+            textAlign: 'center',
+            padding: '60px 20px',
+            background: '#ffffff',
+            borderRadius: '16px',
+            border: '2px dashed #e2e8f0',
+          }}>
+            <ShoppingBag 
+              size={48} 
+              style={{ 
+                color: '#cbd5e0',
+                margin: '0 auto 16px',
+                display: 'block',
+              }} 
+            />
+            <div style={{
+              fontSize: '18px',
+              fontWeight: '600',
+              color: '#4a5568',
+              marginBottom: '8px',
+            }}>
+              No {activeCategory !== 'all' ? activeCategory : ''} items yet
+            </div>
+            <div style={{
+              fontSize: '14px',
+              color: '#718096',
+            }}>
+              Add items to your list to get started
+            </div>
+          </div>
+        ) : (
+          filteredProducts.map((product, index) => (
+            <IngredientCard
+              key={product.id}
+              ingredientName={product.name}
+              price={product.price}
+              size={product.size}
+              isCheapest={product.cheapest}
+              onViewProduct={() => handleViewProduct(product.normalizedKey)}
+              index={index}
+            />
+          ))
+        )}
+      </div>
+
+      {/* Product Detail Modal - FIXED: isOpen is now !!selectedProductModal instead of !selectedProductModal */}
       {modalProductData && (
         <ProductDetailModal
           isOpen={!!selectedProductModal}
@@ -503,7 +422,7 @@ const ShoppingListWithDetails = ({
         />
       )}
 
-      {/* STYLES */}
+      {/* Styles */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
         
