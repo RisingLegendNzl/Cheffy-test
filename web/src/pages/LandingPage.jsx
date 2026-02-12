@@ -13,9 +13,8 @@ import AuthModal from '../components/AuthModal';
 /**
  * Main Landing Page Component
  * Entry point for non-authenticated users
- * 
- * Redesigned with warm editorial aesthetic —
- * organic greens, amber accents, asymmetric layouts
+ *
+ * Theme aligned to Cheffy app indigo/purple palette
  */
 const LandingPage = ({ onSignUp, onSignIn, authLoading = false }) => {
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -54,12 +53,12 @@ const LandingPage = ({ onSignUp, onSignIn, authLoading = false }) => {
   ];
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#FAFAF7' }}>
+    <div className="min-h-screen" style={{ backgroundColor: '#f9fafb' }}>
       {/* ─── Navigation Header ─── */}
       <nav
         className="fixed top-0 left-0 right-0 z-50 transition-all duration-500"
         style={{
-          backgroundColor: scrolled ? 'rgba(250, 250, 247, 0.92)' : 'transparent',
+          backgroundColor: scrolled ? 'rgba(249, 250, 251, 0.92)' : 'transparent',
           backdropFilter: scrolled ? 'blur(20px) saturate(180%)' : 'none',
           borderBottom: scrolled ? '1px solid rgba(0,0,0,0.06)' : '1px solid transparent',
         }}
@@ -70,7 +69,7 @@ const LandingPage = ({ onSignUp, onSignIn, authLoading = false }) => {
             <a href="#" className="flex items-center space-x-2.5 group">
               <div
                 className="rounded-xl w-9 h-9 flex items-center justify-center transition-transform duration-300 group-hover:rotate-12"
-                style={{ backgroundColor: '#2D6A4F' }}
+                style={{ background: 'linear-gradient(135deg, #6366f1, #a855f7)' }}
               >
                 <ChefHat className="text-white" size={18} />
               </div>
@@ -112,7 +111,7 @@ const LandingPage = ({ onSignUp, onSignIn, authLoading = false }) => {
                 onClick={handleGetStarted}
                 className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-all duration-300 hover:shadow-lg hover:translate-y-[-1px]"
                 style={{
-                  backgroundColor: '#2D6A4F',
+                  backgroundColor: '#6366f1',
                   fontFamily: "'Georgia', serif",
                 }}
               >
@@ -137,7 +136,7 @@ const LandingPage = ({ onSignUp, onSignIn, authLoading = false }) => {
           style={{
             maxHeight: mobileMenuOpen ? '300px' : '0',
             opacity: mobileMenuOpen ? 1 : 0,
-            backgroundColor: 'rgba(250, 250, 247, 0.98)',
+            backgroundColor: 'rgba(249, 250, 251, 0.98)',
             backdropFilter: 'blur(20px)',
           }}
         >
@@ -161,7 +160,7 @@ const LandingPage = ({ onSignUp, onSignIn, authLoading = false }) => {
               onClick={handleGetStarted}
               className="w-full mt-3 px-5 py-3 rounded-xl text-sm font-semibold text-white"
               style={{
-                backgroundColor: '#2D6A4F',
+                backgroundColor: '#6366f1',
                 fontFamily: "'Georgia', serif",
               }}
             >
