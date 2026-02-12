@@ -1,25 +1,15 @@
 // web/src/components/ProductDetailModal.jsx
+// =============================================================================
+// ProductDetailModal — Full-screen product detail overlay
 //
-// Full-screen product detail overlay — mirrors the RecipeModal pattern.
-//
-// Previous bugs:
-//   1. bottom-sheet positioning (bottom:0 + maxHeight:90vh) left the modal
-//      partially behind BottomNav (z-index 1030) or Header (1020).
-//   2. CSS had `touch-action:none` on .product-modal which killed touch
-//      scrolling; only the last child got pan-y, which wasn't the scroll
-//      container in all code paths.
-//   3. Desktop media-query used translate(-50%,-50%) that fought with
-//      mobile bottom:0, causing the modal to render at the top of the
-//      viewport with only its bottom edge visible.
-//
-// Fix (identical to RecipeModal approach):
-//   - Single fixed overlay (inset:0, z-index 9998) with flex centering.
-//   - Modal card is a flex-column child; mobile fills 100%, desktop is
-//     a centered 520px card at max-height 85vh.
-//   - Scroll container uses flex:1 + minHeight:0 + overflowY:auto with
-//     explicit touch-action:pan-y so iOS/Android can scroll freely.
-//   - Body scroll lock uses the iOS-safe position:fixed technique.
-//   - Responsive sizing via injected <style> with 100dvh / 100vh fallback.
+// FIXES APPLIED:
+// 1. Modal now properly fills the viewport on all screen sizes
+// 2. Independent scrolling within the modal content area
+// 3. z-index 9998 ensures proper layering (below RecipeModal, above everything else)
+// 4. Mobile-first design: 100% viewport on mobile, centered card on desktop
+// 5. Body scroll lock prevents background scrolling on iOS/Android
+// 6. Touch-friendly scrolling with explicit touch-action:pan-y
+// =============================================================================
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -27,7 +17,7 @@ import {
   ChevronDown, ChevronUp, Minus, Plus, Tag,
 } from 'lucide-react';
 
-const MODAL_Z = 9998; // Below RecipeModal (9999), above everything else
+const MODAL_Z = 9998;
 
 const ProductDetailModal = ({
   isOpen,
@@ -45,7 +35,7 @@ const ProductDetailModal = ({
   const [showAlternatives, setShowAlternatives] = useState(false);
   const scrollRef = useRef(null);
 
-  // ── Escape key ──
+  // Escape key handler
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
@@ -53,7 +43,7 @@ const ProductDetailModal = ({
     return () => window.removeEventListener('keydown', handler);
   }, [isOpen, onClose]);
 
-  // ── Body scroll lock (iOS-safe) + inject dvh helper CSS ──
+  // Body scroll lock + responsive styling
   useEffect(() => {
     if (!isOpen) return;
 
@@ -72,7 +62,7 @@ const ProductDetailModal = ({
     document.body.style.overflow = 'hidden';
     document.body.style.height = '100%';
 
-    // Inject responsive sizing classes
+    // Inject responsive sizing
     const id = 'pdm-dvh-styles';
     let styleEl = document.getElementById(id);
     if (!styleEl) {
@@ -110,7 +100,6 @@ const ProductDetailModal = ({
 
   if (!isOpen) return null;
 
-  // ── Helpers ──
   const isFailed = result?.source === 'failed' || result?.source === 'error';
   const isAbsoluteCheapest =
     absoluteCheapestProduct && currentSelection &&
@@ -126,14 +115,13 @@ const ProductDetailModal = ({
   const totalGrams = result?.totalGramsRequired || 0;
   const quantityUnits = result?.quantityUnits || '';
 
-  // Close when clicking the backdrop, not the card
   const handleBackdropClick = (e) => {
     if (e.target === e.currentTarget) onClose();
   };
 
   return (
     <>
-      {/* ── FULL-SCREEN OVERLAY ── */}
+      {/* Full-screen overlay */}
       <div
         className="pdm-overlay"
         onClick={handleBackdropClick}
@@ -150,7 +138,7 @@ const ProductDetailModal = ({
           padding: 0,
         }}
       >
-        {/* ── MODAL CARD ── */}
+        {/* Modal card */}
         <div
           className="pdm-card"
           onClick={(e) => e.stopPropagation()}
@@ -160,12 +148,11 @@ const ProductDetailModal = ({
             flexDirection: 'column',
             overflow: 'hidden',
             borderTop: '3px solid #6366f1',
-            boxShadow:
-              '0 0 0 1px rgba(99,102,241,0.12), 0 24px 48px -12px rgba(0,0,0,0.3)',
+            boxShadow: '0 0 0 1px rgba(99,102,241,0.12), 0 24px 48px -12px rgba(0,0,0,0.3)',
             fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
           }}
         >
-          {/* ── HEADER (pinned, never scrolls) ── */}
+          {/* Header - pinned */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -224,9 +211,7 @@ const ProductDetailModal = ({
             </button>
           </div>
 
-          {/* ── SCROLLABLE BODY ──
-              flex:1 + minHeight:0 confines overflow to this div.
-              touch-action:pan-y enables native touch scrolling on mobile. */}
+          {/* Scrollable body */}
           <div
             ref={scrollRef}
             style={{
@@ -256,7 +241,7 @@ const ProductDetailModal = ({
               </div>
             ) : (
               <>
-                {/* ── Total Needed ── */}
+                {/* Total Needed */}
                 <div style={{
                   padding: '16px',
                   background: 'linear-gradient(135deg, #eff6ff, #f0f9ff)',
@@ -273,180 +258,152 @@ const ProductDetailModal = ({
                     fontSize: '28px', fontWeight: 800, color: '#1e3a8a',
                     fontVariantNumeric: 'tabular-nums',
                   }}>
-                    {totalGrams > 0 ? `${totalGrams}g` : quantityUnits || 'N/A'}
+                    {totalGrams > 0 ? `${totalGrams.toFixed(0)}g` : quantityUnits || 'N/A'}
                   </div>
                 </div>
 
-                {/* ── Units to Purchase ── */}
-                <div style={{ marginBottom: '20px' }}>
-                  <h5 style={{
-                    fontSize: '15px', fontWeight: 700, marginBottom: '12px',
-                    color: '#0f172a', letterSpacing: '-0.01em',
+                {/* Units to Purchase */}
+                <div style={{
+                  padding: '16px',
+                  background: 'linear-gradient(135deg, #fef3c7, #fef9c3)',
+                  borderRadius: '12px', border: '1.5px solid #fde68a',
+                  marginBottom: '20px',
+                }}>
+                  <div style={{
+                    fontSize: '12px', fontWeight: 600, color: '#92400e',
+                    textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px',
                   }}>
                     Units to Purchase
-                  </h5>
-                  <div style={{
-                    display: 'flex', alignItems: 'center', gap: '16px',
-                    padding: '16px', background: '#f8fafc',
-                    borderRadius: '14px', border: '2px solid #e2e8f0',
-                  }}>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <button
-                      onClick={() => currentQuantity > 1 && onQuantityChange(normalizedKey, -1)}
-                      disabled={currentQuantity <= 1}
+                      onClick={() => onQuantityChange?.(normalizedKey, Math.max(1, currentQuantity - 1))}
                       style={{
-                        width: 36, height: 36, borderRadius: '50%', border: 'none',
-                        background: currentQuantity <= 1 ? '#e2e8f0' : '#fecaca',
-                        color: currentQuantity <= 1 ? '#94a3b8' : '#991b1b',
-                        fontSize: '20px', fontWeight: 700,
-                        cursor: currentQuantity <= 1 ? 'not-allowed' : 'pointer',
+                        width: 36, height: 36, borderRadius: '8px',
+                        border: '2px solid #f59e0b', background: '#ffffff',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 0.15s ease', flexShrink: 0,
+                        cursor: 'pointer', transition: 'all 0.15s',
                       }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#fef3c7'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = '#ffffff'; }}
                     >
-                      <Minus size={16} />
+                      <Minus size={16} color="#92400e" />
                     </button>
                     <div style={{
-                      flex: 1, textAlign: 'center',
-                      fontSize: '28px', fontWeight: 800, color: '#0f172a',
-                      fontVariantNumeric: 'tabular-nums',
+                      fontSize: '32px', fontWeight: 800, color: '#78350f',
+                      fontVariantNumeric: 'tabular-nums', minWidth: '60px', textAlign: 'center',
                     }}>
-                      {currentQuantity}
+                      {currentQuantity || 1}
                     </div>
                     <button
-                      onClick={() => onQuantityChange(normalizedKey, 1)}
+                      onClick={() => onQuantityChange?.(normalizedKey, currentQuantity + 1)}
                       style={{
-                        width: 36, height: 36, borderRadius: '50%', border: 'none',
-                        background: '#dcfce7', color: '#166534',
-                        fontSize: '20px', fontWeight: 700, cursor: 'pointer',
+                        width: 36, height: 36, borderRadius: '8px',
+                        border: '2px solid #f59e0b', background: '#ffffff',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 0.15s ease', flexShrink: 0,
+                        cursor: 'pointer', transition: 'all 0.15s',
                       }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#fef3c7'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = '#ffffff'; }}
                     >
-                      <Plus size={16} />
+                      <Plus size={16} color="#92400e" />
                     </button>
                   </div>
                 </div>
 
-                {/* ── Selected Product ── */}
+                {/* Selected Product */}
                 <div style={{ marginBottom: '20px' }}>
-                  <h5 style={{
-                    fontSize: '15px', fontWeight: 700, marginBottom: '12px',
-                    color: '#0f172a', letterSpacing: '-0.01em',
+                  <div style={{
+                    fontSize: '12px', fontWeight: 600, color: '#6366f1',
+                    textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px',
                   }}>
                     Selected Product
-                  </h5>
-
+                  </div>
                   {currentSelection ? (
                     <div style={{
-                      background: '#ffffff', borderRadius: '14px',
-                      border: isAbsoluteCheapest ? '2px solid #22c55e' : '2px solid #e2e8f0',
-                      overflow: 'hidden',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+                      padding: '16px', background: '#f8fafc',
+                      borderRadius: '12px', border: '2px solid #e0e7ff',
+                      position: 'relative',
                     }}>
-                      {/* Product name + brand + cheapest badge */}
-                      <div style={{ padding: '16px 18px 12px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: '17px', fontWeight: 700, color: '#0f172a', lineHeight: 1.3, marginBottom: '3px' }}>
-                              {currentSelection.name}
-                            </div>
-                            <div style={{ fontSize: '13px', fontWeight: 600, color: '#6366f1' }}>
-                              {currentSelection.brand || ''}
-                            </div>
-                          </div>
-                          {isAbsoluteCheapest && (
-                            <div style={{
-                              background: 'linear-gradient(135deg, #22c55e, #16a34a)',
-                              color: '#fff', padding: '4px 10px', borderRadius: '10px',
-                              fontSize: '11px', fontWeight: 700, textTransform: 'uppercase',
-                              letterSpacing: '0.5px', whiteSpace: 'nowrap', flexShrink: 0,
-                              marginLeft: '10px', boxShadow: '0 2px 6px rgba(34,197,94,0.3)',
-                            }}>
-                              Cheapest
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Price / Size / Unit price grid */}
-                      <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '10px', border: '1px solid #f1f5f9' }}>
-                          <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-                            Price
-                          </div>
-                          <div style={{ fontSize: '20px', fontWeight: 800, color: '#dc2626', fontVariantNumeric: 'tabular-nums' }}>
-                            {getPrice(currentSelection) != null ? `$${getPrice(currentSelection).toFixed(2)}` : 'N/A'}
-                          </div>
-                        </div>
-                        <div style={{ background: '#f8fafc', padding: '10px 12px', borderRadius: '10px', border: '1px solid #f1f5f9' }}>
-                          <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-                            Size
-                          </div>
-                          <div style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a' }}>
-                            {getSize(currentSelection) || 'N/A'}
-                          </div>
-                        </div>
+                      {isAbsoluteCheapest && (
                         <div style={{
-                          background: '#f0fdf4', padding: '10px 12px', borderRadius: '10px',
-                          border: '1px solid #bbf7d0', gridColumn: '1 / -1',
-                          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          position: 'absolute', top: '-10px', right: '16px',
+                          background: 'linear-gradient(135deg, #10b981, #059669)',
+                          color: '#ffffff', fontSize: '11px', fontWeight: 700,
+                          padding: '4px 12px', borderRadius: '12px',
+                          textTransform: 'uppercase', letterSpacing: '0.5px',
+                          boxShadow: '0 2px 8px rgba(16,185,129,0.3)',
                         }}>
-                          <div>
-                            <div style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-                              Price/100g
-                            </div>
-                            <div style={{ fontSize: '20px', fontWeight: 800, color: '#16a34a', fontVariantNumeric: 'tabular-nums' }}>
-                              ${currentSelection.unit_price_per_100 ? currentSelection.unit_price_per_100.toFixed(2) : 'N/A'}
-                            </div>
-                          </div>
-                          {isAbsoluteCheapest && <Tag size={20} color="#16a34a" style={{ opacity: 0.6 }} />}
+                          Best Value
                         </div>
+                      )}
+                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>
+                        {currentSelection.name || currentSelection.product_name || 'Product'}
                       </div>
-
-                      {/* View on Store Website */}
-                      {currentSelection.url && currentSelection.url !== '#api_down_mock_product' && currentSelection.url !== '#' && (
-                        <div style={{ borderTop: '1px solid #f1f5f9', padding: '12px 18px' }}>
-                          <a
-                            href={currentSelection.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="pdm-store-link"
-                            style={{
-                              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                              padding: '10px 16px',
-                              background: 'linear-gradient(135deg, #6366f1, #7c3aed)',
-                              color: '#ffffff', borderRadius: '10px',
-                              fontSize: '14px', fontWeight: 600, textDecoration: 'none',
-                              transition: 'all 0.2s ease',
-                              boxShadow: '0 2px 8px rgba(99,102,241,0.3)',
-                            }}
-                          >
-                            <ExternalLink size={16} />
-                            View on Store Website
-                          </a>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+                        {getPrice(currentSelection) !== null && (
                           <div style={{
-                            marginTop: '6px', fontSize: '11px', color: '#94a3b8',
-                            textAlign: 'center', wordBreak: 'break-all', lineHeight: 1.4,
+                            display: 'inline-flex', alignItems: 'center', gap: '4px',
+                            background: '#dcfce7', color: '#166534',
+                            padding: '4px 10px', borderRadius: '6px',
+                            fontSize: '13px', fontWeight: 600,
                           }}>
-                            {currentSelection.url}
+                            <Tag size={12} />
+                            ${getPrice(currentSelection).toFixed(2)}
                           </div>
-                        </div>
+                        )}
+                        {getSize(currentSelection) && (
+                          <div style={{
+                            background: '#e0e7ff', color: '#3730a3',
+                            padding: '4px 10px', borderRadius: '6px',
+                            fontSize: '13px', fontWeight: 600,
+                          }}>
+                            {getSize(currentSelection)}
+                          </div>
+                        )}
+                        {currentSelection.unit_price_per_100 && (
+                          <div style={{
+                            background: '#f3f4f6', color: '#4b5563',
+                            padding: '4px 10px', borderRadius: '6px',
+                            fontSize: '12px', fontWeight: 500,
+                          }}>
+                            ${currentSelection.unit_price_per_100}/100g
+                          </div>
+                        )}
+                      </div>
+                      {currentSelection.url && (
+                        <a
+                          href={currentSelection.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="pdm-store-link"
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '6px',
+                            padding: '10px 16px', background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                            color: '#ffffff', borderRadius: '8px',
+                            fontSize: '13px', fontWeight: 600,
+                            textDecoration: 'none', transition: 'all 0.2s ease',
+                            boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
+                          }}
+                        >
+                          <ShoppingBag size={14} />
+                          View in Store
+                          <ExternalLink size={13} />
+                        </a>
                       )}
                     </div>
                   ) : (
                     <div style={{
-                      padding: '24px', textAlign: 'center',
-                      background: '#fef2f2', borderRadius: '12px', border: '1px solid #fecaca',
+                      padding: '20px', textAlign: 'center',
+                      background: '#fef2f2', borderRadius: '12px',
+                      border: '1px solid #fecaca', color: '#991b1b',
                     }}>
-                      <AlertTriangle size={24} style={{ color: '#dc2626', marginBottom: '8px' }} />
-                      <div style={{ fontSize: '14px', fontWeight: 600, color: '#991b1b' }}>
-                        No product found.
-                      </div>
+                      No product selected
                     </div>
                   )}
                 </div>
 
-                {/* ── Alternatives ── */}
+                {/* Alternatives */}
                 {substitutes && substitutes.length > 0 && (
                   <div style={{ marginBottom: '20px' }}>
                     <button
@@ -461,79 +418,94 @@ const ProductDetailModal = ({
                       }}
                     >
                       <span>Alternatives ({substitutes.length})</span>
-                      {showAlternatives ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                      {showAlternatives ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                     </button>
 
                     {showAlternatives && (
-                      <div style={{
-                        marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px',
-                      }}>
+                      <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
                         {substitutes.map((sub, idx) => {
                           const subPrice = getPrice(sub);
                           const subSize = getSize(sub);
+                          const subIsCheapest = absoluteCheapestProduct && sub.url === absoluteCheapestProduct.url;
                           return (
                             <div
                               key={idx}
                               className="pdm-sub-card"
                               style={{
-                                padding: '14px 16px', background: '#ffffff',
-                                border: '2px solid #e2e8f0', borderRadius: '12px',
-                                transition: 'all 0.2s ease',
+                                padding: '14px', background: '#fafafa',
+                                borderRadius: '10px', border: '1.5px solid #e5e7eb',
+                                position: 'relative', transition: 'all 0.2s ease',
                               }}
                             >
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: '15px', fontWeight: 600, color: '#0f172a', marginBottom: '2px' }}>
-                                    {sub.name}
-                                  </div>
-                                  <div style={{ fontSize: '12px', color: '#64748b' }}>
-                                    {sub.brand || ''}
-                                  </div>
+                              {subIsCheapest && (
+                                <div style={{
+                                  position: 'absolute', top: '-8px', right: '12px',
+                                  background: 'linear-gradient(135deg, #10b981, #059669)',
+                                  color: '#ffffff', fontSize: '10px', fontWeight: 700,
+                                  padding: '3px 10px', borderRadius: '10px',
+                                  textTransform: 'uppercase', letterSpacing: '0.5px',
+                                }}>
+                                  Best
                                 </div>
+                              )}
+                              <div style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', marginBottom: '6px' }}>
+                                {sub.name || sub.product_name || 'Product'}
                               </div>
-
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
-                                <div>
-                                  <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '2px' }}>Price</div>
-                                  <div style={{ fontSize: '16px', fontWeight: 700, color: '#dc2626' }}>
-                                    {subPrice != null ? `$${subPrice.toFixed(2)}` : 'N/A'}
-                                  </div>
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '10px', color: '#64748b', marginBottom: '2px' }}>Size</div>
-                                  <div style={{ fontSize: '16px', fontWeight: 700, color: '#0f172a' }}>
-                                    {subSize || 'N/A'}
-                                  </div>
-                                </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                                {subPrice !== null && (
+                                  <span style={{
+                                    background: '#dcfce7', color: '#166534',
+                                    padding: '3px 8px', borderRadius: '5px',
+                                    fontSize: '12px', fontWeight: 600,
+                                  }}>
+                                    ${subPrice.toFixed(2)}
+                                  </span>
+                                )}
+                                {subSize && (
+                                  <span style={{
+                                    background: '#e0e7ff', color: '#3730a3',
+                                    padding: '3px 8px', borderRadius: '5px',
+                                    fontSize: '12px', fontWeight: 600,
+                                  }}>
+                                    {subSize}
+                                  </span>
+                                )}
+                                {sub.unit_price_per_100 && (
+                                  <span style={{
+                                    background: '#f3f4f6', color: '#6b7280',
+                                    padding: '3px 8px', borderRadius: '5px',
+                                    fontSize: '11px', fontWeight: 500,
+                                  }}>
+                                    ${sub.unit_price_per_100}/100g
+                                  </span>
+                                )}
                               </div>
-
                               <div style={{ display: 'flex', gap: '8px' }}>
                                 <button
-                                  onClick={() => onSelectSubstitute && onSelectSubstitute(normalizedKey, sub)}
+                                  onClick={() => onSelectSubstitute?.(normalizedKey, sub)}
                                   className="pdm-select-btn"
                                   style={{
-                                    flex: 1, padding: '8px 12px',
-                                    background: '#6366f1', color: '#fff',
-                                    borderRadius: '8px', border: 'none',
+                                    flex: 1, padding: '8px 14px',
+                                    background: '#6366f1', color: '#ffffff',
+                                    border: 'none', borderRadius: '8px',
                                     fontSize: '13px', fontWeight: 600,
-                                    cursor: 'pointer', transition: 'all 0.15s ease',
+                                    cursor: 'pointer', transition: 'background 0.2s',
                                   }}
                                 >
                                   Select
                                 </button>
-                                {sub.url && sub.url !== '#' && (
+                                {sub.url && (
                                   <a
                                     href={sub.url}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="pdm-view-link"
                                     style={{
-                                      padding: '8px 12px', background: '#f1f5f9',
-                                      borderRadius: '8px', color: '#475569',
-                                      fontSize: '13px', fontWeight: 600,
-                                      textDecoration: 'none',
-                                      display: 'flex', alignItems: 'center', gap: '4px',
-                                      transition: 'all 0.15s ease',
+                                      padding: '8px 14px', background: '#f3f4f6', color: '#374151',
+                                      borderRadius: '8px', fontSize: '13px', fontWeight: 600,
+                                      textDecoration: 'none', display: 'inline-flex',
+                                      alignItems: 'center', gap: '4px',
+                                      transition: 'background 0.2s',
                                     }}
                                   >
                                     <ExternalLink size={13} />
@@ -554,7 +526,7 @@ const ProductDetailModal = ({
         </div>
       </div>
 
-      {/* Scoped hover styles — prefixed to avoid collisions */}
+      {/* Hover styles */}
       <style>{`
         .pdm-store-link:hover {
           box-shadow: 0 4px 14px rgba(99,102,241,0.4) !important;
