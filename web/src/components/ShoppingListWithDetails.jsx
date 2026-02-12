@@ -1,12 +1,12 @@
 // web/src/components/ShoppingListWithDetails.jsx
-// REDESIGNED - Clean Minimal Shopping Tab with Compact Ingredient Cards
-// FIX v3: Corrected inverted isOpen prop on ProductDetailModal.
-// - isOpen was `!selectedProductModal` (always false when a product is selected)
-// - Changed to `!!selectedProductModal` so the modal actually opens.
-// Prior fixes retained:
-// - modalProductData uses currentSelectionURL (authoritative) instead of selectedIndex
-// - Fallback to `results` prop when categorizedResults data is stale
-// - Guard against empty allProducts preventing blank modal
+// FIX v3: Two critical fixes for "View Product" detail display.
+//
+// BUG 1 (Critical): isOpen prop was `!selectedProductModal` — always false when
+//   a product is selected. Changed to `!!selectedProductModal`.
+//
+// BUG 2 (Resilience): modalProductData silently returned null when data lookup
+//   hit any of 3 early-exit paths. Hardened with layered fallbacks so the modal
+//   opens even with partial data (showing the error state if needed).
 
 import React, { useState, useMemo } from 'react';
 import { 
@@ -55,19 +55,21 @@ const ShoppingListWithDetails = ({
 
   // ============================================================================
   // PRODUCT TRANSFORMATION
-  // FIX: Also store currentSelectionURL for reliable modal lookup
+  // Stores full result data + selectedProduct + allProducts per item so the
+  // modal can access them without a second lookup that might miss.
   // ============================================================================
   const products = useMemo(() => {
     const productList = [];
     
     Object.entries(categorizedResults).forEach(([category, items]) => {
       items.forEach(({ normalizedKey, ingredient, ...result }) => {
-        // FIX: Prefer freshest data from results prop over categorizedResults spread
+        // Prefer live results prop (updated by substitute/quantity handlers)
+        // over the snapshot baked into categorizedResults.
         const freshResult = results[normalizedKey] || result;
         const allProducts = freshResult.allProducts || freshResult.products || [];
         const selectedIndex = freshResult.selectedIndex || 0;
 
-        // FIX: Find selected product by URL first, fall back to index
+        // Resolve current product: URL-match first, then index, then first item
         let selectedProduct = null;
         if (freshResult.currentSelectionURL) {
           selectedProduct = allProducts.find(p => p && p.url === freshResult.currentSelectionURL);
@@ -96,15 +98,14 @@ const ShoppingListWithDetails = ({
           id: normalizedKey,
           name: ingredient,
           category: category.toLowerCase(),
-          price: price,
-          size: size,
-          cheapest: cheapest,
-          normalizedKey: normalizedKey,
-          ingredient: ingredient,
-          // FIX: Store the full fresh result for modal use
+          price,
+          size,
+          cheapest,
+          normalizedKey,
+          ingredient,
           result: freshResult,
-          selectedProduct: selectedProduct,
-          allProducts: allProducts
+          selectedProduct,
+          allProducts
         });
       });
     });
@@ -157,27 +158,56 @@ const ShoppingListWithDetails = ({
   }, [products]);
 
   // ============================================================================
-  // MODAL DATA — FIX: Use currentSelectionURL for reliable product selection
+  // MODAL DATA
+  // FIX v3: Hardened with layered fallbacks. Previously returned null silently
+  // when any lookup step failed, leaving the user with no feedback.
+  // Now: always returns *something* when selectedProductModal is set, so the
+  // modal can at least render its error/empty state.
   // ============================================================================
   const modalProductData = useMemo(() => {
     if (!selectedProductModal) return null;
     
+    // Step 1: Find product in local products list (built from categorizedResults)
     const product = products.find(p => p.normalizedKey === selectedProductModal);
-    if (!product) {
-      console.warn('[SHOPPING_LIST] Modal: product not found for key:', selectedProductModal);
-      return null;
-    }
-
-    // FIX: Use freshest result from results prop
-    const freshResult = results[product.normalizedKey] || product.result;
-    const allProducts = freshResult.allProducts || freshResult.products || product.allProducts || [];
     
-    if (allProducts.length === 0) {
-      console.warn('[SHOPPING_LIST] Modal: no allProducts for:', product.normalizedKey);
-      return null;
+    // Step 2: Get the freshest result — try results prop first, then product cache
+    const freshResult = results[selectedProductModal]
+      || (product && results[product.normalizedKey])
+      || (product && product.result)
+      || null;
+
+    // Step 3: If we have zero data, return a minimal error-state object so the
+    // modal still opens and shows "Product Not Found" instead of nothing.
+    if (!freshResult) {
+      console.warn('[SHOPPING_LIST] Modal: no result data for key:', selectedProductModal);
+      return {
+        ingredientKey: product?.ingredient || selectedProductModal,
+        normalizedKey: selectedProductModal,
+        result: { source: 'failed', allProducts: [] },
+        currentSelection: null,
+        absoluteCheapestProduct: null,
+        substitutes: [],
+        currentQuantity: 1
+      };
     }
 
-    // FIX: Find current selection by URL (authoritative), then index, then first
+    const allProducts = freshResult.allProducts || freshResult.products || (product?.allProducts) || [];
+    
+    // Step 4: If no products array at all, still open with error state
+    if (allProducts.length === 0) {
+      console.warn('[SHOPPING_LIST] Modal: empty allProducts for:', selectedProductModal);
+      return {
+        ingredientKey: product?.ingredient || freshResult.originalIngredient || selectedProductModal,
+        normalizedKey: selectedProductModal,
+        result: freshResult,
+        currentSelection: null,
+        absoluteCheapestProduct: null,
+        substitutes: [],
+        currentQuantity: freshResult.userQuantity || 1
+      };
+    }
+
+    // Step 5: Resolve current selection by URL (authoritative), then index, then first
     let currentSelection = null;
     if (freshResult.currentSelectionURL) {
       currentSelection = allProducts.find(p => p && p.url === freshResult.currentSelectionURL);
@@ -187,22 +217,22 @@ const ShoppingListWithDetails = ({
       currentSelection = allProducts[idx] || allProducts[0];
     }
     
-    // Find cheapest by unit price
+    // Step 6: Find cheapest by unit price
     const cheapest = allProducts.reduce((best, current) => {
       if (!current) return best;
       return (current.unit_price_per_100 ?? Infinity) < (best?.unit_price_per_100 ?? Infinity) 
         ? current : best;
     }, allProducts[0]);
     
-    // Build substitutes list excluding current selection
+    // Step 7: Build substitutes excluding current selection
     const substitutes = allProducts
       .filter(p => p && p.url !== currentSelection?.url)
       .sort((a, b) => (a.unit_price_per_100 ?? Infinity) - (b.unit_price_per_100 ?? Infinity))
       .slice(0, 5);
 
     return {
-      ingredientKey: product.ingredient,
-      normalizedKey: product.normalizedKey,
+      ingredientKey: product?.ingredient || freshResult.originalIngredient || selectedProductModal,
+      normalizedKey: selectedProductModal,
       result: freshResult,
       currentSelection,
       absoluteCheapestProduct: cheapest,
@@ -474,11 +504,9 @@ const ShoppingListWithDetails = ({
         </div>
       </div>
 
-      {/* PRODUCT DETAIL MODAL */}
-      {/* FIX v3: Changed isOpen from `!selectedProductModal` to `!!selectedProductModal`.
-         The `!` inverted the boolean — the modal was told to CLOSE whenever a product
-         was selected and OPEN when nothing was selected (but the outer guard prevented
-         that path from rendering at all). */}
+      {/* PRODUCT DETAIL MODAL
+          FIX v3: isOpen changed from `!selectedProductModal` to `!!selectedProductModal`.
+          The negation meant the modal was told to CLOSE whenever a product was selected. */}
       {modalProductData && (
         <ProductDetailModal
           isOpen={!!selectedProductModal}
