@@ -1,5 +1,5 @@
 // web/src/components/MainApp.jsx
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { RefreshCw, Zap, AlertTriangle, CheckCircle, Package, DollarSign, ExternalLink, Calendar, Users, Menu, X, ChevronsDown, ChevronsUp, ShoppingBag, BookOpen, ChefHat, Tag, Soup, Replace, Target, FileText, Terminal, Loader, ChevronRight, GripVertical, Flame, Droplet, Wheat, ChevronDown, ChevronUp, Download, ListX, Save, FolderDown, User, Check, ListChecks, ListOrdered, Utensils } from 'lucide-react';
 
 // --- Component Imports ---
@@ -16,6 +16,7 @@ import StoryModeGeneration from './StoryModeGeneration';
 import NutritionalInfo from './NutritionalInfo';
 import IngredientResultBlock from './IngredientResultBlock';
 import MealPlanDisplay from './MealPlanDisplay';
+import ShoppingListWithDetails from './ShoppingListWithDetails';
 import LogEntry from './LogEntry';
 import DiagnosticLogViewer from './DiagnosticLogViewer';
 import FailedIngredientLogViewer from './FailedIngredientLogViewer';
@@ -187,7 +188,7 @@ const MainApp = ({
     const showProfileGate = isNewUser && !profileSetupComplete;
 
     // Create a wrapped handler that closes meal when changing tabs
-    // Also blocks tab changes if profile setup is not complete for new users
+    // Also blocks navigation if profile setup is not complete for new users
     const handleTabChange = (newTab) => {
         // Block navigation if new user hasn't completed profile setup
         if (showProfileGate) {
@@ -219,6 +220,11 @@ const MainApp = ({
     const handleOpenSavedPlans = () => {
         setShowSavedPlansModal(true);
     };
+
+    // Create a local handler for viewing recipe
+    const handleViewRecipe = useCallback((meal) => {
+        setSelectedMeal(meal);
+    }, [setSelectedMeal]);
     
     // Memoize content for meals tab
     const mealPlanContent = useMemo(() => {
@@ -235,41 +241,57 @@ const MainApp = ({
                 nutritionCache={nutritionCache}
                 loadingNutritionFor={loadingNutritionFor}
                 onFetchNutrition={handleFetchNutrition}
-                onSelectMeal={setSelectedMeal}
+                onViewRecipe={handleViewRecipe}
+                showToast={showToast}
             />
         );
-    }, [mealPlan, selectedDay, eatenMeals, formData, nutritionalTargets, nutritionCache, loadingNutritionFor, handleFetchNutrition, setSelectedMeal, onToggleMealEaten, setSelectedDay]);
+    }, [
+        mealPlan, 
+        selectedDay, 
+        eatenMeals, 
+        formData, 
+        nutritionalTargets, 
+        nutritionCache, 
+        loadingNutritionFor, 
+        handleFetchNutrition, 
+        handleViewRecipe, 
+        onToggleMealEaten, 
+        setSelectedDay,
+        showToast
+    ]);
 
     // Memoize shopping list content
     const shoppingListContent = useMemo(() => {
         if (!results || Object.keys(results).length === 0) return null;
         
-        const categories = categorizedResults || { 'All Items': results };
-        
         return (
-            <div className="p-4 md:p-6 space-y-4">
-                {Object.entries(categories).map(([category, items]) => (
-                    <CollapsibleSection
-                        key={category}
-                        title={category}
-                        icon={CATEGORY_ICONS[category.toLowerCase()] || CATEGORY_ICONS['default']}
-                        itemCount={Object.keys(items).length}
-                        defaultOpen={true}
-                    >
-                        {Object.entries(items).map(([key, item]) => (
-                            <IngredientResultBlock
-                                key={key}
-                                ingredientKey={key}
-                                result={item}
-                                onSelectSubstitute={handleSubstituteSelection}
-                                onQuantityChange={handleQuantityChange}
-                            />
-                        ))}
-                    </CollapsibleSection>
-                ))}
-            </div>
+            <ShoppingListWithDetails
+                ingredients={uniqueIngredients}
+                results={results}
+                totalCost={totalCost}
+                storeName={formData?.store || 'Woolworths'}
+                categorizedResults={categorizedResults}
+                onSelectSubstitute={handleSubstituteSelection}
+                onQuantityChange={handleQuantityChange}
+                onShowToast={showToast}
+                onFetchNutrition={handleFetchNutrition}
+                nutritionCache={nutritionCache}
+                loadingNutritionFor={loadingNutritionFor}
+            />
         );
-    }, [results, categorizedResults, handleSubstituteSelection, handleQuantityChange]);
+    }, [
+        results, 
+        uniqueIngredients, 
+        totalCost, 
+        formData?.store, 
+        categorizedResults, 
+        handleSubstituteSelection, 
+        handleQuantityChange, 
+        handleFetchNutrition, 
+        nutritionCache, 
+        loadingNutritionFor, 
+        showToast
+    ]);
 
     // Error/empty state for meals & ingredients
     const emptyResultsMessage = (
@@ -523,3 +545,4 @@ const MainApp = ({
 };
 
 export default MainApp;
+
