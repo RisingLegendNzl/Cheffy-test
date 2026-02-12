@@ -978,20 +978,20 @@ const useAppLogic = ({
         });
     }, [recalculateTotalCost]); 
 
-    const handleQuantityChange = useCallback((key, delta) => {
-        setResults(prev => {
-            if (!prev[key]) {
-                console.error(`[handleQuantityChange] Error: Ingredient key "${key}" not found.`);
-                return prev;
-            }
-            const currentQty = prev[key].userQuantity || 1; 
-            const newQty = Math.max(1, currentQty + delta); 
-            const updatedItem = { ...prev[key], userQuantity: newQty };
-            const newResults = { ...prev, [key]: updatedItem };
-            recalculateTotalCost(newResults); 
-            return newResults;
-        });
-    }, [recalculateTotalCost]); 
+    const handleQuantityChange = useCallback((key, newQuantity) => {
+    setResults(prev => {
+        if (!prev[key]) {
+            console.error(`[handleQuantityChange] Error: Ingredient key "${key}" not found.`);
+            return prev;
+        }
+        // newQuantity is now the absolute quantity, not a delta
+        const safeQty = Math.max(1, newQuantity);
+        const updatedItem = { ...prev[key], userQuantity: safeQty };
+        const newResults = { ...prev, [key]: updatedItem };
+        recalculateTotalCost(newResults); 
+        return newResults;
+    });
+}, [recalculateTotalCost]); 
 
     const handleDownloadFailedLogs = useCallback(() => {
         if (failedIngredientsHistory.length === 0) return;
