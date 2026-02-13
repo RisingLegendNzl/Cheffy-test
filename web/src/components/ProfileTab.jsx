@@ -2,8 +2,13 @@
 // Theme-aware: adapts Profile Card + Targets Card to dark/light mode.
 // Fixes: issue #1 (purple stripe), issue #5 (Blueprint card in dark mode).
 // FIX: Weight stat now reads formData.measurementUnits for dynamic kg/lb display.
+//
+// REVAMP: Smooth count-up animations on Calories, Protein, Fat, Carbs
+//         numbers + bars/rings when switching to the Profile tab.
+//         Uses the same AnimatedNumber + useAnimatedValue pattern from
+//         MealPlanDisplay's NeonTile day-switch animations.
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import {
   Target,
   Flame,
@@ -65,11 +70,124 @@ const formatWeight = (weightKg, units) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// PROFILE CARD (Element 1)
+// ANIMATED NUMBER — Smooth count-up/down on value change
+// (Same logic as MealPlanDisplay's AnimatedNumber)
+// ─────────────────────────────────────────────────────────────
+
+const AnimatedNumber = ({ value, duration = 600, format, startFrom }) => {
+  const initialFrom = startFrom !== undefined ? startFrom : 0;
+  const [displayValue, setDisplayValue] = useState(initialFrom);
+  const prevValueRef = useRef(initialFrom);
+  const rafRef = useRef(null);
+  const mountedRef = useRef(false);
+
+  const formatter = useCallback((v) => {
+    if (format) return format(v);
+    return Math.round(v).toLocaleString();
+  }, [format]);
+
+  useEffect(() => {
+    const from = mountedRef.current ? prevValueRef.current : initialFrom;
+    const to = value;
+    prevValueRef.current = value;
+    mountedRef.current = true;
+
+    if (from === to) {
+      setDisplayValue(to);
+      return;
+    }
+
+    const startTime = performance.now();
+    const tick = (now) => {
+      const elapsed = now - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      // ease-out cubic — same as MealPlanDisplay
+      const eased = 1 - Math.pow(1 - t, 3);
+      const current = from + (to - from) * eased;
+      setDisplayValue(current);
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        setDisplayValue(to);
+      }
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [value, duration, initialFrom]);
+
+  return <>{formatter(displayValue)}</>;
+};
+
+
+// ─────────────────────────────────────────────────────────────
+// useAnimatedValue — drives smooth numeric transitions
+// Animates from `startFrom` → `target` on mount, then reacts
+// to target changes. Used for ring offsets and bar widths.
+// ─────────────────────────────────────────────────────────────
+
+const useAnimatedValue = (target, { duration = 700, delay = 0, startFrom = 0 } = {}) => {
+  const [current, setCurrent] = useState(startFrom);
+  const rafRef = useRef(null);
+  const delayRef = useRef(null);
+  const prevRef = useRef(startFrom);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    const from = mountedRef.current ? prevRef.current : startFrom;
+    prevRef.current = target;
+    mountedRef.current = true;
+
+    if (from === target) {
+      setCurrent(target);
+      return;
+    }
+
+    // Clear any pending animation
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    if (delayRef.current) clearTimeout(delayRef.current);
+
+    const startAnimation = () => {
+      const startTime = performance.now();
+      const tick = (now) => {
+        const elapsed = now - startTime;
+        const t = Math.min(elapsed / duration, 1);
+        // cubic-bezier(0.22, 1, 0.36, 1) approximation — same feel as concept-b-rings
+        const eased = 1 - Math.pow(1 - t, 3);
+        const val = from + (target - from) * eased;
+        setCurrent(val);
+        if (t < 1) {
+          rafRef.current = requestAnimationFrame(tick);
+        } else {
+          setCurrent(target);
+        }
+      };
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    if (delay > 0) {
+      delayRef.current = setTimeout(startAnimation, delay);
+    } else {
+      startAnimation();
+    }
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (delayRef.current) clearTimeout(delayRef.current);
+    };
+  }, [target, duration, delay, startFrom]);
+
+  return current;
+};
+
+
+// ─────────────────────────────────────────────────────────────
+// PROFILE CARD (Element 1) — unchanged
 // ─────────────────────────────────────────────────────────────
 
 const STAT_CONFIG = [
-  { key: 'weight',   label: 'Weight',   Icon: Scale,    format: null }, // format handled dynamically
+  { key: 'weight',   label: 'Weight',   Icon: Scale,    format: null },
   { key: 'bodyFat',  label: 'Body Fat', Icon: Percent,  format: (v) => v ? `${v}%` : 'N/A' },
   { key: 'goal',     label: 'Goal',     Icon: Target,   format: null },
   { key: 'activity', label: 'Activity', Icon: Activity, format: null },
@@ -80,7 +198,6 @@ const ProfileCard = ({ formData }) => {
   const goalColor = getGoalColor(formData.goal);
   const units = formData.measurementUnits || 'metric';
 
-  // Theme-derived colours
   const cardBg = isDark ? '#1e2130' : '#ffffff';
   const cardBorder = isDark ? '#2d3148' : COLORS.gray[200];
   const headingColor = isDark ? '#a5b4fc' : COLORS.primary[700];
@@ -97,8 +214,6 @@ const ProfileCard = ({ formData }) => {
         border: `1px solid ${cardBorder}`,
       }}
     >
-      {/* Issue #1: gradient stripe — uses .profile-card-stripe class
-          which is hidden via CSS in dark mode (theme-variables.css) */}
       <div
         className="profile-card-stripe h-1"
         style={{
@@ -169,10 +284,7 @@ const ProfileCard = ({ formData }) => {
               );
             }
 
-            // Default stat box (weight, body fat)
             const rawValue = stat.key === 'weight' ? formData.weight : formData.bodyFat;
-
-            // Weight uses dynamic unit formatting; others use their static format
             const displayValue = stat.key === 'weight'
               ? formatWeight(rawValue, units)
               : stat.format
@@ -208,15 +320,24 @@ const ProfileCard = ({ formData }) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// MACRO PROGRESS BAR — used inside TargetsCard
+// ANIMATED MACRO PROGRESS BAR — used inside TargetsCard
+// Now uses AnimatedNumber for the amount/kcal text and
+// useAnimatedValue for the bar width fill animation.
 // ─────────────────────────────────────────────────────────────
 
-const MacroProgressBar = ({ label, amount, unit, kcal, macroKey, Icon, percentage }) => {
+const MacroProgressBar = ({ label, amount, unit, kcal, macroKey, Icon, percentage, animDelay = 0 }) => {
   const { isDark } = useTheme();
   const colors = MACRO_COLORS[macroKey] || MACRO_COLORS.protein;
   const trackBg = isDark ? 'rgba(255,255,255,0.06)' : colors.light;
   const labelCol = isDark ? '#d1d5db' : COLORS.gray[700];
   const subCol = isDark ? '#6b7280' : COLORS.gray[400];
+
+  // Animate bar width from 0 → percentage on mount (tab switch triggers remount)
+  const animatedWidth = useAnimatedValue(Math.min(percentage, 100), {
+    duration: 700,
+    delay: animDelay,
+    startFrom: 0,
+  });
 
   return (
     <div>
@@ -232,19 +353,20 @@ const MacroProgressBar = ({ label, amount, unit, kcal, macroKey, Icon, percentag
         </div>
         <div className="text-right">
           <span className="text-sm font-bold" style={{ color: colors.main }}>
-            {amount}{unit}
+            <AnimatedNumber value={amount} duration={600} />{unit}
           </span>
           <span className="text-xs ml-1" style={{ color: subCol }}>
-            ({kcal} kcal)
+            (<AnimatedNumber value={kcal} duration={600} /> kcal)
           </span>
         </div>
       </div>
       <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: trackBg }}>
         <div
-          className="h-full rounded-full transition-all duration-500"
+          className="h-full rounded-full"
           style={{
-            width: `${Math.min(percentage, 100)}%`,
+            width: `${animatedWidth}%`,
             background: `linear-gradient(90deg, ${colors.main}, ${colors.dark})`,
+            transition: 'none', // driven by JS, not CSS transition
           }}
         />
       </div>
@@ -254,7 +376,7 @@ const MacroProgressBar = ({ label, amount, unit, kcal, macroKey, Icon, percentag
 
 
 // ─────────────────────────────────────────────────────────────
-// TARGETS CARD (Element 2)
+// TARGETS CARD (Element 2) — Now with animated ring + numbers
 // ─────────────────────────────────────────────────────────────
 
 const TargetsCard = ({ nutritionalTargets }) => {
@@ -291,6 +413,18 @@ const TargetsCard = ({ nutritionalTargets }) => {
     carbs: (carbsKcal / macroTotal) * 100,
   };
 
+  // ── Calorie ring animation ──
+  // The ring shows 85% fill (same as original: strokeDashoffset = circumference * 0.15)
+  const circumference = 2 * Math.PI * 54; // r=54 matches the SVG
+  const targetOffset = circumference * 0.15; // 85% filled ring
+
+  // Animate from full circumference (empty) → targetOffset (85% filled)
+  const animatedRingOffset = useAnimatedValue(targetOffset, {
+    duration: 800,
+    delay: 100,
+    startFrom: circumference,
+  });
+
   return (
     <div
       className="targets-card-surface rounded-xl shadow-lg overflow-hidden"
@@ -326,23 +460,22 @@ const TargetsCard = ({ nutritionalTargets }) => {
                 strokeWidth="10"
                 stroke={isDark ? 'rgba(255,255,255,0.06)' : COLORS.gray[100]}
               />
-              {/* Filled arc */}
+              {/* Animated filled arc */}
               <circle
                 cx="64" cy="64" r="54"
                 fill="none"
                 strokeWidth="10"
                 stroke={COLORS.primary[500]}
-                strokeDasharray={`${2 * Math.PI * 54}`}
-                strokeDashoffset={`${2 * Math.PI * 54 * 0.15}`}
+                strokeDasharray={`${circumference}`}
+                strokeDashoffset={`${animatedRingOffset}`}
                 strokeLinecap="round"
                 transform="rotate(-90 64 64)"
-                style={{ transition: 'stroke-dashoffset 0.6s ease' }}
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <Flame size={18} style={{ color: COLORS.primary[500] }} className="mb-1" />
               <span className="text-2xl font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
-                {totalCal}
+                <AnimatedNumber value={totalCal} duration={800} />
               </span>
               <span className="text-xs" style={{ color: calSubColor }}>kcal / day</span>
             </div>
@@ -352,7 +485,7 @@ const TargetsCard = ({ nutritionalTargets }) => {
           </p>
         </div>
 
-        {/* Right: Macro breakdown */}
+        {/* Right: Macro breakdown with staggered animations */}
         <div className="targets-card-macro-panel flex-1 p-6 space-y-5" style={{ backgroundColor: macroCardBg }}>
           <MacroProgressBar
             label="Protein"
@@ -362,6 +495,7 @@ const TargetsCard = ({ nutritionalTargets }) => {
             macroKey="protein"
             Icon={Soup}
             percentage={macroRatios.protein}
+            animDelay={100}
           />
           <MacroProgressBar
             label="Fat"
@@ -371,6 +505,7 @@ const TargetsCard = ({ nutritionalTargets }) => {
             macroKey="fat"
             Icon={Droplet}
             percentage={macroRatios.fat}
+            animDelay={250}
           />
           <MacroProgressBar
             label="Carbs"
@@ -380,6 +515,7 @@ const TargetsCard = ({ nutritionalTargets }) => {
             macroKey="carbs"
             Icon={Wheat}
             percentage={macroRatios.carbs}
+            animDelay={400}
           />
         </div>
       </div>
