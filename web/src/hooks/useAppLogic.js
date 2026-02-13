@@ -1281,6 +1281,7 @@ const useAppLogic = ({
         handleSavePlan: planPersistence.savePlan,
         handleLoadPlan: planPersistence.loadPlan,
         handleDeletePlan: planPersistence.deletePlan,
+        handleRenamePlan: planPersistence.renamePlan,
         savingPlan: planPersistence.savingPlan,
         loadingPlan: planPersistence.loadingPlan,
         handleListPlans: planPersistence.listPlans,
