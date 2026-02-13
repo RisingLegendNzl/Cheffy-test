@@ -361,7 +361,7 @@ const handleEditProfileClean = useCallback(() => {
 <StickyTabs
     activeTab={contentView}
     onTabChange={handleTabChange}
-    hidden={showSavedPlansModal || isSettingsOpen}
+    hidden={showSavedPlansModal || isSettingsOpen || (isMenuOpen && isMobile)}
     disabled={showProfileGate}
     headerHeight={headerHeight}
 />
@@ -372,11 +372,18 @@ const handleEditProfileClean = useCallback(() => {
                     className="min-h-screen p-4 md:p-8 transition-all duration-200 relative" 
                     style={{ 
     backgroundColor: isDark ? '#0f1117' : '#f3f4f6',
-    paddingTop: '120px',
-    paddingBottom: '2rem'
+    paddingTop: `${headerHeight + ((showSavedPlansModal || isSettingsOpen || (isMenuOpen && isMobile)) ? 0 : 52)}px`,
+    paddingBottom: '2rem',
+    transition: 'padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
 }}
                 >
-                    <div className="max-w-7xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden">
+                    <div
+    className="max-w-7xl mx-auto rounded-3xl shadow-2xl overflow-hidden"
+    style={{
+        backgroundColor: isDark ? '#181a24' : '#ffffff',
+        border: isDark ? '1px solid rgba(45, 49, 72, 0.5)' : 'none',
+    }}
+>
                         <div className="flex flex-col md:flex-row">
                             {/* --- SETUP FORM (LEFT COLUMN) --- */}
                             <div className={`p-6 md:p-8 w-full md:w-1/2 border-b md:border-r ${isMenuOpen ? 'block' : 'hidden md:block'}`}>
