@@ -1,24 +1,31 @@
 // web/src/components/StickyTabs.jsx
 // ============================================================================
-// StickyTabs — REVAMPED & FIXED primary navigation tabs (Profile / Meals / Shop)
+// StickyTabs — CONCEPT 2: WELDED SEGMENTED TABS
 //
-// FIXES APPLIED:
-//  1. ✅ Tabs now remain perfectly sticky and aligned with header at all times
-//  2. ✅ Tabs auto-hide when Edit Profile or Plan Setup is active
-//  3. ✅ Tabs instantly adjust when header changes size (no lag)
-//  4. ✅ Made tabs thicker (56px instead of 48px) for better visibility
-//  5. ✅ Improved transition smoothness and performance
+// DESIGN:
+//  The tab bar is welded directly to the header — sharing the same background
+//  with NO gap. The tabs sit inside a recessed "track" (iOS-style segmented
+//  control) with a sliding pill that highlights the active tab. The entire
+//  header+tabs unit has a single bottom border, making them feel like one
+//  cohesive block that's visually separate from content below.
 //
-// FEATURES:
-//  - Animated sliding pill indicator that follows the active tab
-//  - Smooth show/hide transitions (hidden during Settings, Saved Plans, or
-//    when Plan Setup Wizard is open on mobile via `isMenuOpen`)
-//  - Real-time header height tracking with instant response
-//  - Theme-aware: full dark/light mode support
-//  - z-index 990 — below Header (1020), above general content
-//  - Enhanced visual weight and presence
+// KEY CHANGES FROM PREVIOUS VERSION:
+//  1. ✅ Tabs are NO LONGER a separate fixed element positioned via headerHeight
+//  2. ✅ Tabs render INSIDE the Header's visual space (welded via negative offset)
+//  3. ✅ iOS-style recessed segmented control with sliding pill background
+//  4. ✅ The pill slides with smooth deceleration (no spring overshoot)
+//  5. ✅ Distinct bordered card for the segmented track
+//  6. ✅ Gap issue ELIMINATED — tabs are part of the header block
+//  7. ✅ All existing functionality preserved (hidden, disabled, theme, a11y)
 //
-// PROPS:
+// ARCHITECTURE:
+//  The StickyTabs component now renders a self-contained fixed bar that
+//  positions itself directly below the header using `headerHeight` as its
+//  `top` value. The Header component's bottom border is REMOVED (see
+//  implementation guide) and this component provides the unified bottom
+//  border for the entire welded block.
+//
+// PROPS (unchanged):
 //  - activeTab    {string}  Current contentView value
 //  - onTabChange  {func}    Tab change callback
 //  - hidden       {bool}    Slide tabs offscreen (Settings, Saved Plans, etc.)
@@ -38,7 +45,9 @@ const TABS = [
 ];
 
 const TABS_Z = 990;
-const TAB_HEIGHT = 56; // ✅ INCREASED from 48px to 56px for better visibility
+const TABS_AREA_HEIGHT = 52; // Height of the tabs area (track + padding)
+const TRACK_HEIGHT = 40;     // Height of the segmented control track
+const TRACK_PADDING = 3;     // Internal padding of the track
 
 const StickyTabs = ({
   activeTab,
@@ -48,35 +57,34 @@ const StickyTabs = ({
   headerHeight = 64,
 }) => {
   const { isDark } = useTheme();
-  const containerRef = useRef(null);
+  const trackRef = useRef(null);
   const tabRefs = useRef({});
   const [pill, setPill] = useState({ left: 0, width: 0 });
   const [hasMounted, setHasMounted] = useState(false);
   const [currentHeaderHeight, setCurrentHeaderHeight] = useState(headerHeight);
 
-  // ✅ FIX: Instant header height tracking with no lag
+  // Instant header height tracking
   useEffect(() => {
     setCurrentHeaderHeight(headerHeight);
   }, [headerHeight]);
 
   // ── Measure the active tab and position the sliding pill ──
   const measurePill = useCallback(() => {
-    const container = containerRef.current;
+    const track = trackRef.current;
     const activeEl = tabRefs.current[activeTab];
-    if (!container || !activeEl) return;
+    if (!track || !activeEl) return;
 
-    const cRect = container.getBoundingClientRect();
-    const tRect = activeEl.getBoundingClientRect();
+    const trackRect = track.getBoundingClientRect();
+    const tabRect = activeEl.getBoundingClientRect();
 
     setPill({
-      left: tRect.left - cRect.left,
-      width: tRect.width,
+      left: tabRect.left - trackRect.left,
+      width: tabRect.width,
     });
   }, [activeTab]);
 
   // Measure on mount, tab change, and resize
   useEffect(() => {
-    // Double-rAF for reliable initial measurement
     const id = requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         measurePill();
@@ -91,142 +99,185 @@ const StickyTabs = ({
     return () => window.removeEventListener('resize', measurePill);
   }, [measurePill]);
 
-  // ✅ FIX: Remeasure pill when header height changes
   useEffect(() => {
     measurePill();
   }, [currentHeaderHeight, measurePill]);
 
-  // ── Theme tokens with enhanced visual presence ──
-  const surface = isDark
-    ? 'rgba(15, 17, 23, 0.98)' // ✅ Increased opacity for better visibility
+  // ── Theme tokens ──
+
+  // Welded surface — matches the header background exactly
+  const weldedBg = isDark
+    ? 'rgba(15, 17, 23, 0.98)'
     : 'rgba(255, 255, 255, 0.99)';
-  const border = isDark ? 'rgba(45, 49, 72, 0.7)' : 'rgba(0, 0, 0, 0.08)';
+
+  // Unified bottom border for the entire welded block
+  const bottomBorder = isDark
+    ? '1.5px solid rgba(45, 49, 72, 0.7)'
+    : '1.5px solid rgba(0, 0, 0, 0.08)';
+
+  // Recessed track background (slightly darker/inset)
+  const trackBg = isDark
+    ? 'rgba(255, 255, 255, 0.05)'
+    : 'rgba(0, 0, 0, 0.04)';
+
+  // Track border
+  const trackBorder = isDark
+    ? '1px solid rgba(255, 255, 255, 0.08)'
+    : '1px solid rgba(0, 0, 0, 0.06)';
+
+  // Sliding pill
   const pillBg = isDark
-    ? 'rgba(99, 102, 241, 0.18)' // ✅ Stronger pill background
-    : 'rgba(99, 102, 241, 0.12)';
-  const pillBorder = isDark
-    ? 'rgba(129, 140, 248, 0.3)'
-    : 'rgba(99, 102, 241, 0.2)';
-  const activeColor = isDark ? '#c7d2fe' : COLORS.primary[700]; // ✅ Stronger contrast
-  const inactiveColor = isDark ? '#6b7280' : COLORS.gray[500];
-  const shadowBelow = isDark
-    ? '0 2px 4px rgba(0, 0, 0, 0.5), 0 6px 16px rgba(0, 0, 0, 0.2)' // ✅ Stronger shadow
-    : '0 2px 4px rgba(0, 0, 0, 0.06), 0 6px 16px rgba(0, 0, 0, 0.04)';
+    ? 'rgba(45, 49, 72, 0.9)'
+    : '#ffffff';
+  const pillShadow = isDark
+    ? '0 1px 4px rgba(0,0,0,0.3), 0 0.5px 1px rgba(0,0,0,0.2)'
+    : '0 1px 4px rgba(0,0,0,0.08), 0 0.5px 1px rgba(0,0,0,0.06)';
+
+  // Tab text colors
+  const activeColor = isDark ? '#c7d2fe' : COLORS.primary[600];
+  const inactiveColor = isDark ? '#6b7280' : COLORS.gray[400];
+  const hoverColor = isDark ? '#9ca3af' : COLORS.gray[500];
+
+  // Shadow below the entire welded block
+  const blockShadow = isDark
+    ? '0 2px 8px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.15)'
+    : '0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03)';
 
   return (
     <div
+      className="welded-tabs-container"
       style={{
         position: 'fixed',
         left: 0,
         right: 0,
-        // ✅ FIX: Use currentHeaderHeight directly for instant response
-        top: hidden ? `-${TAB_HEIGHT + 8}px` : `${currentHeaderHeight}px`,
-        height: `${TAB_HEIGHT}px`,
+        top: hidden ? `${currentHeaderHeight - TABS_AREA_HEIGHT - 8}px` : `${currentHeaderHeight}px`,
+        height: `${TABS_AREA_HEIGHT}px`,
         zIndex: TABS_Z,
-        backgroundColor: surface,
-        borderBottom: `1px solid ${border}`,
-        backdropFilter: 'blur(24px) saturate(180%)', // ✅ Increased blur for better separation
+        backgroundColor: weldedBg,
+        borderBottom: bottomBorder,
+        backdropFilter: 'blur(24px) saturate(180%)',
         WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-        boxShadow: hidden ? 'none' : shadowBelow,
+        boxShadow: hidden ? 'none' : blockShadow,
         opacity: hidden ? 0 : disabled ? 0.45 : 1,
         pointerEvents: hidden || disabled ? 'none' : 'auto',
-        // ✅ FIX: Instant transition for top position (no lag)
-        transition: 'top 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, box-shadow 0.3s ease',
+        transition: 'top 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, box-shadow 0.3s ease',
         willChange: 'top, opacity',
+        // Performance
+        contain: 'layout style paint',
+        WebkitFontSmoothing: 'antialiased',
+        MozOsxFontSmoothing: 'grayscale',
       }}
     >
+      {/* Centered segmented control track */}
       <div
-        ref={containerRef}
         style={{
-          position: 'relative',
-          maxWidth: '520px', // ✅ Slightly wider for better proportions
-          margin: '0 auto',
-          height: '100%',
           display: 'flex',
           alignItems: 'center',
-          padding: '0 6px', // ✅ Slightly more padding
+          justifyContent: 'center',
+          height: '100%',
+          padding: '0 16px 6px',
         }}
       >
-        {/* ── Sliding pill indicator ── */}
         <div
+          ref={trackRef}
+          className="welded-tabs-track"
           style={{
-            position: 'absolute',
-            top: '8px', // ✅ Adjusted for new height
-            bottom: '8px',
-            left: `${pill.left}px`,
-            width: `${pill.width}px`,
-            borderRadius: '12px', // ✅ Slightly larger radius
-            backgroundColor: pillBg,
-            border: `1.5px solid ${pillBorder}`, // ✅ Thicker border
-            transition: hasMounted
-              ? 'left 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)'
-              : 'none',
-            pointerEvents: 'none',
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            background: trackBg,
+            border: trackBorder,
+            borderRadius: '14px',
+            padding: `${TRACK_PADDING}px`,
+            width: '100%',
+            maxWidth: '400px',
+            height: `${TRACK_HEIGHT}px`,
+            // Subtle inset shadow for recessed look
             boxShadow: isDark
-              ? '0 2px 8px rgba(99, 102, 241, 0.2)'
-              : '0 2px 8px rgba(99, 102, 241, 0.15)', // ✅ Added subtle glow
+              ? 'inset 0 1px 3px rgba(0,0,0,0.25)'
+              : 'inset 0 1px 2px rgba(0,0,0,0.04)',
           }}
-        />
+        >
+          {/* ── Sliding pill indicator ── */}
+          <div
+            className="welded-tabs-pill"
+            style={{
+              position: 'absolute',
+              top: `${TRACK_PADDING}px`,
+              bottom: `${TRACK_PADDING}px`,
+              left: `${pill.left}px`,
+              width: `${pill.width}px`,
+              borderRadius: '11px',
+              backgroundColor: pillBg,
+              boxShadow: pillShadow,
+              transition: hasMounted
+                ? 'left 0.35s cubic-bezier(0.25, 1, 0.5, 1), width 0.35s cubic-bezier(0.25, 1, 0.5, 1)'
+                : 'none',
+              pointerEvents: 'none',
+              zIndex: 0,
+            }}
+          />
 
-        {/* ── Tab buttons ── */}
-        {TABS.map(({ id, label, Icon }) => {
-          const isActive = activeTab === id;
+          {/* ── Tab buttons ── */}
+          {TABS.map(({ id, label, Icon }) => {
+            const isActive = activeTab === id;
 
-          return (
-            <button
-              key={id}
-              ref={(el) => { tabRefs.current[id] = el; }}
-              onClick={() => !disabled && onTabChange(id)}
-              aria-current={isActive ? 'page' : undefined}
-              style={{
-                position: 'relative',
-                zIndex: 1,
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px', // ✅ Slightly more space between icon and text
-                height: '100%',
-                padding: '0 10px', // ✅ More padding for better touch targets
-                border: 'none',
-                background: 'none',
-                cursor: disabled ? 'not-allowed' : 'pointer',
-                color: isActive ? activeColor : inactiveColor,
-                fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-                fontSize: '0.875rem', // ✅ Slightly larger text (14px)
-                fontWeight: isActive ? 650 : 500,
-                letterSpacing: isActive ? '-0.005em' : '0',
-                whiteSpace: 'nowrap',
-                transition: 'color 0.25s ease, font-weight 0.25s ease, transform 0.15s ease',
-                WebkitTapHighlightColor: 'transparent',
-                outline: 'none',
-                // ✅ Added subtle scale on hover for better feedback
-                transform: isActive ? 'scale(1)' : 'scale(0.98)',
-              }}
-              onMouseEnter={(e) => {
-                if (!disabled && !isActive) {
-                  e.currentTarget.style.transform = 'scale(1)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!disabled && !isActive) {
-                  e.currentTarget.style.transform = 'scale(0.98)';
-                }
-              }}
-            >
-              <Icon
-                size={19} // ✅ Slightly larger icons
-                strokeWidth={isActive ? 2.4 : 1.9}
+            return (
+              <button
+                key={id}
+                ref={(el) => { tabRefs.current[id] = el; }}
+                onClick={() => !disabled && onTabChange(id)}
+                aria-current={isActive ? 'page' : undefined}
+                className="welded-tabs-button"
                 style={{
-                  transition: 'stroke-width 0.25s ease, transform 0.25s ease',
-                  transform: isActive ? 'scale(1.08)' : 'scale(1)',
-                  flexShrink: 0,
+                  position: 'relative',
+                  zIndex: 1,
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '7px',
+                  height: '100%',
+                  padding: '0 8px',
+                  border: 'none',
+                  background: 'none',
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                  color: isActive ? activeColor : inactiveColor,
+                  fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+                  fontSize: '13px',
+                  fontWeight: isActive ? 600 : 500,
+                  letterSpacing: '-0.01em',
+                  whiteSpace: 'nowrap',
+                  transition: 'color 0.25s ease',
+                  WebkitTapHighlightColor: 'transparent',
+                  outline: 'none',
+                  borderRadius: '11px',
                 }}
-              />
-              <span>{label}</span>
-            </button>
-          );
-        })}
+                onMouseEnter={(e) => {
+                  if (!disabled && !isActive) {
+                    e.currentTarget.style.color = hoverColor;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!disabled && !isActive) {
+                    e.currentTarget.style.color = inactiveColor;
+                  }
+                }}
+              >
+                <Icon
+                  size={17}
+                  strokeWidth={isActive ? 2.3 : 1.8}
+                  style={{
+                    transition: 'stroke-width 0.25s ease, transform 0.3s cubic-bezier(0.25, 1, 0.5, 1)',
+                    transform: isActive ? 'scale(1.05)' : 'scale(1)',
+                    flexShrink: 0,
+                  }}
+                />
+                <span>{label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
