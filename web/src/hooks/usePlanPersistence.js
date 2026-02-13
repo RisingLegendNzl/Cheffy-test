@@ -31,6 +31,10 @@ import { cachePlan, getCachedPlan, clearCachedPlan, clearAll as clearLocalCache 
  *   update, preventing intermediate renders where selectedDay is out-of-bounds.
  * - Added a transitioning flag exposed as `loadingPlan` to let MainApp
  *   show a loading fallback during the async load window.
+ *
+ * RENAME FEATURE:
+ * - Added renamePlan callback that updates only the name field in Firestore
+ *   and optimistically updates local state.
  */
 const usePlanPersistence = ({
     userId,
@@ -209,7 +213,7 @@ const usePlanPersistence = ({
     /**
      * Loads a saved plan from Firestore and restores ALL five state fields:
      * mealPlan, results, uniqueIngredients, formData, nutritionalTargets.
-     * 
+     *
      * CRITICAL FIXES:
      * - Resets selectedDay to 1 to prevent out-of-bounds crashes
      * - Updates activePlanId synchronously to prevent UI desync
@@ -233,10 +237,10 @@ const usePlanPersistence = ({
         }
 
         setLoadingPlan(true);
-        
+
         // Stage all updates in local variables for atomic application
         let stagedPlan = null;
-        
+
         try {
             const loadedPlan = await planService.loadPlan({
                 userId,
@@ -319,10 +323,10 @@ const usePlanPersistence = ({
         } catch (error) {
             console.error('[PLAN_HOOK] Error loading plan:', error);
             showToast && showToast('Failed to load plan', 'error');
-            
+
             // ── ERROR RECOVERY: Don't leave UI in partial state ──
             // If load failed, don't update any state
-            
+
             return false;
         } finally {
             setLoadingPlan(false);
@@ -364,6 +368,47 @@ const usePlanPersistence = ({
             return false;
         }
     }, [userId, db, showToast, activePlanId, listPlans]);
+
+    // ── renamePlan ─────────────────────────────────────────────────────
+    /**
+     * Renames an existing saved plan. Only updates the `name` field in
+     * Firestore — all other data and the planId remain unchanged.
+     *
+     * Optimistically updates local state for instant UI feedback, then
+     * re-fetches on error to ensure consistency.
+     *
+     * @param {string} planId - The ID of the plan to rename.
+     * @param {string} newName - The new name (will be trimmed).
+     * @returns {Promise<void>}
+     */
+    const renamePlan = useCallback(async (planId, newName) => {
+        if (!userId || !db) {
+            showToast && showToast('Please sign in to rename plans', 'warning');
+            return;
+        }
+
+        if (!planId || !newName?.trim()) {
+            showToast && showToast('Invalid plan name', 'error');
+            return;
+        }
+
+        try {
+            await planService.renamePlan({ userId, db, planId, newName: newName.trim() });
+
+            // Update local state immediately (optimistic update)
+            setSavedPlans(prev =>
+                prev.map(p => p.planId === planId ? { ...p, name: newName.trim() } : p)
+            );
+
+            showToast && showToast('Plan renamed successfully', 'success');
+        } catch (error) {
+            console.error('[PLAN_HOOK] Error renaming plan:', error);
+            showToast && showToast('Failed to rename plan', 'error');
+            // Re-fetch to ensure consistency
+            listPlans().catch(() => {});
+            throw error; // Re-throw so the UI can show the error state
+        }
+    }, [userId, db, showToast, listPlans]);
 
     // ── setActivePlan (manual, user-triggered) ─────────────────────────
     const setActivePlanHandler = useCallback(async (planId) => {
@@ -448,6 +493,7 @@ const usePlanPersistence = ({
         loadPlan,
         listPlans,
         deletePlan,
+        renamePlan,
         setActivePlan: setActivePlanHandler,
         autoSavePlan,
         // ── PERSISTENCE FIX: expose for sign-out cleanup ──
