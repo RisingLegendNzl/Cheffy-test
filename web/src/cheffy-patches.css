@@ -1,0 +1,48 @@
+/* =============================================================================
+   cheffy-patches.css
+   
+   Targeted fixes for:
+   1. AuthModal checkbox — always white background in dark mode
+   2. Sticky tabs content spacing adjustment
+   
+   Import in index.jsx AFTER theme-variables.css:
+     import './cheffy-patches.css';
+   ============================================================================= */
+
+
+/* ── 1. CHECKBOX FIX — AuthModal "I agree to Terms" ─────────────────────── */
+/*
+ * Problem: In dark mode, the global surface overrides in theme-variables.css
+ * can cause checkbox backgrounds to inherit dark colours even inside .keep-light.
+ * The checkbox also relies on browser-default rendering which varies.
+ *
+ * Fix: Force checkbox background to white in both themes using appearance + 
+ * explicit background. The accent-color (already set inline) handles the
+ * checked state fill.
+ */
+
+/* Ensure checkboxes inside .keep-light containers are always white */
+.keep-light input[type="checkbox"] {
+  -webkit-appearance: auto;
+  appearance: auto;
+  background-color: #ffffff !important;
+  border: 1.5px solid #d1d5db !important;
+  border-radius: 3px;
+}
+
+/* Global dark mode: any checkbox that ISN'T inside .keep-light or .wizard-form-exclude */
+[data-theme="dark"] input[type="checkbox"]:not(.keep-light *):not(.wizard-form-exclude *) {
+  background-color: #ffffff !important;
+  border-color: #6b7280 !important;
+  -webkit-appearance: auto;
+  appearance: auto;
+}
+
+/* Ensure the checked state remains accessible with proper contrast */
+[data-theme="dark"] input[type="checkbox"]:checked {
+  accent-color: #4f46e5;
+}
+
+[data-theme="light"] input[type="checkbox"]:checked {
+  accent-color: #4f46e5;
+}
