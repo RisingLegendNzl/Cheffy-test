@@ -1,7 +1,6 @@
 // web/src/components/ProfileTab.jsx
-// Enhanced UI: gradient identity stripe, stat micro-icons with stagger entrance,
-// goal colour-coded CARD (full container), animated calorie ring, cascading macro progress bars,
-// macro icon badges, gradient footer with chevron nudge, living-border dashboard wrapper.
+// Theme-aware: adapts Profile Card + Targets Card to dark/light mode.
+// Fixes: issue #1 (purple stripe), issue #5 (Blueprint card in dark mode).
 
 import React, { useMemo } from 'react';
 import {
@@ -20,30 +19,27 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { COLORS, GOAL_LABELS, ACTIVITY_LABELS } from '../constants';
+import { useTheme } from '../contexts/ThemeContext';
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────
 
-/** Return a goal-specific colour from the GOAL_LABELS constant map. */
 const getGoalColor = (goalKey) => {
   const entry = GOAL_LABELS[goalKey];
   return entry?.color || COLORS.primary[500];
 };
 
-/** Return the human-readable goal label. */
 const getGoalLabel = (goalKey) => {
   const entry = GOAL_LABELS[goalKey];
   return entry?.label || goalKey.replace(/_/g, ' ');
 };
 
-/** Return the human-readable activity label. */
 const getActivityLabel = (actKey) => {
   const entry = ACTIVITY_LABELS[actKey];
   return entry?.label || actKey;
 };
 
-/** Hex colour → rgba at given opacity */
 const hexToRgba = (hex, alpha) => {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -51,7 +47,6 @@ const hexToRgba = (hex, alpha) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
-// Macro colour tokens keyed by macro id (maps to COLORS.macros)
 const MACRO_COLORS = {
   protein: { main: '#10b981', dark: '#059669', light: '#d1fae5' },
   fat:     { main: '#f59e0b', dark: '#d97706', light: '#fef3c7' },
@@ -66,44 +61,58 @@ const MACRO_COLORS = {
 const STAT_CONFIG = [
   { key: 'weight',   label: 'Weight',   Icon: Scale,    format: (v) => `${v}kg` },
   { key: 'bodyFat',  label: 'Body Fat', Icon: Percent,  format: (v) => v ? `${v}%` : 'N/A' },
-  { key: 'goal',     label: 'Goal',     Icon: Target,   format: null },    // special render
-  { key: 'activity', label: 'Activity', Icon: Activity, format: null },    // special render
+  { key: 'goal',     label: 'Goal',     Icon: Target,   format: null },
+  { key: 'activity', label: 'Activity', Icon: Activity, format: null },
 ];
 
 const ProfileCard = ({ formData }) => {
+  const { isDark } = useTheme();
   const goalColor = getGoalColor(formData.goal);
 
+  // Theme-derived colours
+  const cardBg = isDark ? '#1e2130' : '#ffffff';
+  const cardBorder = isDark ? '#2d3148' : COLORS.gray[200];
+  const headingColor = isDark ? '#a5b4fc' : COLORS.primary[700];
+  const statBoxBg = isDark ? '#252839' : COLORS.gray[50];
+  const statBoxBorder = isDark ? '#2d3148' : COLORS.gray[200];
+  const labelColor = isDark ? '#9ca3b0' : COLORS.gray[500];
+  const valueColor = isDark ? '#f0f1f5' : COLORS.gray[900];
+
   return (
-    <div className="profile-card-enhanced bg-white rounded-xl shadow-lg border overflow-hidden">
-      {/* ── Gradient identity stripe ── */}
+    <div
+      className="profile-card-enhanced rounded-xl shadow-lg overflow-hidden"
+      style={{
+        backgroundColor: cardBg,
+        border: `1px solid ${cardBorder}`,
+      }}
+    >
+      {/* Issue #1: gradient stripe — uses .profile-card-stripe class
+          which is hidden via CSS in dark mode (theme-variables.css) */}
       <div
-        className="h-1"
+        className="profile-card-stripe h-1"
         style={{
           background: `linear-gradient(90deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]})`,
         }}
       />
 
       <div className="p-6">
-        {/* ── Heading ── */}
-        <h3 className="text-xl font-bold flex items-center mb-4" style={{ color: COLORS.primary[700] }}>
+        <h3 className="text-xl font-bold flex items-center mb-4" style={{ color: headingColor }}>
           <UserIcon className="w-5 h-5 mr-2" />
           User Profile
         </h3>
 
-        {/* ── 2×2 stat grid with stagger entrance ── */}
         <div className="grid grid-cols-2 gap-4">
           {STAT_CONFIG.map((stat) => {
             const Icon = stat.Icon;
 
-            // ── REDESIGNED: Goal as full-card colour state ──
             if (stat.key === 'goal') {
               return (
                 <div
                   key={stat.key}
                   className="profile-stat-box p-3 rounded-lg"
                   style={{
-                    backgroundColor: hexToRgba(goalColor, 0.10),
-                    border: `1.5px solid ${hexToRgba(goalColor, 0.25)}`,
+                    backgroundColor: hexToRgba(goalColor, isDark ? 0.15 : 0.10),
+                    border: `1.5px solid ${hexToRgba(goalColor, isDark ? 0.35 : 0.25)}`,
                   }}
                 >
                   <div className="flex items-center mb-1.5">
@@ -122,30 +131,54 @@ const ProfileCard = ({ formData }) => {
               );
             }
 
-            // Special rendering for Activity
             if (stat.key === 'activity') {
+              const actLabel = getActivityLabel(formData.activityLevel);
               return (
-                <div key={stat.key} className="profile-stat-box bg-gray-50 p-3 rounded-lg">
-                  <div className="flex items-center mb-1">
-                    <Icon size={14} style={{ color: COLORS.primary[400] }} className="mr-1.5" />
-                    <span className="text-sm text-gray-500">{stat.label}</span>
+                <div
+                  key={stat.key}
+                  className="profile-stat-box p-3 rounded-lg"
+                  style={{
+                    backgroundColor: isDark ? 'rgba(99,102,241,0.08)' : COLORS.primary[50],
+                    border: `1.5px solid ${isDark ? 'rgba(99,102,241,0.2)' : COLORS.primary[200]}`,
+                  }}
+                >
+                  <div className="flex items-center mb-1.5">
+                    <Icon size={14} style={{ color: COLORS.primary[500] }} className="mr-1.5" />
+                    <span className="text-sm" style={{ color: isDark ? '#818cf8' : COLORS.primary[400] }}>
+                      {stat.label}
+                    </span>
                   </div>
-                  <span className="text-sm font-semibold text-gray-800">
-                    {getActivityLabel(formData.activityLevel)}
+                  <span
+                    className="text-sm font-bold leading-tight block"
+                    style={{ color: isDark ? '#a5b4fc' : COLORS.primary[700] }}
+                  >
+                    {actLabel}
                   </span>
                 </div>
               );
             }
 
-            // Default stat rendering
+            // Default stat box (weight, body fat)
+            const rawValue = stat.key === 'weight' ? formData.weight : formData.bodyFat;
+            const displayValue = stat.format ? stat.format(rawValue) : rawValue || 'N/A';
+
             return (
-              <div key={stat.key} className="profile-stat-box bg-gray-50 p-3 rounded-lg">
-                <div className="flex items-center mb-1">
-                  <Icon size={14} style={{ color: COLORS.primary[400] }} className="mr-1.5" />
-                  <span className="text-sm text-gray-500">{stat.label}</span>
+              <div
+                key={stat.key}
+                className="profile-stat-box p-3 rounded-lg"
+                style={{
+                  backgroundColor: statBoxBg,
+                  border: `1.5px solid ${statBoxBorder}`,
+                }}
+              >
+                <div className="flex items-center mb-1.5">
+                  <Icon size={14} style={{ color: isDark ? '#9ca3b0' : COLORS.gray[400] }} className="mr-1.5" />
+                  <span className="text-sm" style={{ color: labelColor }}>
+                    {stat.label}
+                  </span>
                 </div>
-                <span className="text-sm font-semibold text-gray-800">
-                  {stat.format ? stat.format(formData[stat.key]) : formData[stat.key]}
+                <span className="text-lg font-bold" style={{ color: valueColor }}>
+                  {displayValue}
                 </span>
               </div>
             );
@@ -158,89 +191,100 @@ const ProfileCard = ({ formData }) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// MACRO PROGRESS BAR (Element 2)
+// MACRO PROGRESS BAR — used inside TargetsCard
 // ─────────────────────────────────────────────────────────────
 
 const MacroProgressBar = ({ label, amount, unit, kcal, macroKey, Icon, percentage }) => {
-  const colors = MACRO_COLORS[macroKey];
+  const { isDark } = useTheme();
+  const colors = MACRO_COLORS[macroKey] || MACRO_COLORS.protein;
+  const trackBg = isDark ? 'rgba(255,255,255,0.06)' : colors.light;
+  const labelCol = isDark ? '#d1d5db' : COLORS.gray[700];
+  const subCol = isDark ? '#6b7280' : COLORS.gray[400];
 
   return (
-    <div className="macro-row space-y-1.5">
-      {/* Label row with icon badge */}
-      <div className="flex items-center justify-between">
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center">
           <div
-            className="w-6 h-6 rounded-full flex items-center justify-center mr-2"
-            style={{ backgroundColor: colors.light }}
+            className="w-6 h-6 rounded-md flex items-center justify-center mr-2"
+            style={{ backgroundColor: isDark ? hexToRgba(colors.main, 0.15) : colors.light }}
           >
-            <Icon size={12} style={{ color: colors.dark }} />
+            <Icon className="w-3.5 h-3.5" style={{ color: colors.main }} />
           </div>
-          <span className="text-sm font-semibold text-gray-700">{label}</span>
+          <span className="text-sm font-semibold" style={{ color: labelCol }}>
+            {label}
+          </span>
         </div>
-        <span className="text-sm font-bold" style={{ color: colors.main }}>
-          {amount}{unit}
-          <span className="text-xs text-gray-400 ml-1">({kcal} kcal)</span>
-        </span>
+        <div className="text-right">
+          <span className="text-sm font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
+            {amount}{unit}
+          </span>
+          <span className="text-xs ml-1" style={{ color: subCol }}>
+            ({kcal} kcal · {percentage}%)
+          </span>
+        </div>
       </div>
-
-      {/* Progress bar with fill animation */}
-      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+      <div
+        className="h-2 rounded-full overflow-hidden"
+        style={{ backgroundColor: trackBg }}
+      >
         <div
-          className={`h-2 rounded-full macro-bar-fill macro-bar-fill--${macroKey}`}
+          className="h-full rounded-full macro-bar-fill"
           style={{
-            background: `linear-gradient(90deg, ${colors.main}, ${colors.dark})`,
+            width: `${Math.min(percentage, 100)}%`,
+            backgroundColor: colors.main,
           }}
         />
       </div>
-
-      {/* Percentage with coloured number */}
-      <p className="text-xs text-right">
-        <span className="font-semibold" style={{ color: colors.main }}>{percentage}%</span>
-        <span className="text-gray-500"> of daily calories</span>
-      </p>
     </div>
   );
 };
 
 
 // ─────────────────────────────────────────────────────────────
-// TARGETS CARD (Element 3 — main dashboard content)
+// TARGETS CARD (Element 2) — "Your Daily Nutritional Blueprint"
+// Issue #5: must match dark theme, kcal number must be visible
 // ─────────────────────────────────────────────────────────────
 
 const TargetsCard = ({ nutritionalTargets }) => {
+  const { isDark } = useTheme();
   const hasTargets = nutritionalTargets.calories > 0;
 
-  // ── EMPTY STATE ──
-  if (!hasTargets) {
-    return (
-      <div className="dashboard-card-wrapper bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl shadow-lg border border-indigo-200 p-8 text-center overflow-hidden">
-        <div className="empty-state-icon-breathe w-20 h-20 mx-auto mb-4 bg-indigo-100 rounded-full flex items-center justify-center">
-          <Target className="w-10 h-10 text-indigo-400" />
-        </div>
-        <h3 className="text-xl font-bold text-indigo-700 mb-2">
-          No Targets Yet
-        </h3>
-        <p className="text-gray-600 text-sm mb-4">
-          Generate a plan to see your personalized nutritional targets
-        </p>
-        <div className="flex items-center justify-center text-sm text-indigo-500">
-          <Zap className="w-4 h-4 mr-1 empty-state-zap" />
-          Click "Generate Plan" to get started
-        </div>
-      </div>
-    );
-  }
+  // SVG calorie ring calculations
+  const size = 180;
+  const strokeWidth = 12;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
 
-  // ── Calculate macro ratios ──
+  // Theme-derived colours
+  const cardBg = isDark ? '#1e2130' : '#ffffff';
+  const cardBorder = isDark ? '#2d3148' : COLORS.gray[200];
+  const ringPanelBg = isDark
+    ? 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06))'
+    : `linear-gradient(135deg, ${COLORS.primary[50]}, ${COLORS.secondary[50]})`;
+  const ringPanelBorderColor = isDark ? '#2d3148' : COLORS.gray[200];
+  const dailyLabel = isDark ? '#9ca3b0' : COLORS.gray[600];
+  const kcalValueColor = isDark ? '#ffffff' : COLORS.gray[900];
+  const kcalUnitColor = isDark ? '#6b7280' : COLORS.gray[500];
+  const ringTrackColor = isDark ? '#2d3148' : '#e5e7eb';
+  const macroPanelBg = isDark ? '#1e2130' : 'transparent';
+  const macroHeadingColor = isDark ? '#e5e7eb' : COLORS.gray[800];
+  const footerBg = isDark
+    ? 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06))'
+    : `linear-gradient(135deg, ${COLORS.primary[50]}, #f3e8ff)`;
+  const footerIconBg = isDark ? 'rgba(99,102,241,0.15)' : COLORS.primary[100];
+  const footerTitleColor = isDark ? '#a5b4fc' : COLORS.primary[800];
+  const footerTextColor = isDark ? '#9ca3b0' : COLORS.gray[600];
+  const footerLinkColor = isDark ? '#818cf8' : COLORS.primary[600];
+
+  // Macro ratios
   const macroRatios = useMemo(() => {
     const { protein, fat, carbs } = nutritionalTargets;
     const proteinCal = protein * 4;
     const fatCal = fat * 9;
     const carbsCal = carbs * 4;
     const totalCal = proteinCal + fatCal + carbsCal;
-
     if (totalCal === 0) return { protein: 0, fat: 0, carbs: 0 };
-
     return {
       protein: Math.round((proteinCal / totalCal) * 100),
       fat: Math.round((fatCal / totalCal) * 100),
@@ -248,15 +292,46 @@ const TargetsCard = ({ nutritionalTargets }) => {
     };
   }, [nutritionalTargets]);
 
-  // ── SVG calorie ring calculations ──
-  const size = 180;
-  const strokeWidth = 12;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
+  // EMPTY STATE
+  if (!hasTargets) {
+    return (
+      <div
+        className="dashboard-card-wrapper rounded-xl shadow-lg border p-8 text-center overflow-hidden"
+        style={{
+          backgroundColor: isDark ? '#1e2130' : undefined,
+          borderColor: isDark ? '#2d3148' : COLORS.primary[200],
+          background: isDark ? '#1e2130' : `linear-gradient(to br, ${COLORS.primary[50]}, ${COLORS.secondary[50]})`,
+        }}
+      >
+        <div
+          className="empty-state-icon-breathe w-20 h-20 mx-auto mb-4 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: isDark ? 'rgba(99,102,241,0.12)' : COLORS.primary[100] }}
+        >
+          <Target className="w-10 h-10" style={{ color: isDark ? '#818cf8' : COLORS.primary[400] }} />
+        </div>
+        <h3 className="text-xl font-bold mb-2" style={{ color: isDark ? '#a5b4fc' : COLORS.primary[700] }}>
+          No Targets Yet
+        </h3>
+        <p className="text-sm mb-4" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}>
+          Generate a plan to see your personalized nutritional targets
+        </p>
+        <div className="flex items-center justify-center text-sm" style={{ color: isDark ? '#818cf8' : COLORS.primary[500] }}>
+          <Zap className="w-4 h-4 mr-1 empty-state-zap" />
+          Click "Generate Plan" to get started
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="dashboard-card-wrapper bg-white rounded-xl shadow-lg border overflow-hidden">
-      {/* ── Header ── */}
+    <div
+      className="targets-card-surface dashboard-card-wrapper rounded-xl shadow-lg border overflow-hidden"
+      style={{
+        backgroundColor: cardBg,
+        borderColor: cardBorder,
+      }}
+    >
+      {/* Header */}
       <div
         className="text-white p-6"
         style={{
@@ -272,17 +347,21 @@ const TargetsCard = ({ nutritionalTargets }) => {
         </p>
       </div>
 
-      {/* ── SPLIT VIEW LAYOUT ── */}
+      {/* SPLIT VIEW LAYOUT */}
       <div className="grid md:grid-cols-2 gap-0">
 
-        {/* LEFT SIDE: Calorie Target with animated ring */}
+        {/* LEFT SIDE: Calorie Target with ring */}
         <div
-          className="p-8 flex flex-col items-center justify-center border-r"
+          className="targets-card-ring-panel p-8 flex flex-col items-center justify-center border-r"
           style={{
-            background: `linear-gradient(135deg, ${COLORS.primary[50]}, ${COLORS.secondary[50]})`,
+            background: ringPanelBg,
+            borderRightColor: ringPanelBorderColor,
           }}
         >
-          <p className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-2">
+          <p
+            className="text-sm font-semibold uppercase tracking-wide mb-2"
+            style={{ color: dailyLabel }}
+          >
             Daily Target
           </p>
 
@@ -294,16 +373,14 @@ const TargetsCard = ({ nutritionalTargets }) => {
               height={size}
               style={{ '--ring-circumference': circumference }}
             >
-              {/* Background circle */}
               <circle
                 cx={size / 2}
                 cy={size / 2}
                 r={radius}
-                stroke="#e5e7eb"
+                stroke={ringTrackColor}
                 strokeWidth={strokeWidth}
                 fill="none"
               />
-              {/* Animated filled circle */}
               <circle
                 cx={size / 2}
                 cy={size / 2}
@@ -324,20 +401,25 @@ const TargetsCard = ({ nutritionalTargets }) => {
               </defs>
             </svg>
 
-            {/* Center text */}
+            {/* Center text — Issue #5: kcal must be white/visible in dark mode */}
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <Flame className="w-5 h-5 flame-heartbeat mb-1" style={{ color: COLORS.primary[500] }} />
-              <span className="text-3xl font-bold" style={{ color: COLORS.gray[900] }}>
+              <span className="text-3xl font-bold" style={{ color: kcalValueColor }}>
                 {nutritionalTargets.calories.toLocaleString()}
               </span>
-              <span className="text-xs text-gray-500 mt-0.5">kcal/day</span>
+              <span className="text-xs mt-0.5" style={{ color: kcalUnitColor }}>
+                kcal/day
+              </span>
             </div>
           </div>
         </div>
 
         {/* RIGHT SIDE: Macro breakdown */}
-        <div className="p-6 flex flex-col justify-center space-y-4">
-          <h4 className="text-base font-bold text-gray-800 flex items-center">
+        <div
+          className="targets-card-macro-panel p-6 flex flex-col justify-center space-y-4"
+          style={{ backgroundColor: macroPanelBg }}
+        >
+          <h4 className="text-base font-bold flex items-center" style={{ color: macroHeadingColor }}>
             <CheckCircle className="w-4 h-4 mr-2" style={{ color: COLORS.primary[500] }} />
             Macro Breakdown
           </h4>
@@ -374,35 +456,33 @@ const TargetsCard = ({ nutritionalTargets }) => {
         </div>
       </div>
 
-      {/* ── Gradient section divider ── */}
+      {/* Gradient section divider */}
       <div className="section-gradient-divider" />
 
-      {/* ── Footer Info Card ── */}
+      {/* Footer Info Card */}
       <div
-        className="p-4"
-        style={{
-          background: `linear-gradient(135deg, ${COLORS.primary[50]}, #f3e8ff)`,
-        }}
+        className="targets-card-footer p-4"
+        style={{ background: footerBg }}
       >
         <div className="flex items-start">
           <div
             className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mr-3 mt-0.5"
-            style={{ backgroundColor: COLORS.primary[100] }}
+            style={{ backgroundColor: footerIconBg }}
           >
             <TrendingUp className="w-4 h-4" style={{ color: COLORS.primary[600] }} />
           </div>
-          <div className="text-sm text-gray-700">
-            <p className="font-semibold mb-1" style={{ color: COLORS.primary[800] }}>
+          <div className="text-sm">
+            <p className="font-semibold mb-1" style={{ color: footerTitleColor }}>
               Track Your Progress
             </p>
-            <p className="text-gray-600">
+            <p style={{ color: footerTextColor }}>
               Head to the{' '}
-              <span className="font-semibold" style={{ color: COLORS.primary[600] }}>
+              <span className="font-semibold" style={{ color: footerLinkColor }}>
                 Meals tab
               </span>{' '}
               to track your daily intake and see real-time progress
               <span className="footer-chevron-nudge ml-1">
-                <ChevronRight size={14} style={{ color: COLORS.primary[500] }} />
+                <ChevronRight size={14} style={{ color: isDark ? '#818cf8' : COLORS.primary[500] }} />
               </span>
             </p>
           </div>
