@@ -100,22 +100,21 @@ const Header = ({
   // Dropdown panel top: match actual header bottom edge.
   // Expanded header ≈ 80px (py-4 + larger logo + subtitle line).
   // Collapsed header ≈ 64px (py-3 + smaller logo, no subtitle).
-  const dropdownTop = isScrolled ? '64px' : '80px';
+  // Dropdown must clear header + welded tabs (52px tabs area)
+const dropdownTop = isScrolled ? '116px' : '132px';
 
   return (
     <>
       <header
-        ref={headerRef}
-        className={`fixed top-0 left-0 right-0 border-b transition-all duration-300 ${
-          isScrolled ? 'shadow-md' : ''
-        }`}
-        style={{
-          zIndex: Z_INDEX.sticky,
-          backgroundColor: headerBg,
-          borderColor: isScrolled ? borderColor : 'transparent',
-          backdropFilter: isScrolled ? 'blur(20px) saturate(180%)' : 'none',
-        }}
-      >
+  ref={headerRef}
+  className={`fixed top-0 left-0 right-0 transition-all duration-300`}
+  style={{
+    zIndex: Z_INDEX.sticky,
+    backgroundColor: headerBg,
+    borderBottom: 'none',
+    backdropFilter: isScrolled ? 'blur(20px) saturate(180%)' : 'none',
+  }}
+>
         <div className="max-w-7xl mx-auto px-4 md:px-8">
           <div
             className={`flex items-center justify-between transition-all duration-300 ${
