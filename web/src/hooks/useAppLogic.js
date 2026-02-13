@@ -826,12 +826,12 @@ const useAppLogic = ({
                                   { label: 'Items', value: eventData.uniqueIngredients?.length || 0, color: '#f59e0b' },
                                 ]);
                                 
-                                setTimeout(() => {
+                                                                setTimeout(() => {
                                   setShowSuccessModal(true);
-                                  setTimeout(() => {
-                                    setShowSuccessModal(false);
-                                  }, 2500);
+                                  // No auto-dismiss — the SuccessModal is now a persistent
+                                  // modal that requires the user to enter a plan name.
                                 }, 500);
+
                                 
                                 // Auto-save to Firestore
                                 if (planPersistence && planPersistence.autoSavePlan) {
