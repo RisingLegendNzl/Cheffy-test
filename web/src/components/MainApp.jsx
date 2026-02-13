@@ -64,6 +64,14 @@ const CATEGORY_ICONS = {
     'default': <EmojiIcon code="1f6cd" alt="shopping" />
 };
 
+useEffect(() => {
+    // Ensure smooth scrolling when tabs are shown/hidden
+    document.documentElement.style.scrollBehavior = 'smooth';
+    return () => {
+        document.documentElement.style.scrollBehavior = 'auto';
+    };
+}, []);
+
 /**
  * MainApp - Pure presentational component
  * Receives all data and handlers via props
