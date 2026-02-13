@@ -33,6 +33,9 @@ import SettingsPanel from './SettingsPanel';
 import SuccessModal from './SuccessModal';
 import ToastContainer from './Toast';
 
+// --- Theme Hook Import ---
+import { useTheme } from '../contexts/ThemeContext';
+
 import { COLORS, SHADOWS, Z_INDEX, APP_CONFIG } from '../constants';
 
 // Category icon map for shopping list
@@ -181,6 +184,9 @@ const MainApp = ({
     onCompleteProfileSetup = () => {},
 }) => {
     
+    // --- Consume Theme Hook ---
+    const { isDark } = useTheme();
+
     // Determine if we should show the new-user profile gate
     const showProfileGate = isNewUser && !profileSetupComplete;
 
@@ -336,9 +342,11 @@ const MainApp = ({
             />
     
             <PullToRefresh onRefresh={handleRefresh} refreshing={loading}>
+                {/* --- Theme-Aware Background --- */}
                 <div 
-                    className="min-h-screen bg-gray-100 p-4 md:p-8 transition-all duration-200 relative" 
+                    className="min-h-screen p-4 md:p-8 transition-all duration-200 relative" 
                     style={{ 
+                        backgroundColor: isDark ? '#0f1117' : '#f3f4f6',
                         paddingTop: '80px',
                         paddingBottom: '6rem'
                     }}
@@ -462,9 +470,16 @@ const MainApp = ({
                     />
                     <div
                         className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl p-6 w-80 shadow-2xl"
-                        style={{ zIndex: Z_INDEX.modal }}
+                        style={{ 
+                            zIndex: Z_INDEX.modal,
+                            // Ensure background changes for dark mode if CSS overrides apply, or use inline fallback
+                            backgroundColor: isDark ? '#1e2130' : '#ffffff' 
+                        }}
                     >
-                        <h3 className="text-lg font-bold mb-4" style={{ color: COLORS.gray[900] }}>
+                        <h3 
+                            className="text-lg font-bold mb-4" 
+                            style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}
+                        >
                             Save Current Plan
                         </h3>
                         <input
@@ -473,13 +488,20 @@ const MainApp = ({
                             onChange={(e) => setSavePlanName(e.target.value)}
                             placeholder="Plan name (optional)"
                             className="w-full px-4 py-2 border rounded-lg mb-4"
-                            style={{ borderColor: COLORS.gray[300] }}
+                            style={{ 
+                                borderColor: COLORS.gray[300],
+                                backgroundColor: isDark ? '#2d3348' : '#fff',
+                                color: isDark ? '#fff' : '#000'
+                            }}
                         />
                         <div className="flex gap-3">
                             <button
                                 onClick={() => setShowSavePlanPrompt(false)}
                                 className="flex-1 px-4 py-2 rounded-lg border"
-                                style={{ borderColor: COLORS.gray[300], color: COLORS.gray[600] }}
+                                style={{ 
+                                    borderColor: COLORS.gray[300], 
+                                    color: isDark ? '#9ca3af' : COLORS.gray[600] 
+                                }}
                             >
                                 Cancel
                             </button>
