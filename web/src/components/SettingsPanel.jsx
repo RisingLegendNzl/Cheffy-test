@@ -1,5 +1,6 @@
 // web/src/components/SettingsPanel.jsx
-// UPDATED: Removed "Default Store" section, fixed Measurement Units persistence.
+// UPDATED: Removed "System" option from Appearance (#5).
+// "Default Store" was already removed in a prior update.
 import React from 'react';
 import {
   X,
@@ -21,19 +22,13 @@ import { useTheme } from '../contexts/ThemeContext';
 
 /**
  * Settings panel/modal for app preferences.
- *
- * CHANGES from previous version:
- *  - REMOVED "Default Store" dropdown (store is set in preferences step).
- *  - REMOVED `currentStore`, `onStoreChange` props, `selectedStore` state, `handleSave`.
- *  - ADDED `measurementUnits` and `onMeasurementUnitsChange` props so the
- *    unit selection actually persists to formData / Firestore.
  */
 const SettingsPanel = ({
   isOpen,
   onClose,
   onClearData,
   onEditProfile,
-  // Measurement units (new)
+  // Measurement units
   measurementUnits = 'metric',
   onMeasurementUnitsChange,
   // Logs
@@ -108,7 +103,6 @@ const SettingsPanel = ({
               {[
                 { key: 'light', label: 'Light' },
                 { key: 'dark', label: 'Dark' },
-                { key: 'system', label: 'System' },
               ].map((opt) => {
                 const isActive = theme === opt.key;
                 return (
@@ -135,7 +129,7 @@ const SettingsPanel = ({
             </div>
           </div>
 
-          {/* ─── Measurement Units Section (FIXED — now persists) ─── */}
+          {/* ─── Measurement Units Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Ruler size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
@@ -173,7 +167,7 @@ const SettingsPanel = ({
                 className="block text-sm font-semibold mb-2"
                 style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
               >
-                Generation Model
+                Select Model
               </label>
               <select
                 value={selectedModel}
@@ -185,50 +179,39 @@ const SettingsPanel = ({
                   backgroundColor: isDark ? '#1e2130' : '#ffffff',
                 }}
               >
-                <option value="gpt-5.1">GPT-5.1 (Primary — Recommended)</option>
-                <option value="gemini-2.0-flash">Gemini 2.0 Flash (Faster)</option>
+                <option value="gpt-5.1">GPT-5.1 (Recommended)</option>
+                <option value="gpt-4.1">GPT-4.1</option>
+                <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                <option value="o4-mini">o4-mini (Reasoning)</option>
               </select>
-            </div>
-
-            <div
-              className="flex items-center p-3 rounded-lg"
-              style={{
-                backgroundColor: isDark ? '#1e2130' : '#eff6ff',
-                border: `1px solid ${isDark ? '#2d3148' : '#bfdbfe'}`,
-              }}
-            >
-              <Info size={16} className="mr-2 flex-shrink-0" style={{ color: isDark ? '#818cf8' : '#3b82f6' }} />
-              <span className="text-xs" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}>
-                GPT-5.1 provides higher quality plans. Gemini 2.0 Flash is faster but may produce less varied meals.
-              </span>
             </div>
           </div>
 
-          {/* ─── Debug Logs Section ─── */}
+          {/* ─── Developer Logs Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Terminal size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
               <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
-                Debug Logs
+                Developer Logs
               </h3>
             </div>
 
             {[
               {
                 label: 'Orchestrator Logs',
-                icon: <Terminal size={16} />,
+                icon: <Terminal size={14} />,
                 value: showOrchestratorLogs,
                 toggle: onToggleOrchestratorLogs,
               },
               {
                 label: 'Failed Ingredients',
-                icon: <ListX size={16} />,
+                icon: <ListX size={14} />,
                 value: showFailedIngredientsLogs,
                 toggle: onToggleFailedIngredientsLogs,
               },
               {
-                label: 'Macro Debug',
-                icon: <Target size={16} />,
+                label: 'Macro Debug Log',
+                icon: <Target size={14} />,
                 value: showMacroDebugLog,
                 toggle: onToggleMacroDebugLog,
               },
