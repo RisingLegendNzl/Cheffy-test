@@ -1,6 +1,6 @@
 // web/src/components/SuccessModal.jsx
 // =============================================================================
-// SuccessModal — Persistent modal shown after plan generation.
+// SuccessModal – Persistent modal shown after plan generation.
 //
 // BEHAVIOUR:
 // 1. The modal is persistent: clicking outside does NOT close it.
@@ -9,13 +9,13 @@
 // 3. While visible, background scrolling is fully locked using the
 //    iOS-safe position:fixed technique (same as RecipeModal).
 // 4. The backdrop blocks all interaction with elements underneath.
-// 5. autoDismiss is disabled — the modal stays until the user acts.
+// 5. autoDismiss is disabled – the modal stays until the user acts.
 // 6. Double-submission is prevented with an isSubmitting guard.
 //
 // PROPS (changed):
-// - onViewPlan(planName: string) — now receives the trimmed plan name.
+// - onViewPlan(planName: string) – now receives the trimmed plan name.
 //   MainApp should save the plan with this name, then navigate.
-// - onClose — still accepted but ONLY called programmatically after
+// - onClose – still accepted but ONLY called programmatically after
 //   successful submission (never by user click or timer).
 // =============================================================================
 
@@ -173,7 +173,7 @@ return (
         <div
             className="fixed inset-0 flex items-center justify-center p-4"
             style={{ zIndex: Z_INDEX.modal + 1 }}
-            // Intentionally NO onClick — the modal cannot be dismissed by
+            // Intentionally NO onClick -- the modal cannot be dismissed by
             // clicking outside. Only the "View My Plan" button closes it.
         >
             <div
@@ -313,7 +313,7 @@ return (
                         {isSubmitting ? (
                             <>
                                 <Loader size={18} className="mr-2 animate-spin" />
-                                Saving…
+                                Saving...
                             </>
                         ) : (
                             <>
