@@ -379,9 +379,9 @@ const handleEditProfileClean = useCallback(() => {
                 {/* --- Theme-Aware Background --- */}
                 <div 
                     className="min-h-screen p-4 md:p-8 transition-all duration-200 relative" 
-                    style={{ 
+                    style={{
     backgroundColor: isDark ? '#0f1117' : '#f3f4f6',
-    paddingTop: `${headerHeight + ((showSavedPlansModal || isSettingsOpen || (isMenuOpen && isMobile)) ? 0 : 60)}px`,
+    paddingTop: `${headerHeight + ((showSavedPlansModal || isSettingsOpen || (isMenuOpen && isMobile)) ? 0 : 56)}px`,
     paddingBottom: '2rem',
     transition: 'padding-top 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
 }}
