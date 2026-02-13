@@ -1,34 +1,32 @@
 /* =============================================================================
    cheffy-sticky-tabs-enhancements.css
    
-   Enhanced styles for the revamped StickyTabs component.
+   Enhanced styles for the WELDED SEGMENTED StickyTabs component (Concept 2).
    
-   FIXES:
-   1. Ensures tabs remain sticky during all scroll scenarios
-   2. Prevents layout shift when tabs show/hide
-   3. Optimizes rendering performance
-   4. Adds subtle hover states for better UX
+   CHANGES FROM PREVIOUS VERSION:
+   1. Updated class names to match welded-tabs-* naming
+   2. Segmented control track and pill optimizations
+   3. Focus-visible styles updated for rounded pill buttons
+   4. iOS flicker fixes for the welded container
    
    Import in index.jsx AFTER cheffy-patches.css:
      import './cheffy-sticky-tabs-enhancements.css';
    ============================================================================= */
 
-/* ── STICKY TABS CONTAINER OPTIMIZATION ────────────────────────────────── */
+/* ── WELDED TABS CONTAINER OPTIMIZATION ────────────────────────────────── */
 
-/* Ensure smooth rendering and prevent layout jumps */
-.sticky-tabs-container {
+.welded-tabs-container {
   contain: layout style paint;
   will-change: top, opacity;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── PERFORMANCE OPTIMIZATIONS ──────────────────────────────────────────── */
+/* ── PERFORMANCE: GPU ACCELERATION ──────────────────────────────────────── */
 
-/* Force GPU acceleration for smooth transitions */
-.sticky-tabs-container,
-.sticky-tabs-pill,
-.sticky-tabs-button {
+.welded-tabs-container,
+.welded-tabs-pill,
+.welded-tabs-button {
   transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
@@ -36,131 +34,117 @@
 
 /* ── PREVENT SCROLL JANK ────────────────────────────────────────────────── */
 
-/* Ensure tabs don't cause reflow during scroll */
 body {
-  overflow-x: hidden; /* Prevent horizontal scroll */
+  overflow-x: hidden;
 }
 
-/* ── ACCESSIBILITY ENHANCEMENTS ─────────────────────────────────────────── */
+/* ── ACCESSIBILITY: FOCUS-VISIBLE ───────────────────────────────────────── */
 
-/* Focus visible styles for keyboard navigation */
-.sticky-tabs-button:focus-visible {
+.welded-tabs-button:focus-visible {
   outline: 2px solid #818cf8;
-  outline-offset: 2px;
-  border-radius: 12px;
+  outline-offset: -2px;
+  border-radius: 11px;
+}
+
+/* ── SEGMENTED TRACK: DARK MODE GLOW ────────────────────────────────────── */
+
+[data-theme="dark"] .welded-tabs-pill {
+  box-shadow:
+    0 1px 4px rgba(0,0,0,0.3),
+    0 0.5px 1px rgba(0,0,0,0.2),
+    0 0 0 1px rgba(129, 140, 248, 0.08);
+}
+
+[data-theme="light"] .welded-tabs-pill {
+  box-shadow:
+    0 1px 4px rgba(0,0,0,0.08),
+    0 0.5px 1px rgba(0,0,0,0.06);
 }
 
 /* ── RESPONSIVE ADJUSTMENTS ─────────────────────────────────────────────── */
 
-/* Ensure tabs are readable on all screen sizes */
 @media (max-width: 480px) {
-  .sticky-tabs-container {
-    /* Tabs remain at full width on mobile */
-    padding: 0 4px;
+  .welded-tabs-container {
+    padding: 0 2px;
+  }
+  /* Tighten gap between icon and label on very small screens */
+  .welded-tabs-button {
+    gap: 5px !important;
+    font-size: 12px !important;
   }
 }
 
 @media (min-width: 481px) and (max-width: 768px) {
-  .sticky-tabs-container {
-    /* Slightly more padding on tablets */
-    padding: 0 8px;
+  .welded-tabs-container {
+    padding: 0 4px;
   }
 }
 
-/* ── DARK MODE ENHANCEMENTS ─────────────────────────────────────────────── */
+/* ── BACKDROP-FILTER FALLBACK ───────────────────────────────────────────── */
 
-[data-theme="dark"] .sticky-tabs-pill {
-  /* Enhanced glow in dark mode */
-  box-shadow: 
-    0 0 0 1px rgba(129, 140, 248, 0.2),
-    0 2px 8px rgba(99, 102, 241, 0.25),
-    0 0 20px rgba(99, 102, 241, 0.15);
-}
-
-[data-theme="light"] .sticky-tabs-pill {
-  /* Subtle elevation in light mode */
-  box-shadow: 
-    0 0 0 1px rgba(99, 102, 241, 0.15),
-    0 2px 8px rgba(99, 102, 241, 0.1);
-}
-
-/* ── ANIMATION SMOOTHNESS ───────────────────────────────────────────────── */
-
-/* Ensure all transitions use hardware acceleration */
 @supports (backdrop-filter: blur(24px)) {
-  .sticky-tabs-container {
+  .welded-tabs-container {
     backdrop-filter: blur(24px) saturate(180%);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
   }
 }
 
-/* Fallback for browsers that don't support backdrop-filter */
 @supports not (backdrop-filter: blur(24px)) {
-  [data-theme="dark"] .sticky-tabs-container {
+  [data-theme="dark"] .welded-tabs-container {
     background-color: rgba(15, 17, 23, 1) !important;
   }
-  
-  [data-theme="light"] .sticky-tabs-container {
+  [data-theme="light"] .welded-tabs-container {
     background-color: rgba(255, 255, 255, 1) !important;
   }
 }
 
-/* ── PREVENT FLICKERING ON iOS ──────────────────────────────────────────── */
+/* ── iOS FLICKER FIX ────────────────────────────────────────────────────── */
 
-/* iOS-specific fixes */
 @supports (-webkit-touch-callout: none) {
-  .sticky-tabs-container {
+  .welded-tabs-container {
     -webkit-transform: translateZ(0);
     -webkit-backface-visibility: hidden;
     -webkit-perspective: 1000;
   }
 }
 
-/* ── SMOOTH SCROLL BEHAVIOR ─────────────────────────────────────────────── */
+/* ── REDUCED MOTION ─────────────────────────────────────────────────────── */
 
-/* Respect user's reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
-  .sticky-tabs-container,
-  .sticky-tabs-pill,
-  .sticky-tabs-button {
+  .welded-tabs-container,
+  .welded-tabs-pill,
+  .welded-tabs-button {
     transition-duration: 0.01ms !important;
   }
 }
 
-/* ── CUSTOM SCROLLBAR (OPTIONAL) ────────────────────────────────────────── */
+/* ── PRINT: HIDE TABS ───────────────────────────────────────────────────── */
 
-/* Better scrollbar visibility when tabs are sticky */
+@media print {
+  .welded-tabs-container {
+    display: none !important;
+  }
+}
+
+/* ── SCROLLBAR STYLING (unchanged from previous) ────────────────────────── */
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: rgba(156, 163, 175, 0.5);
   border-radius: 4px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(156, 163, 175, 0.7);
 }
-
 [data-theme="dark"] ::-webkit-scrollbar-thumb {
   background: rgba(75, 85, 99, 0.5);
 }
-
 [data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
   background: rgba(75, 85, 99, 0.7);
-}
-
-/* ── PRINT STYLES ───────────────────────────────────────────────────────── */
-
-/* Hide tabs when printing */
-@media print {
-  .sticky-tabs-container {
-    display: none !important;
-  }
 }
