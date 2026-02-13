@@ -50,7 +50,7 @@ const App = () => {
         activityLevel: 'moderate', goal: 'cut_moderate', dietary: 'None', 
         days: 7, store: 'Woolworths', eatingOccasions: '3', 
         costPriority: 'Best Value', mealVariety: 'Balanced Variety', 
-        cuisine: '', bodyFat: '' 
+        cuisine: '', bodyFat: '', measurementUnits: 'metric'
     });
     
     const [nutritionalTargets, setNutritionalTargets] = useState({ 
@@ -381,8 +381,7 @@ const App = () => {
                     
                     // Handlers
                     handleGeneratePlan={logic.handleGeneratePlan}
-                    handleLoadProfile={logic.handleLoadProfile}
-                    handleSaveProfile={logic.handleSaveProfile}
+                    // handleLoadProfile/SaveProfile removed as UI triggers for them are gone
                     handleFetchNutrition={logic.handleFetchNutrition}
                     handleSubstituteSelection={logic.handleSubstituteSelection}
                     handleQuantityChange={logic.handleQuantityChange}
@@ -420,3 +419,4 @@ const App = () => {
 };
 
 export default App;
+
