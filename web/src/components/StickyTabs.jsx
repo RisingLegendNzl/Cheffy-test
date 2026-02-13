@@ -6,8 +6,9 @@
 // scroll within Profile / Meals / Shop views. They are hidden when inside
 // Edit Profile or My Saved Plans views.
 //
-// z-index sits between Header (1020) and modals (1040+), so tabs never
-// overlap modals, settings panel, or other overlays.
+// UPDATED z-index: 990 — sits BELOW the Header dropdown menu (1000) so that
+// when the burger menu opens, tabs are visible but rendered behind the menu
+// overlay. Still above general content but below all overlays.
 // ============================================================================
 
 import React from 'react';
@@ -21,18 +22,19 @@ const TABS = [
   { id: 'ingredients', label: 'Shop',     Icon: ShoppingCart },
 ];
 
-// z-index: just above the header's sticky (1020) but below modals (1040+)
-const TABS_Z = 1025;
+// z-index: BELOW Header dropdown (1000) so burger menu renders on top of tabs.
+// Still above general page content. Modals (1040+) also layer above.
+const TABS_Z = 990;
 
 /**
  * StickyTabs
  *
  * Props:
- *  - activeTab  {string}  Current contentView value
- *  - onTabChange {func}   Tab change callback
- *  - hidden     {bool}    When true, tabs slide out of view (used when
- *                          Edit Profile or My Saved Plans is active)
- *  - disabled   {bool}    Disable interaction (e.g. during onboarding gate)
+ *  - activeTab   {string}  Current contentView value
+ *  - onTabChange {func}    Tab change callback
+ *  - hidden      {bool}    When true, tabs slide out of view (used when
+ *                           Edit Profile, My Saved Plans, or Settings is active)
+ *  - disabled    {bool}    Disable interaction (e.g. during onboarding gate)
  */
 const StickyTabs = ({
   activeTab,
