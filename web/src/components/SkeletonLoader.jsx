@@ -1,4 +1,5 @@
 // web/src/components/SkeletonLoader.jsx
+// UPDATED: Removed LoadingSpinner (purple spinner) export (#6).
 import React from 'react';
 import { COLORS } from '../constants';
 
@@ -102,16 +103,6 @@ export const ProfileCardSkeleton = () => (
       <Skeleton height="4rem" />
     </div>
     <Skeleton height="12rem" />
-  </div>
-);
-
-// Loading spinner with text
-export const LoadingSpinner = ({ text = 'Loading...' }) => (
-  <div className="flex flex-col items-center justify-center p-8 animate-fadeIn">
-    <div className="spinner mb-4" />
-    <p className="text-sm font-medium" style={{ color: COLORS.gray[600] }}>
-      {text}
-    </p>
   </div>
 );
 
