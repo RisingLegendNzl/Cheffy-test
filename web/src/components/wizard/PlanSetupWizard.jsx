@@ -1,7 +1,10 @@
 // web/src/components/wizard/PlanSetupWizard.jsx
+// UPDATED: Removed Load/Save buttons from header (#3).
+// UPDATED: "Plan Setup" title is WHITE in dark mode (#4).
 import React, { useState, useCallback, useMemo } from 'react';
-import { RefreshCw, Zap, Save, FolderDown, X, ChevronRight, Check } from 'lucide-react';
+import { RefreshCw, Zap, X, ChevronRight, Check } from 'lucide-react';
 import { COLORS, SHADOWS } from '../../constants';
+import { useTheme } from '../../contexts/ThemeContext';
 
 // Wizard internals
 import { WIZARD_STEPS } from './wizardSteps';
@@ -30,8 +33,6 @@ const PlanSetupWizard = ({
   onChange,
   onSliderChange,
   onSubmit,
-  onLoadProfile,
-  onSaveProfile,
   loading,
   isAuthReady,
   userId,
@@ -44,6 +45,7 @@ const PlanSetupWizard = ({
   const [errors, setErrors] = useState({});
   const [slideDirection, setSlideDirection] = useState('right');
   const [isAnimating, setIsAnimating] = useState(false);
+  const { isDark } = useTheme();
 
   const stepConfig = WIZARD_STEPS[currentStep];
   const isLastStep = currentStep === WIZARD_STEPS.length - 1;
@@ -53,9 +55,6 @@ const PlanSetupWizard = ({
     () => isStepValid(stepConfig.id, formData),
     [stepConfig.id, formData]
   );
-
-  const isProfileActionDisabled =
-    !isAuthReady || !userId || userId.startsWith('local_');
 
   const handleFieldChange = useCallback(
     (e) => {
@@ -190,37 +189,11 @@ const PlanSetupWizard = ({
       <div className="flex justify-between items-center mb-5">
         <h2
           className="text-2xl font-bold"
-          style={{ color: COLORS.primary[600] }}
+          style={{ color: isDark ? '#ffffff' : COLORS.primary[600] }}
         >
           Plan Setup
         </h2>
         <div className="flex items-center space-x-2">
-          <button
-            type="button"
-            onClick={onLoadProfile}
-            disabled={isProfileActionDisabled}
-            className="flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg shadow transition-colors hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              background: COLORS.info.main,
-              color: '#fff',
-            }}
-            title="Load Saved Profile"
-          >
-            <FolderDown size={14} className="mr-1" /> Load
-          </button>
-          <button
-            type="button"
-            onClick={onSaveProfile}
-            disabled={isProfileActionDisabled}
-            className="flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg shadow transition-colors hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              background: COLORS.success.main,
-              color: '#fff',
-            }}
-            title="Save Current Profile"
-          >
-            <Save size={14} className="mr-1" /> Save
-          </button>
           {onClose && (
             <button
               type="button"
