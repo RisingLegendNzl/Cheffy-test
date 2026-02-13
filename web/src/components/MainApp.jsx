@@ -384,7 +384,7 @@ const handleEditProfileClean = useCallback(() => {
     headerHeight={headerHeight}
 />
     
-            <PullToRefresh onRefresh={handleRefresh} refreshing={loading}>
+            <PullToRefresh onRefresh={handleRefresh} refreshing={false}>
                 {/* --- Theme-Aware Background --- */}
                 <div 
                     className="min-h-screen p-4 md:p-8 transition-all duration-200 relative" 
@@ -452,10 +452,11 @@ const handleEditProfileClean = useCallback(() => {
                                         
                                         {contentView === 'ingredients' && Object.keys(results)?.length > 0 && shoppingListContent}
                                         
-                                        {(contentView === 'meals' || contentView === 'ingredients') && (!results || Object.keys(results).length === 0) && !loading && (
-                                            <div className="p-6 text-center text-gray-500">
-                                                Generate a plan to view {contentView}.
-                                            </div>
+                                        {(contentView === 'meals' || contentView === 'ingredients') && (!results || Object.keys(results).length === 0) && (
+    <div className="p-6 text-center text-gray-500">
+        Generate a plan to view {contentView}.
+    </div>
+)}
                                         )}
                                     </div>
                                 )}
