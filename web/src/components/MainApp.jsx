@@ -427,21 +427,22 @@ const MainApp = ({
     
             <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
             
-            <SuccessModal
-    isVisible={showSuccessModal}
-    title="Your Plan is Ready!"
-    message={`We've created ${formData.days} days of meals optimized for your goals`}
-    stats={planStats}
-    onClose={() => setShowSuccessModal(false)}
-    onViewPlan={async (planName) => {
-        // Save the current plan with the user-provided name
-        if (handleSavePlan) {
-            await handleSavePlan(planName);
-        }
-        setShowSuccessModal(false);
-        handleTabChange('meals');
-    }}
-/>
+                        <SuccessModal
+                isVisible={showSuccessModal}
+                title="Your Plan is Ready!"
+                message={`We've created ${formData.days} days of meals optimized for your goals`}
+                stats={planStats}
+                onClose={() => setShowSuccessModal(false)}
+                onViewPlan={async (planName) => {
+                    // Save the plan using the user-provided name, then navigate
+                    if (handleSavePlan) {
+                        await handleSavePlan(planName);
+                    }
+                    setShowSuccessModal(false);
+                    handleTabChange('meals');
+                }}
+            />
+
     
             <SettingsPanel
                 isOpen={isSettingsOpen}
