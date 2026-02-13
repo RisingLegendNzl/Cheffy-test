@@ -210,6 +210,7 @@ const MainApp = ({
     const [showSavedPlansModal, setShowSavedPlansModal] = useState(false);
     const [savePlanName, setSavePlanName] = useState('');
     const [showSavePlanPrompt, setShowSavePlanPrompt] = useState(false);
+    const [headerHeight, setHeaderHeight] = useState(64);
     
     const PlanCalculationErrorPanel = () => (
         <div className="p-6 text-center bg-red-100 text-red-800 rounded-lg shadow-lg m-4">
