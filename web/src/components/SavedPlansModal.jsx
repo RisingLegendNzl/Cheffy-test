@@ -1,14 +1,12 @@
 // web/src/components/SavedPlansModal.jsx
-// Modal for viewing, loading, and deleting saved meal plans
-// Opened from the menu, not a separate tab
+// Theme-aware: heading, card backgrounds, and text all adapt to dark/light mode.
+// Fixes issue #3: "My Saved Plans" heading visibility in dark mode.
 
 import React, { useState } from 'react';
 import { X, Calendar, Trash2, Download, CheckCircle } from 'lucide-react';
 import { COLORS, SHADOWS } from '../constants';
+import { useTheme } from '../contexts/ThemeContext';
 
-/**
- * Modal component for managing saved meal plans
- */
 const SavedPlansModal = ({
     isOpen,
     onClose,
@@ -19,6 +17,7 @@ const SavedPlansModal = ({
     loadingPlan
 }) => {
     const [deletingPlanId, setDeletingPlanId] = useState(null);
+    const { isDark } = useTheme();
 
     if (!isOpen) return null;
 
@@ -33,7 +32,6 @@ const SavedPlansModal = ({
         if (!window.confirm('Are you sure you want to delete this plan?')) {
             return;
         }
-
         setDeletingPlanId(planId);
         await onDeletePlan(planId);
         setDeletingPlanId(null);
@@ -52,13 +50,37 @@ const SavedPlansModal = ({
         }
     };
 
+    // Theme-derived colours
+    const modalBg = isDark ? '#1e2130' : '#ffffff';
+    const headerBorder = isDark ? '#2d3148' : COLORS.gray[200];
+    const headingColor = isDark ? '#f0f1f5' : COLORS.gray[900];
+    const closeIconColor = isDark ? '#9ca3b0' : COLORS.gray[600];
+    const closeHoverBg = isDark ? '#252839' : COLORS.gray[100];
+    const emptyIconColor = isDark ? '#4b5563' : COLORS.gray[400];
+    const emptyTitleColor = isDark ? '#9ca3b0' : COLORS.gray[600];
+    const emptySubColor = isDark ? '#6b7280' : COLORS.gray[500];
+    const planCardBorder = isDark ? '#2d3148' : COLORS.gray[200];
+    const planCardActiveBorder = isDark ? '#6366f1' : COLORS.primary[300];
+    const planCardActiveBg = isDark ? 'rgba(99,102,241,0.08)' : COLORS.primary[50];
+    const planCardBg = isDark ? '#252839' : '#ffffff';
+    const planNameColor = isDark ? '#f0f1f5' : COLORS.gray[900];
+    const planMetaColor = isDark ? '#9ca3b0' : COLORS.gray[600];
+    const planDotColor = isDark ? '#4b5563' : COLORS.gray[400];
+    const activeLabel = isDark ? '#a5b4fc' : COLORS.primary[600];
+    const loadBtnColor = isDark ? '#a5b4fc' : COLORS.primary[600];
+    const loadBtnHoverBg = isDark ? 'rgba(99,102,241,0.1)' : '#ffffff';
+    const deleteBtnHoverBg = isDark ? 'rgba(239,68,68,0.1)' : '#fef2f2';
+
     return (
         <>
             {/* Backdrop */}
             <div
-                className="fixed inset-0 bg-black bg-opacity-50 z-50 transition-opacity"
+                className="fixed inset-0 z-50 transition-opacity"
                 onClick={onClose}
-                style={{ backdropFilter: 'blur(4px)' }}
+                style={{
+                    backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.5)',
+                    backdropFilter: 'blur(4px)',
+                }}
             />
 
             {/* Modal */}
@@ -67,30 +89,38 @@ const SavedPlansModal = ({
                 onClick={onClose}
             >
                 <div
-                    className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden"
+                    className="rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden"
                     onClick={(e) => e.stopPropagation()}
-                    style={{ boxShadow: SHADOWS.xl }}
+                    style={{
+                        backgroundColor: modalBg,
+                        boxShadow: isDark
+                            ? '0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(99,102,241,0.08)'
+                            : SHADOWS.xl,
+                    }}
                 >
-                    {/* Header */}
+                    {/* Header — Issue #3: heading must be visible in dark mode */}
                     <div
-                        className="flex items-center justify-between p-6 border-b"
-                        style={{ borderColor: COLORS.gray[200] }}
+                        className="flex items-center justify-between p-6"
+                        style={{ borderBottom: `1px solid ${headerBorder}` }}
                     >
                         <div className="flex items-center space-x-3">
                             <Calendar size={24} style={{ color: COLORS.primary[600] }} />
                             <h2
                                 className="text-2xl font-bold"
-                                style={{ color: COLORS.gray[900] }}
+                                style={{ color: headingColor }}
                             >
                                 My Saved Plans
                             </h2>
                         </div>
                         <button
                             onClick={onClose}
-                            className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                            className="p-2 rounded-lg transition-colors"
                             aria-label="Close"
+                            style={{ color: closeIconColor }}
+                            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = closeHoverBg)}
+                            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                         >
-                            <X size={24} style={{ color: COLORS.gray[600] }} />
+                            <X size={24} />
                         </button>
                     </div>
 
@@ -101,17 +131,17 @@ const SavedPlansModal = ({
                                 <Calendar
                                     size={48}
                                     className="mx-auto mb-4 opacity-30"
-                                    style={{ color: COLORS.gray[400] }}
+                                    style={{ color: emptyIconColor }}
                                 />
                                 <p
                                     className="text-lg font-medium mb-2"
-                                    style={{ color: COLORS.gray[600] }}
+                                    style={{ color: emptyTitleColor }}
                                 >
                                     No saved plans yet
                                 </p>
                                 <p
                                     className="text-sm"
-                                    style={{ color: COLORS.gray[500] }}
+                                    style={{ color: emptySubColor }}
                                 >
                                     Generate a meal plan and save it to see it here
                                 </p>
@@ -125,57 +155,65 @@ const SavedPlansModal = ({
                                     return (
                                         <div
                                             key={plan.planId}
-                                            className="border rounded-xl p-4 hover:shadow-md transition-all"
+                                            className="rounded-xl p-4 transition-all"
                                             style={{
-                                                borderColor: isActive ? COLORS.primary[300] : COLORS.gray[200],
-                                                backgroundColor: isActive ? `${COLORS.primary[50]}` : 'white'
+                                                border: `1px solid ${isActive ? planCardActiveBorder : planCardBorder}`,
+                                                backgroundColor: isActive ? planCardActiveBg : planCardBg,
+                                                boxShadow: isDark
+                                                    ? '0 2px 8px rgba(0,0,0,0.2)'
+                                                    : undefined,
                                             }}
                                         >
-                                            <div className="flex items-start justify-between">
+                                            <div className="flex items-center justify-between">
                                                 <div className="flex-1 min-w-0">
-                                                    <div className="flex items-center space-x-2 mb-2">
+                                                    <div className="flex items-center space-x-2">
                                                         <h3
-                                                            className="text-lg font-semibold truncate"
-                                                            style={{ color: COLORS.gray[900] }}
+                                                            className="font-bold truncate"
+                                                            style={{ color: planNameColor }}
                                                         >
-                                                            {plan.name}
+                                                            {plan.name || 'Untitled Plan'}
                                                         </h3>
                                                         {isActive && (
-                                                            <CheckCircle
-                                                                size={18}
-                                                                style={{ color: COLORS.primary[600] }}
-                                                            />
+                                                            <span
+                                                                className="flex items-center text-xs font-semibold"
+                                                                style={{ color: activeLabel }}
+                                                            >
+                                                                <CheckCircle size={14} className="mr-1" />
+                                                                Active
+                                                            </span>
                                                         )}
                                                     </div>
-                                                    <div className="flex items-center space-x-4 text-sm">
-                                                        <span style={{ color: COLORS.gray[600] }}>
+                                                    <div className="flex items-center space-x-2 mt-1 text-sm">
+                                                        <span style={{ color: planMetaColor }}>
                                                             {plan.mealPlan?.length || 0} days
                                                         </span>
-                                                        <span style={{ color: COLORS.gray[400] }}>•</span>
-                                                        <span style={{ color: COLORS.gray[600] }}>
+                                                        <span style={{ color: planDotColor }}>•</span>
+                                                        <span style={{ color: planMetaColor }}>
                                                             {formatDate(plan.createdAt)}
                                                         </span>
                                                     </div>
                                                 </div>
 
                                                 <div className="flex items-center space-x-2 ml-4">
-                                                    {/* Load Button */}
                                                     <button
                                                         onClick={() => handleLoadClick(plan.planId)}
                                                         disabled={loadingPlan || isDeleting}
-                                                        className="p-2 rounded-lg hover:bg-white transition-colors disabled:opacity-50"
-                                                        style={{ color: COLORS.primary[600] }}
+                                                        className="p-2 rounded-lg transition-colors disabled:opacity-50"
+                                                        style={{ color: loadBtnColor }}
+                                                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = loadBtnHoverBg)}
+                                                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                                                         aria-label="Load plan"
                                                     >
                                                         <Download size={20} />
                                                     </button>
 
-                                                    {/* Delete Button */}
                                                     <button
                                                         onClick={() => handleDeleteClick(plan.planId)}
                                                         disabled={loadingPlan || isDeleting}
-                                                        className="p-2 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
-                                                        style={{ color: COLORS.red }}
+                                                        className="p-2 rounded-lg transition-colors disabled:opacity-50"
+                                                        style={{ color: COLORS.error.main }}
+                                                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = deleteBtnHoverBg)}
+                                                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                                                         aria-label="Delete plan"
                                                     >
                                                         <Trash2 size={20} />
