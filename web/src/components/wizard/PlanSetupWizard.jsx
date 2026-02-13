@@ -21,30 +21,25 @@ import ReviewStep from './ReviewStep';
  *
  * Multi-step form wizard that replaces the old inline <form> in MainApp.
  * Owns step navigation and validation state; all form data lives in the parent.
+ *
+ * The .wizard-form-exclude class on the outer form tells theme-variables.css
+ * to skip dark-mode overrides on inputs inside this wizard (issue #6).
  */
 const PlanSetupWizard = ({
-  // Form data (owned by App.jsx)
   formData,
   onChange,
   onSliderChange,
   onSubmit,
-
-  // Profile actions
   onLoadProfile,
   onSaveProfile,
-
-  // Auth & loading states
   loading,
   isAuthReady,
   userId,
   firebaseConfig,
   firebaseInitializationError,
-
-  // Mobile
   onClose,
   isMobile,
 }) => {
-  // --- Internal wizard state ---
   const [currentStep, setCurrentStep] = useState(0);
   const [errors, setErrors] = useState({});
   const [slideDirection, setSlideDirection] = useState('right');
@@ -54,7 +49,6 @@ const PlanSetupWizard = ({
   const isLastStep = currentStep === WIZARD_STEPS.length - 1;
   const isFirstStep = currentStep === 0;
 
-  // Can the user proceed? (validation check without setting errors)
   const canProceed = useMemo(
     () => isStepValid(stepConfig.id, formData),
     [stepConfig.id, formData]
@@ -63,7 +57,6 @@ const PlanSetupWizard = ({
   const isProfileActionDisabled =
     !isAuthReady || !userId || userId.startsWith('local_');
 
-  // --- Error-clearing onChange wrapper ---
   const handleFieldChange = useCallback(
     (e) => {
       onChange(e);
@@ -79,11 +72,8 @@ const PlanSetupWizard = ({
     [onChange, errors]
   );
 
-  // --- Step navigation ---
   const goForward = useCallback(() => {
     if (isAnimating) return;
-
-    // Validate current step
     const validator = STEP_VALIDATORS[stepConfig.id];
     if (validator) {
       const stepErrors = validator(formData);
@@ -92,7 +82,6 @@ const PlanSetupWizard = ({
         return;
       }
     }
-
     setSlideDirection('right');
     setIsAnimating(true);
     setTimeout(() => {
@@ -113,20 +102,10 @@ const PlanSetupWizard = ({
     }, 200);
   }, [isAnimating, isFirstStep]);
 
-  // --- Fast-step navigation ---
-
-  /**
-   * Determines whether the user is allowed to jump to `targetIndex`.
-   * Rule: every step *before* the target must be valid.
-   * Going backward is always allowed.
-   */
   const canReachStep = useCallback(
     (targetIndex) => {
-      // Always allow going to earlier (completed) steps
       if (targetIndex < currentStep) return true;
-      // Don't allow clicking the current step (no-op)
       if (targetIndex === currentStep) return false;
-      // For future steps, validate every preceding step including current
       for (let i = 0; i < targetIndex; i++) {
         const stepId = WIZARD_STEPS[i].id;
         if (!isStepValid(stepId, formData)) return false;
@@ -136,16 +115,11 @@ const PlanSetupWizard = ({
     [currentStep, formData]
   );
 
-  /**
-   * Jump directly to a specific step index.
-   * Respects animation lock and validation via canReachStep.
-   */
   const goToStep = useCallback(
     (targetIndex) => {
       if (isAnimating) return;
       if (targetIndex === currentStep) return;
       if (!canReachStep(targetIndex)) return;
-
       const direction = targetIndex > currentStep ? 'right' : 'left';
       setSlideDirection(direction);
       setIsAnimating(true);
@@ -158,7 +132,6 @@ const PlanSetupWizard = ({
     [isAnimating, currentStep, canReachStep]
   );
 
-  // --- Form submission (only on last step) ---
   const handleFormSubmit = useCallback(
     (e) => {
       e.preventDefault();
@@ -171,7 +144,6 @@ const PlanSetupWizard = ({
     [isLastStep, onSubmit, goForward]
   );
 
-  // --- Animation class ---
   const getAnimationClass = () => {
     if (isAnimating) return 'animate-wizardSlideOut';
     return slideDirection === 'right'
@@ -179,7 +151,6 @@ const PlanSetupWizard = ({
       : 'animate-wizardSlideInLeft';
   };
 
-  // --- Step content renderer ---
   const renderStepContent = () => {
     switch (stepConfig.id) {
       case 'personal':
@@ -250,7 +221,6 @@ const PlanSetupWizard = ({
           >
             <Save size={14} className="mr-1" /> Save
           </button>
-          {/* Mobile close button */}
           {onClose && (
             <button
               type="button"
@@ -263,7 +233,7 @@ const PlanSetupWizard = ({
         </div>
       </div>
 
-      {/* ===== PROGRESS BAR (with fast-step navigation) ===== */}
+      {/* ===== PROGRESS BAR ===== */}
       <StepProgressBar
         currentStep={currentStep}
         steps={WIZARD_STEPS}
@@ -271,10 +241,13 @@ const PlanSetupWizard = ({
         canReachStep={canReachStep}
       />
 
-      {/* ===== CARD CONTAINER ===== */}
+      {/* ===== CARD CONTAINER =====
+           .wizard-form-exclude prevents dark mode from darkening
+           inputs/selects inside the wizard (issue #6).
+           .keep-light prevents bg-white override on the card itself. */}
       <form
         onSubmit={handleFormSubmit}
-        className="rounded-2xl overflow-hidden"
+        className="wizard-form-exclude keep-light rounded-2xl overflow-hidden"
         style={{
           background: '#fff',
           border: `1px solid ${COLORS.gray[200]}`,
@@ -301,65 +274,40 @@ const PlanSetupWizard = ({
           className="flex justify-between items-center gap-3"
           style={{ padding: '16px 24px 24px' }}
         >
-          {/* Back button */}
           {!isFirstStep ? (
             <button
               type="button"
               onClick={goBack}
-              disabled={isAnimating}
-              className="font-semibold rounded-xl transition-all hover:bg-gray-50"
+              className="flex items-center px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors"
               style={{
-                padding: '12px 24px',
-                fontSize: '14px',
-                border: `1.5px solid ${COLORS.gray[200]}`,
-                background: '#fff',
                 color: COLORS.gray[600],
-                cursor: 'pointer',
+                border: `1px solid ${COLORS.gray[300]}`,
               }}
             >
-              ← Back
+              Back
             </button>
           ) : (
-            <div /> // Spacer to push Continue to the right
+            <div />
           )}
 
-          {/* Continue or Generate button */}
           {isLastStep ? (
             <button
               type="submit"
-              disabled={loading || !isAuthReady || !firebaseConfig}
-              className="font-bold rounded-xl transition-all flex items-center gap-2"
+              disabled={loading}
+              className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold text-white transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
-                padding: '14px 32px',
-                fontSize: '15px',
-                border: 'none',
-                background:
-                  loading || !isAuthReady || !firebaseConfig
-                    ? COLORS.gray[300]
-                    : `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.success.main})`,
-                color:
-                  loading || !isAuthReady || !firebaseConfig
-                    ? COLORS.gray[500]
-                    : '#fff',
-                cursor:
-                  loading || !isAuthReady || !firebaseConfig
-                    ? 'not-allowed'
-                    : 'pointer',
-                boxShadow:
-                  loading || !isAuthReady || !firebaseConfig
-                    ? 'none'
-                    : `0 4px 20px ${COLORS.primary[500]}40`,
-                letterSpacing: '0.01em',
+                backgroundColor: COLORS.primary[500],
+                boxShadow: `0 4px 16px ${COLORS.primary[500]}30`,
               }}
             >
               {loading ? (
                 <>
-                  <RefreshCw size={18} className="animate-spin" />
-                  Processing…
+                  <RefreshCw size={16} className="animate-spin" />
+                  Generating…
                 </>
               ) : (
                 <>
-                  <Zap size={18} />
+                  <Zap size={16} />
                   Generate Plan
                 </>
               )}
@@ -368,13 +316,10 @@ const PlanSetupWizard = ({
             <button
               type="button"
               onClick={goForward}
-              disabled={isAnimating}
-              className="font-semibold rounded-xl transition-all flex items-center gap-1.5"
+              disabled={!canProceed}
+              className="flex items-center gap-1.5 px-6 py-2.5 rounded-lg text-sm font-bold transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
-                padding: '12px 28px',
-                fontSize: '14px',
-                border: 'none',
-                background: canProceed ? COLORS.primary[500] : COLORS.gray[200],
+                backgroundColor: canProceed ? COLORS.primary[500] : COLORS.gray[200],
                 color: canProceed ? '#fff' : COLORS.gray[400],
                 cursor: canProceed ? 'pointer' : 'default',
                 boxShadow: canProceed
@@ -388,7 +333,6 @@ const PlanSetupWizard = ({
           )}
         </div>
 
-        {/* Firebase error note */}
         {(!isAuthReady || !firebaseConfig) && isLastStep && (
           <p
             className="text-xs text-center pb-4 px-6"
