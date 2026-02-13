@@ -89,9 +89,9 @@ const UnitToggle = ({ options, value, onChange }) => (
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PersonalInfoStep — "About You" wizard step
+// PersonalStep — "About You" wizard step
 // ═════════════════════════════════════════════════════════════════════════════
-const PersonalInfoStep = ({ formData, onChange, errors = {}, measurementUnits = 'metric' }) => {
+const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'metric' }) => {
   // ── Local unit state (defaults from app-level setting) ──
   const [weightUnit, setWeightUnit] = useState(
     measurementUnits === 'imperial' ? 'lb' : 'kg'
@@ -171,37 +171,49 @@ const PersonalInfoStep = ({ formData, onChange, errors = {}, measurementUnits = 
     onChange({ target: { name: 'weight', value: metricVal } });
   };
 
-  const handleHeightChangeCm = (e) => {
+  const handleHeightCmChange = (e) => {
     const val = e.target.value;
     setDisplayHeightCm(val);
     onChange({ target: { name: 'height', value: val } });
   };
 
-  const handleHeightChangeFt = (e) => {
+  const handleFtChange = (e) => {
     const val = e.target.value;
     setDisplayFt(val);
-    const metricVal = ftInToCm(val, displayIn);
-    onChange({ target: { name: 'height', value: metricVal } });
+    const cm = ftInToCm(val, displayIn);
+    onChange({ target: { name: 'height', value: cm } });
   };
 
-  const handleHeightChangeIn = (e) => {
+  const handleInChange = (e) => {
     const val = e.target.value;
     setDisplayIn(val);
-    const metricVal = ftInToCm(displayFt, val);
-    onChange({ target: { name: 'height', value: metricVal } });
+    const cm = ftInToCm(displayFt, val);
+    onChange({ target: { name: 'height', value: cm } });
   };
 
+  // ═════════════════════════════════════════════════════════════════════════
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {/* ── Name ── */}
+    <div
+      className="wizard-form-exclude"
+      style={{
+        padding: '20px 24px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '18px',
+      }}
+    >
+      {/* ── Name (required) ── */}
       <div>
-        <label style={labelStyle}>Name</label>
+        <label style={labelStyle}>
+          Name <span style={{ color: '#ef4444', fontWeight: 700 }}>*</span>
+        </label>
         <input
           type="text"
           name="name"
           value={formData.name || ''}
           onChange={onChange}
           placeholder="Enter your name"
+          autoComplete="given-name"
           style={{
             ...inputStyle,
             borderColor: errors.name ? '#ef4444' : COLORS.gray[300],
@@ -213,44 +225,60 @@ const PersonalInfoStep = ({ formData, onChange, errors = {}, measurementUnits = 
       {/* ── Gender ── */}
       <div>
         <label style={labelStyle}>Gender</label>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {['male', 'female'].map((g) => (
-            <button
-              key={g}
-              type="button"
-              onClick={() => onChange({ target: { name: 'gender', value: g } })}
-              style={{
-                flex: 1,
-                padding: '10px',
-                borderRadius: '8px',
-                border: `1.5px solid ${
-                  formData.gender === g ? COLORS.primary[500] : COLORS.gray[300]
-                }`,
-                backgroundColor:
-                  formData.gender === g ? COLORS.primary[50] : '#fff',
-                color:
-                  formData.gender === g ? COLORS.primary[700] : COLORS.gray[700],
-                fontWeight: 600,
-                fontSize: '14px',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-              }}
-            >
-              {g.charAt(0).toUpperCase() + g.slice(1)}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {[
+            { value: 'male', label: 'Male', icon: '♂' },
+            { value: 'female', label: 'Female', icon: '♀' },
+          ].map((opt) => {
+            const isActive = formData.gender === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() =>
+                  onChange({ target: { name: 'gender', value: opt.value } })
+                }
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  borderRadius: '10px',
+                  border: `2px solid ${isActive ? COLORS.primary[500] : COLORS.gray[200]}`,
+                  backgroundColor: isActive ? `${COLORS.primary[500]}10` : '#fff',
+                  color: isActive ? COLORS.primary[700] : COLORS.gray[600],
+                  fontWeight: 600,
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span style={{ fontSize: '18px' }}>{opt.icon}</span>
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
         {errors.gender && <div style={errorStyle}>{errors.gender}</div>}
       </div>
 
-      {/* ── Weight ── */}
+      {/* ── Weight with unit toggle ── */}
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '6px',
+          }}
+        >
           <label style={{ ...labelStyle, marginBottom: 0 }}>Weight</label>
           <UnitToggle
             options={[
-              { label: 'kg', value: 'kg' },
-              { label: 'lb', value: 'lb' },
+              { value: 'kg', label: 'kg' },
+              { value: 'lb', label: 'lb' },
             ]}
             value={weightUnit}
             onChange={handleWeightUnitChange}
@@ -261,7 +289,7 @@ const PersonalInfoStep = ({ formData, onChange, errors = {}, measurementUnits = 
           inputMode="decimal"
           value={displayWeight}
           onChange={handleWeightChange}
-          placeholder={weightUnit === 'lb' ? 'e.g. 165' : 'e.g. 75'}
+          placeholder={weightUnit === 'kg' ? 'e.g. 75' : 'e.g. 165'}
           style={{
             ...inputStyle,
             borderColor: errors.weight ? '#ef4444' : COLORS.gray[300],
@@ -270,25 +298,33 @@ const PersonalInfoStep = ({ formData, onChange, errors = {}, measurementUnits = 
         {errors.weight && <div style={errorStyle}>{errors.weight}</div>}
       </div>
 
-      {/* ── Height ── */}
+      {/* ── Height with unit toggle ── */}
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '6px',
+          }}
+        >
           <label style={{ ...labelStyle, marginBottom: 0 }}>Height</label>
           <UnitToggle
             options={[
-              { label: 'cm', value: 'cm' },
-              { label: 'ft', value: 'ft' },
+              { value: 'cm', label: 'cm' },
+              { value: 'ft', label: 'ft / in' },
             ]}
             value={heightUnit}
             onChange={handleHeightUnitChange}
           />
         </div>
+
         {heightUnit === 'cm' ? (
           <input
             type="number"
             inputMode="decimal"
             value={displayHeightCm}
-            onChange={handleHeightChangeCm}
+            onChange={handleHeightCmChange}
             placeholder="e.g. 180"
             style={{
               ...inputStyle,
@@ -296,32 +332,58 @@ const PersonalInfoStep = ({ formData, onChange, errors = {}, measurementUnits = 
             }}
           />
         ) : (
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <div style={{ flex: 1 }}>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <div style={{ flex: 1, position: 'relative' }}>
               <input
                 type="number"
                 inputMode="numeric"
                 value={displayFt}
-                onChange={handleHeightChangeFt}
+                onChange={handleFtChange}
                 placeholder="ft"
                 style={{
                   ...inputStyle,
                   borderColor: errors.height ? '#ef4444' : COLORS.gray[300],
                 }}
               />
+              <span
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  fontSize: '12px',
+                  color: COLORS.gray[400],
+                  pointerEvents: 'none',
+                }}
+              >
+                ft
+              </span>
             </div>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, position: 'relative' }}>
               <input
                 type="number"
                 inputMode="numeric"
                 value={displayIn}
-                onChange={handleHeightChangeIn}
+                onChange={handleInChange}
                 placeholder="in"
                 style={{
                   ...inputStyle,
                   borderColor: errors.height ? '#ef4444' : COLORS.gray[300],
                 }}
               />
+              <span
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  fontSize: '12px',
+                  color: COLORS.gray[400],
+                  pointerEvents: 'none',
+                }}
+              >
+                in
+              </span>
             </div>
           </div>
         )}
