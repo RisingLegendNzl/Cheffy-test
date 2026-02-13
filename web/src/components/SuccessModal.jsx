@@ -1,249 +1,334 @@
 // web/src/components/SuccessModal.jsx
-import React, { useEffect, useState, useRef } from 'react';
-import { CheckCircle, X, ChevronRight } from 'lucide-react';
-import { COLORS, Z_INDEX, SHADOWS } from '../constants';
-import { useTheme } from '../contexts/ThemeContext';
+// =============================================================================
+// SuccessModal — Persistent modal shown after plan generation.
+//
+// BEHAVIOUR:
+// 1. The modal is persistent: clicking outside does NOT close it.
+// 2. The only way to dismiss is to enter a valid plan name AND click
+//    “View My Plan”. There is no X/close button.
+// 3. While visible, background scrolling is fully locked using the
+//    iOS-safe position:fixed technique (same as RecipeModal).
+// 4. The backdrop blocks all interaction with elements underneath.
+// 5. autoDismiss is disabled — the modal stays until the user acts.
+// 6. Double-submission is prevented with an isSubmitting guard.
+//
+// PROPS (changed):
+// - onViewPlan(planName: string) — now receives the trimmed plan name.
+//   MainApp should save the plan with this name, then navigate.
+// - onClose — still accepted but ONLY called programmatically after
+//   successful submission (never by user click or timer).
+// =============================================================================
 
-/**
- * Success modal shown after plan generation.
- * Now requires a mandatory plan name before the user can view the plan.
- */
+import React, { useEffect, useState, useRef, useCallback } from ‘react’;
+import { CheckCircle, ChevronRight, Loader } from ‘lucide-react’;
+import { COLORS, Z_INDEX, SHADOWS } from ‘../constants’;
+import { useTheme } from ‘../contexts/ThemeContext’;
+
 const SuccessModal = ({
-  isVisible,
-  title = 'Success!',
-  message,
-  stats = [],
-  onClose,
-  onViewPlan,
-  autoDismiss = false,      // Changed default: don't auto-dismiss since user must enter name
-  dismissDelay = 3000,
+isVisible,
+title = ‘Success!’,
+message,
+stats = [],
+onClose,
+onViewPlan,
+// Legacy props kept for API compat but effectively unused:
+autoDismiss = false,
+dismissDelay = 0,
 }) => {
-  const { isDark } = useTheme();
+const { isDark } = useTheme();
 
-  // ── Plan Name State ──
-  const [planName, setPlanName] = useState('');
-  const [nameError, setNameError] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const inputRef = useRef(null);
+```
+// ── Plan Name State ──
+const [planName, setPlanName] = useState('');
+const [nameError, setNameError] = useState('');
+const [isSubmitting, setIsSubmitting] = useState(false);
+const inputRef = useRef(null);
 
-  // Reset state when modal opens
-  useEffect(() => {
+// ── Scroll-lock bookkeeping ──
+const scrollYRef = useRef(0);
+
+// ── Reset internal state every time the modal opens ──
+useEffect(() => {
     if (isVisible) {
-      setPlanName('');
-      setNameError('');
-      setIsSubmitting(false);
-      // Focus the input after a brief delay for animation
-      setTimeout(() => inputRef.current?.focus(), 300);
+        setPlanName('');
+        setNameError('');
+        setIsSubmitting(false);
+        // Focus input after the entrance animation settles
+        const timer = setTimeout(() => inputRef.current?.focus(), 350);
+        return () => clearTimeout(timer);
     }
-  }, [isVisible]);
+}, [isVisible]);
 
-  // Auto-dismiss only if autoDismiss is explicitly true (legacy behavior)
-  useEffect(() => {
-    if (isVisible && autoDismiss && dismissDelay > 0) {
-      const timer = setTimeout(() => {
-        onClose && onClose();
-      }, dismissDelay);
-      return () => clearTimeout(timer);
-    }
-  }, [isVisible, autoDismiss, dismissDelay, onClose]);
+// ── Body scroll lock (iOS-safe position:fixed technique) ──
+useEffect(() => {
+    if (!isVisible) return;
 
-  if (!isVisible) return null;
+    // Save current scroll so we can restore it on unmount
+    scrollYRef.current = window.scrollY;
 
-  const trimmedName = planName.trim();
-  const isNameValid = trimmedName.length > 0;
+    const scrollY = scrollYRef.current;
+    const body = document.body;
+    const html = document.documentElement;
 
-  const handleNameChange = (e) => {
+    // Lock
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.left = '0';
+    body.style.right = '0';
+    body.style.overflow = 'hidden';
+    html.style.overflow = 'hidden';
+
+    return () => {
+        // Unlock
+        body.style.position = '';
+        body.style.top = '';
+        body.style.left = '';
+        body.style.right = '';
+        body.style.overflow = '';
+        html.style.overflow = '';
+        window.scrollTo(0, scrollY);
+    };
+}, [isVisible]);
+
+// ── Derived state ──
+const trimmedName = planName.trim();
+const isNameValid = trimmedName.length > 0;
+
+// ── Handlers ──
+const handleNameChange = useCallback((e) => {
     setPlanName(e.target.value);
-    if (nameError) setNameError('');
-  };
+    setNameError('');
+}, []);
 
-  const handleViewPlan = async () => {
+const handleViewPlan = useCallback(async () => {
     if (!isNameValid) {
-      setNameError('Please enter a plan name to continue.');
-      inputRef.current?.focus();
-      return;
+        setNameError('Please enter a plan name to continue.');
+        inputRef.current?.focus();
+        return;
     }
-    if (isSubmitting) return; // Prevent double-submission
+    if (isSubmitting) return; // guard against double-click
 
     setIsSubmitting(true);
     try {
-      // onViewPlan now receives the plan name so MainApp can save with it
-      await onViewPlan(trimmedName);
-    } finally {
-      setIsSubmitting(false);
+        if (onViewPlan) {
+            await onViewPlan(trimmedName);
+        }
+        // onClose is called by MainApp after onViewPlan succeeds
+    } catch (err) {
+        console.error('[SuccessModal] onViewPlan error:', err);
+        setNameError('Something went wrong. Please try again.');
+        setIsSubmitting(false);
     }
-  };
+}, [isNameValid, isSubmitting, trimmedName, onViewPlan]);
 
-  const handleKeyDown = (e) => {
+const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && isNameValid && !isSubmitting) {
-      handleViewPlan();
+        handleViewPlan();
     }
-  };
+}, [isNameValid, isSubmitting, handleViewPlan]);
 
-  // ── Theme-derived colours ──
-  const modalBg = isDark ? '#1e2130' : '#ffffff';
-  const inputBg = isDark ? '#252839' : '#ffffff';
-  const inputBorder = nameError
-    ? COLORS.error.main
+// ── Early return ──
+if (!isVisible) return null;
+
+// ── Theme-derived tokens ──
+const modalBg        = isDark ? '#1e2130' : '#ffffff';
+const modalBorder    = isDark ? '1px solid #2d3148' : 'none';
+const titleColor     = isDark ? '#f0f1f5' : COLORS.gray[900];
+const messageColor   = isDark ? '#9ca3b0' : COLORS.gray[600];
+const labelColor     = isDark ? '#d1d5db' : COLORS.gray[700];
+const inputBg        = isDark ? '#252839' : '#ffffff';
+const inputBorder    = nameError
+    ? (COLORS.error?.main || '#ef4444')
     : isDark ? '#2d3148' : COLORS.gray[300];
-  const inputFocusBorder = isDark ? '#6366f1' : COLORS.primary[500];
-  const inputColor = isDark ? '#f0f1f5' : COLORS.gray[900];
-  const placeholderColor = isDark ? '#6b7280' : COLORS.gray[400];
-  const labelColor = isDark ? '#d1d5db' : COLORS.gray[700];
-  const errorColor = COLORS.error?.main || '#ef4444';
-  const titleColor = isDark ? '#f0f1f5' : COLORS.gray[900];
-  const messageColor = isDark ? '#9ca3b0' : COLORS.gray[600];
-  const statBg = isDark ? '#252839' : COLORS.gray[50];
-  const statBorder = isDark ? '#2d3148' : COLORS.gray[200];
-  const statLabelColor = isDark ? '#9ca3b0' : COLORS.gray[600];
-  const closeBtnColor = isDark ? '#6b7280' : COLORS.gray[400];
-  const closeBtnHover = isDark ? '#252839' : COLORS.gray[100];
+const inputFocusBorder = isDark ? '#6366f1' : COLORS.primary[500];
+const inputFocusRing   = isDark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.1)';
+const inputColor     = isDark ? '#f0f1f5' : COLORS.gray[900];
+const errorColor     = COLORS.error?.main || '#ef4444';
+const statBg         = isDark ? '#252839' : COLORS.gray[50];
+const statBorder     = isDark ? '#2d3148' : COLORS.gray[200];
+const statLabel      = isDark ? '#9ca3b0' : COLORS.gray[600];
+const successIconBg  = isDark ? 'rgba(16,185,129,0.15)' : (COLORS.success?.light || '#d1fae5');
+const backdropBg     = isDark ? 'rgba(0,0,0,0.75)' : 'rgba(0,0,0,0.6)';
 
-  return (
-    <div
-      className="fixed inset-0 flex items-center justify-center p-4 animate-fadeIn"
-      style={{
-        zIndex: Z_INDEX.modal,
-        backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.5)',
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-2xl p-8 max-w-md w-full animate-bounceIn relative"
-        style={{
-          backgroundColor: modalBg,
-          boxShadow: SHADOWS['2xl'],
-          border: isDark ? '1px solid #2d3148' : undefined,
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-2 rounded-full transition-colors"
-          style={{ color: closeBtnColor }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = closeBtnHover)}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-        >
-          <X size={20} />
-        </button>
+const btnEnabled     = isNameValid && !isSubmitting;
+const btnBg          = btnEnabled ? COLORS.primary[500] : (isDark ? '#2d3148' : COLORS.gray[200]);
+const btnColor       = btnEnabled ? '#ffffff' : (isDark ? '#6b7280' : COLORS.gray[400]);
+const btnCursor      = btnEnabled ? 'pointer' : 'not-allowed';
 
-        {/* Success Icon */}
-        <div className="flex justify-center mb-6">
-          <div
-            className="w-20 h-20 rounded-full flex items-center justify-center animate-pulse"
+return (
+    <>
+        {/* ── Backdrop: blocks ALL interaction, no onClick dismiss ── */}
+        <div
+            className="fixed inset-0"
             style={{
-              backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : COLORS.success.light,
+                zIndex: Z_INDEX.modal,
+                backgroundColor: backdropBg,
+                backdropFilter: 'blur(4px)',
+                WebkitBackdropFilter: 'blur(4px)',
             }}
-          >
-            <CheckCircle size={40} style={{ color: COLORS.success.main }} />
-          </div>
-        </div>
+            aria-hidden="true"
+        />
 
-        {/* Title */}
-        <h3
-          className="text-2xl font-bold text-center mb-2"
-          style={{ color: titleColor }}
+        {/* ── Modal container: centred, no click-outside handler ── */}
+        <div
+            className="fixed inset-0 flex items-center justify-center p-4"
+            style={{ zIndex: Z_INDEX.modal + 1 }}
+            // Intentionally NO onClick — the modal cannot be dismissed by
+            // clicking outside. Only the "View My Plan" button closes it.
         >
-          {title}
-        </h3>
-
-        {/* Message */}
-        {message && (
-          <p
-            className="text-center text-sm mb-6"
-            style={{ color: messageColor }}
-          >
-            {message}
-          </p>
-        )}
-
-        {/* Stats Grid */}
-        {stats.length > 0 && (
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            {stats.map((stat, index) => (
-              <div
-                key={index}
-                className="p-4 rounded-lg text-center"
+            <div
+                className="rounded-2xl w-full max-w-md animate-bounceIn"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Name your plan"
                 style={{
-                  backgroundColor: statBg,
-                  border: `1px solid ${statBorder}`,
+                    backgroundColor: modalBg,
+                    border: modalBorder,
+                    boxShadow: SHADOWS['2xl'],
+                    // Ensure the card never exceeds viewport
+                    maxHeight: 'calc(100vh - 2rem)',
+                    overflowY: 'auto',
                 }}
-              >
-                <p className="text-2xl font-bold mb-1" style={{ color: stat.color || COLORS.primary[600] }}>
-                  {stat.value}
-                </p>
-                <p className="text-xs" style={{ color: statLabelColor }}>
-                  {stat.label}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
+            >
+                <div className="p-8">
+                    {/* ── Success Icon ── */}
+                    <div className="flex justify-center mb-6">
+                        <div
+                            className="w-20 h-20 rounded-full flex items-center justify-center"
+                            style={{ backgroundColor: successIconBg }}
+                        >
+                            <CheckCircle
+                                size={40}
+                                style={{ color: COLORS.success?.main || '#10b981' }}
+                            />
+                        </div>
+                    </div>
 
-        {/* ── Mandatory Plan Name Input ── */}
-        <div className="mb-4">
-          <label
-            className="block text-sm font-medium mb-1.5"
-            style={{ color: labelColor }}
-          >
-            Plan Name
-          </label>
-          <input
-            ref={inputRef}
-            type="text"
-            value={planName}
-            onChange={handleNameChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Enter plan name"
-            maxLength={80}
-            className="w-full px-4 py-2.5 rounded-lg text-sm transition-colors"
-            style={{
-              backgroundColor: inputBg,
-              border: `1px solid ${inputBorder}`,
-              color: inputColor,
-              outline: 'none',
-            }}
-            onFocus={(e) => {
-              e.currentTarget.style.borderColor = inputFocusBorder;
-              e.currentTarget.style.boxShadow = `0 0 0 3px ${isDark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.1)'}`;
-            }}
-            onBlur={(e) => {
-              e.currentTarget.style.borderColor = nameError ? errorColor : (isDark ? '#2d3148' : COLORS.gray[300]);
-              e.currentTarget.style.boxShadow = 'none';
-            }}
-          />
-          {nameError && (
-            <p className="text-xs mt-1.5" style={{ color: errorColor }}>
-              {nameError}
-            </p>
-          )}
+                    {/* ── Title ── */}
+                    <h3
+                        className="text-2xl font-bold text-center mb-2"
+                        style={{ color: titleColor }}
+                    >
+                        {title}
+                    </h3>
+
+                    {/* ── Message ── */}
+                    {message && (
+                        <p
+                            className="text-center text-sm mb-6"
+                            style={{ color: messageColor }}
+                        >
+                            {message}
+                        </p>
+                    )}
+
+                    {/* ── Stats Grid ── */}
+                    {stats.length > 0 && (
+                        <div className="grid grid-cols-2 gap-3 mb-6">
+                            {stats.map((stat, index) => (
+                                <div
+                                    key={index}
+                                    className="p-4 rounded-lg text-center"
+                                    style={{
+                                        backgroundColor: statBg,
+                                        border: `1px solid ${statBorder}`,
+                                    }}
+                                >
+                                    <p
+                                        className="text-2xl font-bold mb-1"
+                                        style={{ color: stat.color || COLORS.primary[600] }}
+                                    >
+                                        {stat.value}
+                                    </p>
+                                    <p className="text-xs" style={{ color: statLabel }}>
+                                        {stat.label}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* ── Mandatory Plan Name Input ── */}
+                    <div className="mb-5">
+                        <label
+                            htmlFor="plan-name-input"
+                            className="block text-sm font-medium mb-1.5"
+                            style={{ color: labelColor }}
+                        >
+                            Plan Name
+                        </label>
+                        <input
+                            id="plan-name-input"
+                            ref={inputRef}
+                            type="text"
+                            value={planName}
+                            onChange={handleNameChange}
+                            onKeyDown={handleKeyDown}
+                            placeholder="Enter plan name"
+                            maxLength={80}
+                            disabled={isSubmitting}
+                            autoComplete="off"
+                            className="w-full px-4 py-2.5 rounded-lg text-sm transition-colors"
+                            style={{
+                                backgroundColor: inputBg,
+                                border: `1px solid ${inputBorder}`,
+                                color: inputColor,
+                                outline: 'none',
+                                opacity: isSubmitting ? 0.6 : 1,
+                            }}
+                            onFocus={(e) => {
+                                e.currentTarget.style.borderColor = inputFocusBorder;
+                                e.currentTarget.style.boxShadow = `0 0 0 3px ${inputFocusRing}`;
+                            }}
+                            onBlur={(e) => {
+                                e.currentTarget.style.borderColor = nameError
+                                    ? errorColor
+                                    : (isDark ? '#2d3148' : COLORS.gray[300]);
+                                e.currentTarget.style.boxShadow = 'none';
+                            }}
+                        />
+                        {nameError && (
+                            <p
+                                className="text-xs mt-1.5"
+                                style={{ color: errorColor }}
+                                role="alert"
+                            >
+                                {nameError}
+                            </p>
+                        )}
+                    </div>
+
+                    {/* ── View Plan Button (disabled until name is valid) ── */}
+                    <button
+                        onClick={handleViewPlan}
+                        disabled={!btnEnabled}
+                        className="w-full flex items-center justify-center py-3 rounded-lg font-semibold transition-all"
+                        style={{
+                            backgroundColor: btnBg,
+                            color: btnColor,
+                            cursor: btnCursor,
+                            opacity: isSubmitting ? 0.7 : 1,
+                        }}
+                    >
+                        {isSubmitting ? (
+                            <>
+                                <Loader size={18} className="mr-2 animate-spin" />
+                                Saving…
+                            </>
+                        ) : (
+                            <>
+                                View My Plan
+                                <ChevronRight size={20} className="ml-2" />
+                            </>
+                        )}
+                    </button>
+                </div>
+            </div>
         </div>
+    </>
+);
+```
 
-        {/* View Plan Button — disabled until name is valid */}
-        {onViewPlan && (
-          <button
-            onClick={handleViewPlan}
-            disabled={!isNameValid || isSubmitting}
-            className="w-full flex items-center justify-center py-3 rounded-lg font-semibold transition-all"
-            style={{
-              backgroundColor: isNameValid && !isSubmitting
-                ? COLORS.primary[500]
-                : isDark ? '#2d3148' : COLORS.gray[200],
-              color: isNameValid && !isSubmitting
-                ? '#ffffff'
-                : isDark ? '#6b7280' : COLORS.gray[400],
-              cursor: isNameValid && !isSubmitting ? 'pointer' : 'not-allowed',
-              opacity: isSubmitting ? 0.7 : 1,
-            }}
-          >
-            {isSubmitting ? 'Saving…' : 'View My Plan'}
-            {!isSubmitting && <ChevronRight size={20} className="ml-2" />}
-          </button>
-        )}
-      </div>
-    </div>
-  );
 };
 
 export default SuccessModal;
