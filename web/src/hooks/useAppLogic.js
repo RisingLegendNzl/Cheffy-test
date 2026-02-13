@@ -159,8 +159,6 @@ const useAppLogic = ({
         if (!runId || !state) return;
 
         // Only resume if we don't already have a plan loaded
-        // (covers the case where refresh happened after plan:complete but before
-        // sessionStorage was cleared — unlikely but defensive)
         if (mealPlan && mealPlan.length > 0) {
             clearRunState();
             return;
@@ -227,8 +225,6 @@ const useAppLogic = ({
 
     // --- Mount-time run recovery (survives tab close / refresh) ---
     useEffect(() => {
-        // Only attempt recovery once auth is ready and the user is signed in.
-        // Also skip if the hook is already in a loading/generating state.
         if (!isAuthReady || !userId || loading) return;
 
         const pendingRun = getPendingRun();
@@ -273,14 +269,13 @@ const useAppLogic = ({
                         }
                     }
                 } else {
-                    // Polling timed out — the run is likely dead
                     console.warn('[RECOVERY] Polling timed out for pending run:', pendingRun.runId);
                     setGenerationStepKey(null);
                     setGenerationStatus('Ready to generate plan.');
                 }
             } catch (err) {
                 console.error('[RECOVERY] Recovery failed:', err);
-                setError(null); // Don't show error — just let user re-generate
+                setError(null);
                 setGenerationStepKey(null);
                 setGenerationStatus('Ready to generate plan.');
             } finally {
@@ -320,11 +315,9 @@ const useAppLogic = ({
     }, [selectedModel]);
 
     const showToast = useCallback((message, type = 'info', duration = 3000) => {
-    const id = Date.now();
-    // Only one notification at a time — replace, don't stack.
-    // This clears any previous toast and resets its timer cleanly.
-    setToasts([{ id, message, type, duration }]);
-}, []);
+        const id = Date.now();
+        setToasts([{ id, message, type, duration }]);
+    }, []);
     
     const removeToast = useCallback((id) => {
       setToasts(prev => prev.filter(toast => toast.id !== id));
@@ -359,12 +352,10 @@ const useAppLogic = ({
         setResults: setResults || (() => {}),
         setUniqueIngredients: setUniqueIngredients || (() => {}),
         recalculateTotalCost: recalculateTotalCost || (() => {}),
-        // Additions for persistence fix:
         setFormData: setFormData || (() => {}),
         setNutritionalTargets: setNutritionalTargets || (() => {}),
         setSelectedDay: setSelectedDay || (() => {}),
     });
-    // --- End Plan Persistence Hook Call ---
 
     // --- Profile & Settings Handlers ---
     const handleLoadProfile = useCallback(async (silent = false) => {
@@ -397,7 +388,8 @@ const useAppLogic = ({
                     eatingOccasions: data.eatingOccasions || '3',
                     store: data.store || 'Woolworths',
                     costPriority: data.costPriority || 'Best Value',
-                    mealVariety: data.mealVariety || 'Balanced Variety'
+                    mealVariety: data.mealVariety || 'Balanced Variety',
+                    measurementUnits: data.measurementUnits || 'metric', // Load measurement units
                 });
                 
                 if (data.nutritionalTargets) {
@@ -439,7 +431,8 @@ const useAppLogic = ({
                 showFailedIngredientsLogs: showFailedIngredientsLogs,
                 showMacroDebugLog: showMacroDebugLog,
                 selectedModel: selectedModel,
-                theme: localStorage.getItem('cheffy-theme') || 'dark',   // ← Added Theme Persistence
+                theme: localStorage.getItem('cheffy-theme') || 'dark',
+                measurementUnits: formData.measurementUnits || 'metric', // Persist units in settings
                 lastUpdated: new Date().toISOString()
             };
 
@@ -449,7 +442,7 @@ const useAppLogic = ({
         } catch (error) {
             console.error("[SETTINGS] Error saving settings:", error);
         }
-    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, selectedModel, userId, db, isAuthReady]);
+    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, selectedModel, userId, db, isAuthReady, formData.measurementUnits]);
 
     const handleLoadSettings = useCallback(async () => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
@@ -467,16 +460,17 @@ const useAppLogic = ({
                 setShowMacroDebugLog(data.showMacroDebugLog ?? false);
                 if (data.selectedModel) setSelectedModel(data.selectedModel);
                 
+                // Load measurement units from settings if available
+                if (data.measurementUnits) {
+                    setFormData(prev => ({ ...prev, measurementUnits: data.measurementUnits }));
+                }
+
                 // --- Theme Sync ---
-// DO NOT override the locally stored theme from Firestore.
-// localStorage is the source of truth for theme on this device.
-// The user's most recent local preference should always win.
-// Firestore theme is only used as a fallback if localStorage has no value.
-const localTheme = localStorage.getItem('cheffy-theme');
-if (!localTheme && data.theme) {
-    localStorage.setItem('cheffy-theme', data.theme);
-    document.documentElement.setAttribute('data-theme', data.theme);
-}
+                const localTheme = localStorage.getItem('cheffy-theme');
+                if (!localTheme && data.theme) {
+                    localStorage.setItem('cheffy-theme', data.theme);
+                    document.documentElement.setAttribute('data-theme', data.theme);
+                }
 
                 console.log("[SETTINGS] Settings loaded successfully");
             }
@@ -484,7 +478,7 @@ if (!localTheme && data.theme) {
         } catch (error) {
             console.error("[SETTINGS] Error loading settings:", error);
         }
-    }, [userId, db, isAuthReady]);
+    }, [userId, db, isAuthReady, setFormData]);
 
     const handleSaveProfile = useCallback(async (silent = false) => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
@@ -511,6 +505,7 @@ if (!localTheme && data.theme) {
                 store: formData.store,
                 costPriority: formData.costPriority,
                 mealVariety: formData.mealVariety,
+                measurementUnits: formData.measurementUnits || 'metric', // Save measurement units
                 nutritionalTargets: {
                     calories: nutritionalTargets.calories,
                     protein: nutritionalTargets.protein,
@@ -551,7 +546,7 @@ if (!localTheme && data.theme) {
         if (userId && !userId.startsWith('local_') && isAuthReady) {
             handleSaveSettings();
         }
-    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, userId, isAuthReady, handleSaveSettings]);
+    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, userId, isAuthReady, handleSaveSettings, formData.measurementUnits]);
 
     useEffect(() => {
         if (userId && !userId.startsWith('local_') && isAuthReady && db) {
@@ -568,18 +563,14 @@ if (!localTheme && data.theme) {
       }
     }, [mealPlan, showToast]);
 
-    // --- NEW HELPER FUNCTION for robust error parsing ---
     const getResponseErrorDetails = useCallback(async (response) => {
         let errorMsg = `HTTP ${response.status}`;
         try {
-            // Clone the response so we can safely read the body without disturbing the stream
             const clonedResponse = response.clone();
             try {
-                // Attempt to read as JSON first
                 const errorData = await clonedResponse.json();
                 errorMsg = errorData.message || JSON.stringify(errorData);
             } catch (jsonErr) {
-                // If JSON parsing fails, read the raw text
                 errorMsg = await response.text() || `HTTP ${response.status} - Could not read body`;
             }
         } catch (e) {
@@ -592,7 +583,7 @@ if (!localTheme && data.theme) {
     const pollForCompletedPlan = useCallback(async (runId) => {
         if (!runId) return null;
 
-        const MAX_POLLS = 200;       // 200 × 3s = 10 minutes max
+        const MAX_POLLS = 200;
         const POLL_INTERVAL_MS = 3000;
 
         setGenerationStatus('Connection lost — checking for completed plan…');
@@ -614,19 +605,17 @@ if (!localTheme && data.theme) {
                 if (data.status === 'failed') {
                     throw new Error(data.payload?.error || 'Plan generation failed on server');
                 }
-                // status === 'running' → keep polling
             } catch (err) {
                 console.warn(`[POLL] Poll attempt ${i + 1} error:`, err.message);
             }
             await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
         }
-        return null; // timed out
+        return null;
     }, []);
 
     const handleGeneratePlan = useCallback(async (e) => {
         e.preventDefault();
         
-        // --- RECOMMENDED FIX: Abort any pending request ---
         if (abortControllerRef.current) {
             console.log('[GENERATE] Aborting previous request.');
             abortControllerRef.current.abort();
@@ -635,7 +624,6 @@ if (!localTheme && data.theme) {
         abortControllerRef.current = new AbortController();
         currentRunIdRef.current = null;
         const signal = abortControllerRef.current.signal;
-        // --- End Abort Fix ---
 
         setLoading(true);
         setError(null);
@@ -652,7 +640,7 @@ if (!localTheme && data.theme) {
         setFailedIngredientsHistory([]);
         setGenerationStepKey('targets');
         if (!isLogOpen) { setLogHeight(250); setIsLogOpen(true); }
-        setMacroDebug(null); // Macro Debug Reset
+        setMacroDebug(null);
 
         let targets;
 
@@ -678,7 +666,7 @@ if (!localTheme && data.theme) {
             if (err.name === 'AbortError') {
                 console.log('[GENERATE] Targets request aborted.');
                 setLoading(false);
-                return; // Exit gracefully
+                return;
             }
             console.error("Plan generation failed critically at Targets:", err);
             setError(`Critical failure: ${err.message}`);
@@ -690,12 +678,9 @@ if (!localTheme && data.theme) {
             return;
         }
 
-        // --- Batched generation (always enabled) ---
         setGenerationStatus("Generating full plan...");
             
             try {
-                // console.log('[DEBUG] Starting batched plan generation...'); // Diagnostic log removed for cleanup
-                
                 const planResponse = await fetch(ORCHESTRATOR_FULL_PLAN_API_URL, {
                     method: 'POST',
                     headers: { 
@@ -710,29 +695,19 @@ if (!localTheme && data.theme) {
                     signal: signal,
                 });
 
-                // console.log('[DEBUG] Fetch completed, status:', planResponse.status, 'ok:', planResponse.ok); // Diagnostic log removed for cleanup
-
                 if (!planResponse.ok) {
-                    // --- FIXED ERROR HANDLING (Alternative Fix: Clone/Text/JSON) ---
                     const errorMsg = await getResponseErrorDetails(planResponse);
                     throw new Error(`Full plan request failed (${planResponse.status}): ${errorMsg}`);
-                    // --- END FIXED ERROR HANDLING ---
                 }
 
-                // ── PERSISTENCE FIX: Read run_id from response header ──
                 const headerRunId = planResponse.headers.get('X-Cheffy-Run-Id');
                 if (headerRunId) {
                     currentRunIdRef.current = headerRunId;
                     cacheRunId(headerRunId, 'generating');
                     console.log('[GENERATE] Got run_id from header:', headerRunId);
                 }
-
-                // console.log('[DEBUG] About to get reader from body...'); // Diagnostic log removed for cleanup
-                // console.log('[DEBUG] planResponse.body exists:', !!planResponse.body); // Diagnostic log removed for cleanup
                 
                 const reader = planResponse.body.getReader();
-                // console.log('[DEBUG] Reader obtained successfully'); // Diagnostic log removed for cleanup
-                
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let planComplete = false;
@@ -817,7 +792,6 @@ if (!localTheme && data.theme) {
                                 setUniqueIngredients(eventData.uniqueIngredients || []);
                                 recalculateTotalCost(eventData.results || {});
                                 
-                                // Capture Macro Debug Data
                                 if (eventData.macroDebug) {
                                     setMacroDebug(eventData.macroDebug);
                                 }
@@ -831,14 +805,10 @@ if (!localTheme && data.theme) {
                                   { label: 'Items', value: eventData.uniqueIngredients?.length || 0, color: '#f59e0b' },
                                 ]);
                                 
-                                                                setTimeout(() => {
+                                setTimeout(() => {
                                   setShowSuccessModal(true);
-                                  // No auto-dismiss — the SuccessModal is now a persistent
-                                  // modal that requires the user to enter a plan name.
                                 }, 500);
 
-                                
-                                // Auto-save to Firestore
                                 if (planPersistence && planPersistence.autoSavePlan) {
                                     try {
                                         await planPersistence.autoSavePlan({
@@ -854,7 +824,6 @@ if (!localTheme && data.theme) {
                                     }
                                 }
 
-                                // ── PERSISTENCE FIX: write plan to localStorage ──
                                 cachePlan({
                                     mealPlan: eventData.mealPlan || [],
                                     results: eventData.results || {},
@@ -927,7 +896,6 @@ if (!localTheme && data.theme) {
                                 }
                             }
 
-                            // ── PERSISTENCE FIX: cache recovered plan locally ──
                             cachePlan({
                                 mealPlan: recovered.mealPlan || [],
                                 results: recovered.results || {},
@@ -943,7 +911,6 @@ if (!localTheme && data.theme) {
                     }
                 }
 
-                // Fallthrough: unrecoverable error
                 clearPendingRun();
                 console.error("Batched plan generation failed critically:", err);
                 setError(`Critical failure: ${err.message}`);
@@ -998,7 +965,6 @@ if (!localTheme && data.theme) {
             console.error(`[handleQuantityChange] Error: Ingredient key "${key}" not found.`);
             return prev;
         }
-        // newQuantity is now the absolute quantity, not a delta
         const safeQty = Math.max(1, newQuantity);
         const updatedItem = { ...prev[key], userQuantity: safeQty };
         const newResults = { ...prev, [key]: updatedItem };
@@ -1163,7 +1129,7 @@ if (!localTheme && data.theme) {
                 activityLevel: 'moderate', goal: 'cut_moderate', dietary: 'None', 
                 days: 7, store: 'Woolworths', eatingOccasions: '3', 
                 costPriority: 'Best Value', mealVariety: 'Balanced Variety', 
-                cuisine: '', bodyFat: '' 
+                cuisine: '', bodyFat: '', measurementUnits: 'metric'
             });
             setNutritionalTargets({ calories: 0, protein: 0, fat: 0, carbs: 0 });
             
@@ -1187,7 +1153,6 @@ if (!localTheme && data.theme) {
     const categorizedResults = useMemo(() => {
         const groups = {};
         Object.entries(results || {}).forEach(([normalizedKey, item]) => {
-            // FIX: Remove overly restrictive 'source' filter to display all ingredients.
             if (item && item.originalIngredient) {
                 const category = item.category || 'Uncategorized';
                 if (!groups[category]) groups[category] = [];
@@ -1238,7 +1203,6 @@ if (!localTheme && data.theme) {
         generationStepKey,
         generationStatus,
         selectedMeal,
-        // useBatchedMode REMOVED
         selectedModel,
         toasts,
         showSuccessModal,
