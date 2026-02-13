@@ -1,6 +1,7 @@
 // web/src/components/ProfileTab.jsx
 // Theme-aware: adapts Profile Card + Targets Card to dark/light mode.
 // Fixes: issue #1 (purple stripe), issue #5 (Blueprint card in dark mode).
+// FIX: Weight stat now reads formData.measurementUnits for dynamic kg/lb display.
 
 import React, { useMemo } from 'react';
 import {
@@ -53,13 +54,22 @@ const MACRO_COLORS = {
   carbs:   { main: '#f97316', dark: '#ea580c', light: '#fed7aa' },
 };
 
+// ── Weight formatting helper (formData stores kg internally) ──
+const formatWeight = (weightKg, units) => {
+  if (!weightKg) return 'N/A';
+  if (units === 'imperial') {
+    return `${(parseFloat(weightKg) * 2.20462).toFixed(1)} lb`;
+  }
+  return `${weightKg} kg`;
+};
+
 
 // ─────────────────────────────────────────────────────────────
 // PROFILE CARD (Element 1)
 // ─────────────────────────────────────────────────────────────
 
 const STAT_CONFIG = [
-  { key: 'weight',   label: 'Weight',   Icon: Scale,    format: (v) => `${v}kg` },
+  { key: 'weight',   label: 'Weight',   Icon: Scale,    format: null }, // format handled dynamically
   { key: 'bodyFat',  label: 'Body Fat', Icon: Percent,  format: (v) => v ? `${v}%` : 'N/A' },
   { key: 'goal',     label: 'Goal',     Icon: Target,   format: null },
   { key: 'activity', label: 'Activity', Icon: Activity, format: null },
@@ -68,6 +78,7 @@ const STAT_CONFIG = [
 const ProfileCard = ({ formData }) => {
   const { isDark } = useTheme();
   const goalColor = getGoalColor(formData.goal);
+  const units = formData.measurementUnits || 'metric';
 
   // Theme-derived colours
   const cardBg = isDark ? '#1e2130' : '#ffffff';
@@ -160,7 +171,13 @@ const ProfileCard = ({ formData }) => {
 
             // Default stat box (weight, body fat)
             const rawValue = stat.key === 'weight' ? formData.weight : formData.bodyFat;
-            const displayValue = stat.format ? stat.format(rawValue) : rawValue || 'N/A';
+
+            // Weight uses dynamic unit formatting; others use their static format
+            const displayValue = stat.key === 'weight'
+              ? formatWeight(rawValue, units)
+              : stat.format
+                ? stat.format(rawValue)
+                : rawValue || 'N/A';
 
             return (
               <div
@@ -209,30 +226,25 @@ const MacroProgressBar = ({ label, amount, unit, kcal, macroKey, Icon, percentag
             className="w-6 h-6 rounded-md flex items-center justify-center mr-2"
             style={{ backgroundColor: isDark ? hexToRgba(colors.main, 0.15) : colors.light }}
           >
-            <Icon className="w-3.5 h-3.5" style={{ color: colors.main }} />
+            <Icon size={14} style={{ color: colors.main }} />
           </div>
-          <span className="text-sm font-semibold" style={{ color: labelCol }}>
-            {label}
-          </span>
+          <span className="text-sm font-semibold" style={{ color: labelCol }}>{label}</span>
         </div>
         <div className="text-right">
-          <span className="text-sm font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
+          <span className="text-sm font-bold" style={{ color: colors.main }}>
             {amount}{unit}
           </span>
           <span className="text-xs ml-1" style={{ color: subCol }}>
-            ({kcal} kcal · {percentage}%)
+            ({kcal} kcal)
           </span>
         </div>
       </div>
-      <div
-        className="h-2 rounded-full overflow-hidden"
-        style={{ backgroundColor: trackBg }}
-      >
+      <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: trackBg }}>
         <div
-          className="h-full rounded-full macro-bar-fill"
+          className="h-full rounded-full transition-all duration-500"
           style={{
             width: `${Math.min(percentage, 100)}%`,
-            backgroundColor: colors.main,
+            background: `linear-gradient(90deg, ${colors.main}, ${colors.dark})`,
           }}
         />
       </div>
@@ -242,217 +254,133 @@ const MacroProgressBar = ({ label, amount, unit, kcal, macroKey, Icon, percentag
 
 
 // ─────────────────────────────────────────────────────────────
-// TARGETS CARD (Element 2) — "Your Daily Nutritional Blueprint"
-// Issue #5: must match dark theme, kcal number must be visible
+// TARGETS CARD (Element 2)
 // ─────────────────────────────────────────────────────────────
 
 const TargetsCard = ({ nutritionalTargets }) => {
   const { isDark } = useTheme();
-  const hasTargets = nutritionalTargets.calories > 0;
-
-  // SVG calorie ring calculations
-  const size = 180;
-  const strokeWidth = 12;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
 
   // Theme-derived colours
   const cardBg = isDark ? '#1e2130' : '#ffffff';
   const cardBorder = isDark ? '#2d3148' : COLORS.gray[200];
+  const headingColor = isDark ? '#a5b4fc' : COLORS.primary[700];
   const ringPanelBg = isDark
     ? 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06))'
-    : `linear-gradient(135deg, ${COLORS.primary[50]}, ${COLORS.secondary[50]})`;
-  const ringPanelBorderColor = isDark ? '#2d3148' : COLORS.gray[200];
-  const dailyLabel = isDark ? '#9ca3b0' : COLORS.gray[600];
-  const kcalValueColor = isDark ? '#ffffff' : COLORS.gray[900];
-  const kcalUnitColor = isDark ? '#6b7280' : COLORS.gray[500];
-  const ringTrackColor = isDark ? '#2d3148' : '#e5e7eb';
-  const macroPanelBg = isDark ? '#1e2130' : 'transparent';
-  const macroHeadingColor = isDark ? '#e5e7eb' : COLORS.gray[800];
+    : `linear-gradient(135deg, ${COLORS.primary[50]}, ${hexToRgba(COLORS.secondary[500], 0.05)})`;
+  const ringPanelBorder = isDark ? '#2d3148' : COLORS.gray[200];
+  const macroCardBg = isDark ? '#252839' : '#ffffff';
   const footerBg = isDark
     ? 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06))'
-    : `linear-gradient(135deg, ${COLORS.primary[50]}, #f3e8ff)`;
-  const footerIconBg = isDark ? 'rgba(99,102,241,0.15)' : COLORS.primary[100];
-  const footerTitleColor = isDark ? '#a5b4fc' : COLORS.primary[800];
-  const footerTextColor = isDark ? '#9ca3b0' : COLORS.gray[600];
+    : `linear-gradient(135deg, ${COLORS.primary[50]}, ${hexToRgba(COLORS.secondary[500], 0.05)})`;
+  const footerIconBg = isDark ? 'rgba(99,102,241,0.15)' : COLORS.primary[50];
+  const footerTitleColor = isDark ? '#e5e7eb' : COLORS.gray[900];
+  const footerTextColor = isDark ? '#9ca3af' : COLORS.gray[600];
   const footerLinkColor = isDark ? '#818cf8' : COLORS.primary[600];
+  const calLabelColor = isDark ? '#d1d5db' : COLORS.gray[700];
+  const calSubColor = isDark ? '#6b7280' : COLORS.gray[400];
 
-  // Macro ratios
-  const macroRatios = useMemo(() => {
-    const { protein, fat, carbs } = nutritionalTargets;
-    const proteinCal = protein * 4;
-    const fatCal = fat * 9;
-    const carbsCal = carbs * 4;
-    const totalCal = proteinCal + fatCal + carbsCal;
-    if (totalCal === 0) return { protein: 0, fat: 0, carbs: 0 };
-    return {
-      protein: Math.round((proteinCal / totalCal) * 100),
-      fat: Math.round((fatCal / totalCal) * 100),
-      carbs: Math.round((carbsCal / totalCal) * 100),
-    };
-  }, [nutritionalTargets]);
+  const totalCal = nutritionalTargets.calories || 0;
+  const proteinKcal = (nutritionalTargets.protein || 0) * 4;
+  const fatKcal = (nutritionalTargets.fat || 0) * 9;
+  const carbsKcal = (nutritionalTargets.carbs || 0) * 4;
+  const macroTotal = proteinKcal + fatKcal + carbsKcal || 1;
 
-  // EMPTY STATE
-  if (!hasTargets) {
-    return (
-      <div
-        className="dashboard-card-wrapper rounded-xl shadow-lg border p-8 text-center overflow-hidden"
-        style={{
-          backgroundColor: isDark ? '#1e2130' : undefined,
-          borderColor: isDark ? '#2d3148' : COLORS.primary[200],
-          background: isDark ? '#1e2130' : `linear-gradient(to br, ${COLORS.primary[50]}, ${COLORS.secondary[50]})`,
-        }}
-      >
-        <div
-          className="empty-state-icon-breathe w-20 h-20 mx-auto mb-4 rounded-full flex items-center justify-center"
-          style={{ backgroundColor: isDark ? 'rgba(99,102,241,0.12)' : COLORS.primary[100] }}
-        >
-          <Target className="w-10 h-10" style={{ color: isDark ? '#818cf8' : COLORS.primary[400] }} />
-        </div>
-        <h3 className="text-xl font-bold mb-2" style={{ color: isDark ? '#a5b4fc' : COLORS.primary[700] }}>
-          No Targets Yet
-        </h3>
-        <p className="text-sm mb-4" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}>
-          Generate a plan to see your personalized nutritional targets
-        </p>
-        <div className="flex items-center justify-center text-sm" style={{ color: isDark ? '#818cf8' : COLORS.primary[500] }}>
-          <Zap className="w-4 h-4 mr-1 empty-state-zap" />
-          Click "Generate Plan" to get started
-        </div>
-      </div>
-    );
-  }
+  const macroRatios = {
+    protein: (proteinKcal / macroTotal) * 100,
+    fat: (fatKcal / macroTotal) * 100,
+    carbs: (carbsKcal / macroTotal) * 100,
+  };
 
   return (
     <div
-      className="targets-card-surface dashboard-card-wrapper rounded-xl shadow-lg border overflow-hidden"
+      className="targets-card-surface rounded-xl shadow-lg overflow-hidden"
       style={{
         backgroundColor: cardBg,
-        borderColor: cardBorder,
+        border: `1px solid ${cardBorder}`,
       }}
     >
       {/* Header */}
-      <div
-        className="text-white p-6"
-        style={{
-          background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary[600]})`,
-        }}
-      >
-        <h3 className="text-2xl font-bold text-center flex items-center justify-center">
-          <Target className="w-6 h-6 mr-2" />
+      <div className="p-6 pb-4">
+        <h3 className="text-xl font-bold flex items-center" style={{ color: headingColor }}>
+          <Target className="w-5 h-5 mr-2" />
           Your Daily Nutritional Blueprint
         </h3>
-        <p className="text-center text-sm mt-1" style={{ color: 'rgba(255,255,255,0.7)' }}>
-          Personalized for your goals
-        </p>
       </div>
 
-      {/* SPLIT VIEW LAYOUT */}
-      <div className="grid md:grid-cols-2 gap-0">
-
-        {/* LEFT SIDE: Calorie Target with ring */}
+      {/* Two-panel layout */}
+      <div className="flex flex-col md:flex-row">
+        {/* Left: Calorie ring */}
         <div
-          className="targets-card-ring-panel p-8 flex flex-col items-center justify-center border-r"
+          className="targets-card-ring-panel flex-1 p-6 flex flex-col items-center justify-center md:border-r"
           style={{
             background: ringPanelBg,
-            borderRightColor: ringPanelBorderColor,
+            borderRightColor: ringPanelBorder,
           }}
         >
-          <p
-            className="text-sm font-semibold uppercase tracking-wide mb-2"
-            style={{ color: dailyLabel }}
-          >
-            Daily Target
-          </p>
-
-          {/* Calorie Ring */}
-          <div className="relative mb-4" style={{ width: size, height: size }}>
-            <svg
-              className="transform -rotate-90"
-              width={size}
-              height={size}
-              style={{ '--ring-circumference': circumference }}
-            >
+          <div className="relative w-32 h-32 mb-3">
+            <svg viewBox="0 0 128 128" className="w-full h-full">
+              {/* Track */}
               <circle
-                cx={size / 2}
-                cy={size / 2}
-                r={radius}
-                stroke={ringTrackColor}
-                strokeWidth={strokeWidth}
+                cx="64" cy="64" r="54"
                 fill="none"
+                strokeWidth="10"
+                stroke={isDark ? 'rgba(255,255,255,0.06)' : COLORS.gray[100]}
               />
+              {/* Filled arc */}
               <circle
-                cx={size / 2}
-                cy={size / 2}
-                r={radius}
-                stroke="url(#calorieGradient)"
-                strokeWidth={strokeWidth}
+                cx="64" cy="64" r="54"
                 fill="none"
-                strokeDasharray={circumference}
-                strokeDashoffset={0}
+                strokeWidth="10"
+                stroke={COLORS.primary[500]}
+                strokeDasharray={`${2 * Math.PI * 54}`}
+                strokeDashoffset={`${2 * Math.PI * 54 * 0.15}`}
                 strokeLinecap="round"
-                className="calorie-ring-fill"
+                transform="rotate(-90 64 64)"
+                style={{ transition: 'stroke-dashoffset 0.6s ease' }}
               />
-              <defs>
-                <linearGradient id="calorieGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor={COLORS.primary[500]} />
-                  <stop offset="100%" stopColor={COLORS.secondary[500]} />
-                </linearGradient>
-              </defs>
             </svg>
-
-            {/* Center text — Issue #5: kcal must be white/visible in dark mode */}
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <Flame className="w-5 h-5 flame-heartbeat mb-1" style={{ color: COLORS.primary[500] }} />
-              <span className="text-3xl font-bold" style={{ color: kcalValueColor }}>
-                {nutritionalTargets.calories.toLocaleString()}
+              <Flame size={18} style={{ color: COLORS.primary[500] }} className="mb-1" />
+              <span className="text-2xl font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
+                {totalCal}
               </span>
-              <span className="text-xs mt-0.5" style={{ color: kcalUnitColor }}>
-                kcal/day
-              </span>
+              <span className="text-xs" style={{ color: calSubColor }}>kcal / day</span>
             </div>
           </div>
+          <p className="text-sm font-semibold text-center" style={{ color: calLabelColor }}>
+            Daily Calorie Target
+          </p>
         </div>
 
-        {/* RIGHT SIDE: Macro breakdown */}
-        <div
-          className="targets-card-macro-panel p-6 flex flex-col justify-center space-y-4"
-          style={{ backgroundColor: macroPanelBg }}
-        >
-          <h4 className="text-base font-bold flex items-center" style={{ color: macroHeadingColor }}>
-            <CheckCircle className="w-4 h-4 mr-2" style={{ color: COLORS.primary[500] }} />
-            Macro Breakdown
-          </h4>
-
-          <div className="space-y-5">
-            <MacroProgressBar
-              label="Protein"
-              amount={nutritionalTargets.protein}
-              unit="g"
-              kcal={nutritionalTargets.protein * 4}
-              macroKey="protein"
-              Icon={Soup}
-              percentage={macroRatios.protein}
-            />
-            <MacroProgressBar
-              label="Fat"
-              amount={nutritionalTargets.fat}
-              unit="g"
-              kcal={nutritionalTargets.fat * 9}
-              macroKey="fat"
-              Icon={Droplet}
-              percentage={macroRatios.fat}
-            />
-            <MacroProgressBar
-              label="Carbs"
-              amount={nutritionalTargets.carbs}
-              unit="g"
-              kcal={nutritionalTargets.carbs * 4}
-              macroKey="carbs"
-              Icon={Wheat}
-              percentage={macroRatios.carbs}
-            />
-          </div>
+        {/* Right: Macro breakdown */}
+        <div className="targets-card-macro-panel flex-1 p-6 space-y-5" style={{ backgroundColor: macroCardBg }}>
+          <MacroProgressBar
+            label="Protein"
+            amount={nutritionalTargets.protein}
+            unit="g"
+            kcal={nutritionalTargets.protein * 4}
+            macroKey="protein"
+            Icon={Soup}
+            percentage={macroRatios.protein}
+          />
+          <MacroProgressBar
+            label="Fat"
+            amount={nutritionalTargets.fat}
+            unit="g"
+            kcal={nutritionalTargets.fat * 9}
+            macroKey="fat"
+            Icon={Droplet}
+            percentage={macroRatios.fat}
+          />
+          <MacroProgressBar
+            label="Carbs"
+            amount={nutritionalTargets.carbs}
+            unit="g"
+            kcal={nutritionalTargets.carbs * 4}
+            macroKey="carbs"
+            Icon={Wheat}
+            percentage={macroRatios.carbs}
+          />
         </div>
       </div>
 
