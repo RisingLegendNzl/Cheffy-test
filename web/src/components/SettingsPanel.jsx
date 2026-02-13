@@ -1,14 +1,11 @@
 // web/src/components/SettingsPanel.jsx
-import React, { useState } from 'react';
-import { 
-  X, 
-  User, 
-  Store, 
-  Globe, 
-  Info, 
+// UPDATED: Removed "Default Store" section, fixed Measurement Units persistence.
+import React from 'react';
+import {
+  X,
+  User,
+  Info,
   Shield,
-  ChevronRight,
-  Save,
   Trash2,
   Eye,
   EyeOff,
@@ -16,57 +13,51 @@ import {
   ListX,
   Target,
   Cpu,
-  Sun,
-  Moon,
-  Palette
+  Palette,
+  Ruler,
 } from 'lucide-react';
-import { COLORS, Z_INDEX, SHADOWS } from '../constants';
-import { APP_CONFIG } from '../constants';
+import { COLORS, Z_INDEX } from '../constants';
 import { useTheme } from '../contexts/ThemeContext';
 
 /**
  * Settings panel/modal for app preferences.
- * Now includes Appearance section for Dark/Light mode toggle.
+ *
+ * CHANGES from previous version:
+ *  - REMOVED "Default Store" dropdown (store is set in preferences step).
+ *  - REMOVED `currentStore`, `onStoreChange` props, `selectedStore` state, `handleSave`.
+ *  - ADDED `measurementUnits` and `onMeasurementUnitsChange` props so the
+ *    unit selection actually persists to formData / Firestore.
  */
-const SettingsPanel = ({ 
-  isOpen, 
+const SettingsPanel = ({
+  isOpen,
   onClose,
-  currentStore = 'Woolworths',
-  onStoreChange,
   onClearData,
   onEditProfile,
+  // Measurement units (new)
+  measurementUnits = 'metric',
+  onMeasurementUnitsChange,
+  // Logs
   showOrchestratorLogs = true,
   onToggleOrchestratorLogs,
   showFailedIngredientsLogs = true,
   onToggleFailedIngredientsLogs,
   showMacroDebugLog = false,
   onToggleMacroDebugLog = () => {},
+  // AI Model
   selectedModel = 'gpt-5.1',
   onModelChange = () => {},
 }) => {
-  const [selectedStore, setSelectedStore] = useState(currentStore);
   const { theme, setTheme, isDark } = useTheme();
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
-    if (onStoreChange) {
-      onStoreChange(selectedStore);
-    }
-    onClose();
-  };
-
   const handleEditProfileClick = () => {
-    if (onEditProfile) {
-      onEditProfile();
-    }
+    if (onEditProfile) onEditProfile();
   };
 
   const handleClearAllData = () => {
-    console.log('Attempting to clear all data. (Confirmation skipped)');
-    if (onClearData) {
-      onClearData();
-    }
+    console.log('Attempting to clear all data.');
+    if (onClearData) onClearData();
     onClose();
   };
 
@@ -113,97 +104,59 @@ const SettingsPanel = ({
               </h3>
             </div>
 
-            <div
-              className="flex rounded-xl overflow-hidden"
-              style={{
-                border: `2px solid ${isDark ? '#2d3148' : COLORS.gray[200]}`,
-                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
-              }}
-            >
-              {/* Light Mode Button */}
-              <button
-                onClick={() => setTheme('light')}
-                className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 font-semibold text-sm transition-all duration-200"
-                style={{
-                  backgroundColor: !isDark ? COLORS.primary[500] : 'transparent',
-                  color: !isDark ? '#ffffff' : (isDark ? '#9ca3b0' : COLORS.gray[500]),
-                }}
-              >
-                <Sun size={16} />
-                Light
-              </button>
-
-              {/* Dark Mode Button */}
-              <button
-                onClick={() => setTheme('dark')}
-                className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 font-semibold text-sm transition-all duration-200"
-                style={{
-                  backgroundColor: isDark ? COLORS.primary[500] : 'transparent',
-                  color: isDark ? '#ffffff' : COLORS.gray[500],
-                }}
-              >
-                <Moon size={16} />
-                Dark
-              </button>
+            <div className="flex gap-3">
+              {[
+                { key: 'light', label: 'Light' },
+                { key: 'dark', label: 'Dark' },
+                { key: 'system', label: 'System' },
+              ].map((opt) => {
+                const isActive = theme === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    onClick={() => setTheme(opt.key)}
+                    className="flex-1 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all"
+                    style={{
+                      backgroundColor: isActive
+                        ? isDark ? 'rgba(99,102,241,0.2)' : COLORS.primary[50]
+                        : isDark ? '#1e2130' : COLORS.gray[100],
+                      color: isActive
+                        ? COLORS.primary[600]
+                        : isDark ? '#9ca3b0' : COLORS.gray[600],
+                      border: isActive
+                        ? `2px solid ${COLORS.primary[500]}`
+                        : `2px solid transparent`,
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
             </div>
-
-            <p className="text-xs mt-3" style={{ color: isDark ? '#6b7280' : COLORS.gray[500] }}>
-              Your preference is saved automatically and persists across sessions.
-            </p>
           </div>
 
-          {/* ─── Preferences Section ─── */}
+          {/* ─── Measurement Units Section (FIXED — now persists) ─── */}
           <div>
             <div className="flex items-center mb-4">
-              <Store size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
+              <Ruler size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
               <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
-                Preferences
+                Measurement Units
               </h3>
             </div>
 
-            {/* Default Store */}
-            <div className="mb-4">
-              <label
-                className="block text-sm font-semibold mb-2"
-                style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
-              >
-                Default Store
-              </label>
-              <select
-                value={selectedStore}
-                onChange={(e) => setSelectedStore(e.target.value)}
-                className="w-full p-3 border rounded-lg"
-                style={{
-                  borderColor: isDark ? '#2d3148' : COLORS.gray[300],
-                  color: isDark ? '#f0f1f5' : COLORS.gray[900],
-                  backgroundColor: isDark ? '#1e2130' : '#ffffff',
-                }}
-              >
-                <option value="Woolworths">Woolworths</option>
-                <option value="Coles">Coles</option>
-              </select>
-            </div>
-
-            {/* Units */}
-            <div className="mb-4">
-              <label
-                className="block text-sm font-semibold mb-2"
-                style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
-              >
-                Measurement Units
-              </label>
-              <select
-                className="w-full p-3 border rounded-lg"
-                style={{
-                  borderColor: isDark ? '#2d3148' : COLORS.gray[300],
-                  color: isDark ? '#f0f1f5' : COLORS.gray[900],
-                  backgroundColor: isDark ? '#1e2130' : '#ffffff',
-                }}
-              >
-                <option value="metric">Metric (kg, g)</option>
-                <option value="imperial">Imperial (lb, oz)</option>
-              </select>
-            </div>
+            <select
+              value={measurementUnits}
+              onChange={(e) => onMeasurementUnitsChange?.(e.target.value)}
+              className="w-full p-3 border rounded-lg"
+              style={{
+                borderColor: isDark ? '#2d3148' : COLORS.gray[300],
+                color: isDark ? '#f0f1f5' : COLORS.gray[900],
+                backgroundColor: isDark ? '#1e2130' : '#ffffff',
+              }}
+            >
+              <option value="metric">Metric (kg, cm)</option>
+              <option value="imperial">Imperial (lb, ft/in)</option>
+            </select>
           </div>
 
           {/* ─── AI Model Section ─── */}
@@ -240,180 +193,128 @@ const SettingsPanel = ({
             <div
               className="flex items-center p-3 rounded-lg"
               style={{
-                backgroundColor: isDark ? 'rgba(99,102,241,0.1)' : COLORS.primary[50],
+                backgroundColor: isDark ? '#1e2130' : '#eff6ff',
+                border: `1px solid ${isDark ? '#2d3148' : '#bfdbfe'}`,
               }}
             >
-              <Info size={14} className="mr-2 flex-shrink-0" style={{ color: COLORS.primary[600] }} />
-              <p className="text-xs" style={{ color: isDark ? '#a5b4fc' : COLORS.primary[700] }}>
-                <strong>Current:</strong> {selectedModel === 'gpt-5.1' ? 'GPT-5.1' : 'Gemini 2.0 Flash'}.
-                {' '}The selected model is used for meal plan generation. If it fails, the other model is used as a fallback automatically.
-              </p>
+              <Info size={16} className="mr-2 flex-shrink-0" style={{ color: isDark ? '#818cf8' : '#3b82f6' }} />
+              <span className="text-xs" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}>
+                GPT-5.1 provides higher quality plans. Gemini 2.0 Flash is faster but may produce less varied meals.
+              </span>
             </div>
           </div>
 
-          {/* ─── Diagnostics Section ─── */}
+          {/* ─── Debug Logs Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Terminal size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
               <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
-                Diagnostics
+                Debug Logs
               </h3>
             </div>
 
-            {/* Orchestrator Logs Toggle */}
-            <div
-              className="flex items-center justify-between p-4 rounded-lg mb-3 transition-fast"
-              style={{
-                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
-              }}
-            >
-              <div className="flex items-center">
-                <Terminal size={16} className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }} />
-                <label className="text-sm font-semibold" style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}>
-                  Orchestrator Logs
-                </label>
-              </div>
-              <button
-                onClick={() => onToggleOrchestratorLogs && onToggleOrchestratorLogs(!showOrchestratorLogs)}
-                className="p-2 rounded-lg transition-fast"
+            {[
+              {
+                label: 'Orchestrator Logs',
+                icon: <Terminal size={16} />,
+                value: showOrchestratorLogs,
+                toggle: onToggleOrchestratorLogs,
+              },
+              {
+                label: 'Failed Ingredients',
+                icon: <ListX size={16} />,
+                value: showFailedIngredientsLogs,
+                toggle: onToggleFailedIngredientsLogs,
+              },
+              {
+                label: 'Macro Debug',
+                icon: <Target size={16} />,
+                value: showMacroDebugLog,
+                toggle: onToggleMacroDebugLog,
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                className="flex items-center justify-between p-3 rounded-lg mb-2"
                 style={{
-                  backgroundColor: showOrchestratorLogs ? COLORS.success.light : (isDark ? '#2d3148' : COLORS.gray[200]),
-                  color: showOrchestratorLogs ? COLORS.success.dark : (isDark ? '#6b7280' : COLORS.gray[600]),
+                  backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
+                  border: `1px solid ${isDark ? '#2d3148' : COLORS.gray[200]}`,
                 }}
               >
-                {showOrchestratorLogs ? <Eye size={18} /> : <EyeOff size={18} />}
-              </button>
-            </div>
-
-            {/* Failed Ingredients Logs Toggle */}
-            <div
-              className="flex items-center justify-between p-4 rounded-lg mb-3 transition-fast"
-              style={{
-                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
-              }}
-            >
-              <div className="flex items-center">
-                <ListX size={16} className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }} />
-                <label className="text-sm font-semibold" style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}>
-                  Failed Ingredients Log
-                </label>
+                <div className="flex items-center">
+                  <span className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[500] }}>
+                    {item.icon}
+                  </span>
+                  <span
+                    className="text-sm font-medium"
+                    style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
+                  >
+                    {item.label}
+                  </span>
+                </div>
+                <button
+                  onClick={() => item.toggle?.(!item.value)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+                  style={{
+                    backgroundColor: item.value
+                      ? isDark ? 'rgba(16,185,129,0.15)' : '#d1fae5'
+                      : isDark ? 'rgba(239,68,68,0.12)' : '#fee2e2',
+                    color: item.value
+                      ? isDark ? '#34d399' : '#059669'
+                      : isDark ? '#f87171' : '#dc2626',
+                  }}
+                >
+                  {item.value ? <Eye size={13} /> : <EyeOff size={13} />}
+                  {item.value ? 'On' : 'Off'}
+                </button>
               </div>
-              <button
-                onClick={() => onToggleFailedIngredientsLogs && onToggleFailedIngredientsLogs(!showFailedIngredientsLogs)}
-                className="p-2 rounded-lg transition-fast"
-                style={{
-                  backgroundColor: showFailedIngredientsLogs ? COLORS.success.light : (isDark ? '#2d3148' : COLORS.gray[200]),
-                  color: showFailedIngredientsLogs ? COLORS.success.dark : (isDark ? '#6b7280' : COLORS.gray[600]),
-                }}
-              >
-                {showFailedIngredientsLogs ? <Eye size={18} /> : <EyeOff size={18} />}
-              </button>
-            </div>
-
-            {/* Macro Debug Log Toggle */}
-            <div
-              className="flex items-center justify-between p-4 rounded-lg mb-3 transition-fast"
-              style={{
-                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
-              }}
-            >
-              <div className="flex items-center">
-                <Target size={16} className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }} />
-                <label className="text-sm font-semibold" style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}>
-                  Macro Debug Log
-                </label>
-              </div>
-              <button
-                onClick={() => onToggleMacroDebugLog(!showMacroDebugLog)}
-                className="p-2 rounded-lg transition-fast"
-                style={{
-                  backgroundColor: showMacroDebugLog ? COLORS.success.light : (isDark ? '#2d3148' : COLORS.gray[200]),
-                  color: showMacroDebugLog ? COLORS.success.dark : (isDark ? '#6b7280' : COLORS.gray[600]),
-                }}
-              >
-                {showMacroDebugLog ? <Eye size={18} /> : <EyeOff size={18} />}
-              </button>
-            </div>
-
-            <p className="text-xs mt-3" style={{ color: isDark ? '#6b7280' : COLORS.gray[500] }}>
-              Toggle diagnostic logs on/off. These are useful for troubleshooting but can clutter the interface.
-            </p>
+            ))}
           </div>
 
-          {/* ─── About Section ─── */}
+          {/* ─── Profile & Data Section ─── */}
           <div>
             <div className="flex items-center mb-4">
-              <Info size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
+              <User size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
               <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
-                About
+                Profile & Data
               </h3>
             </div>
-            <div className="space-y-2 text-sm">
-              <p style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}>
-                <strong>App Name:</strong> {APP_CONFIG.name}
-              </p>
-              <p style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}>
-                <strong>Version:</strong> {APP_CONFIG.version}
-              </p>
-              <button
-                className="flex items-center text-indigo-600 hover:text-indigo-700"
-              >
-                View Privacy Policy
-                <ChevronRight size={16} className="ml-1" />
-              </button>
-            </div>
-          </div>
 
-          {/* ─── Danger Zone ─── */}
-          <div>
-            <div className="flex items-center mb-4">
-              <Trash2 size={20} className="mr-2" style={{ color: COLORS.error.main }} />
-              <h3 className="font-bold" style={{ color: COLORS.error.main }}>
-                Danger Zone
-              </h3>
-            </div>
+            <button
+              onClick={handleEditProfileClick}
+              className="w-full p-3 rounded-lg text-left font-medium transition-all mb-3"
+              style={{
+                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
+                color: isDark ? '#d1d5db' : COLORS.gray[700],
+                border: `1px solid ${isDark ? '#2d3148' : COLORS.gray[200]}`,
+              }}
+            >
+              Edit Profile
+            </button>
+
             <button
               onClick={handleClearAllData}
-              className="w-full p-4 border-2 rounded-lg transition-fast"
+              className="w-full p-3 rounded-lg text-left font-medium transition-all flex items-center gap-2"
               style={{
                 backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : '#fef2f2',
-                borderColor: isDark ? 'rgba(239,68,68,0.25)' : '#fecaca',
-                color: COLORS.error.main,
+                color: isDark ? '#f87171' : '#dc2626',
+                border: `1px solid ${isDark ? 'rgba(239,68,68,0.2)' : '#fecaca'}`,
               }}
             >
-              <Trash2 size={20} className="inline mr-2" />
+              <Trash2 size={16} />
               Clear All Data
             </button>
           </div>
-        </div>
 
-        {/* Footer Actions */}
-        <div
-          className="settings-panel-footer sticky bottom-0 border-t p-6 flex space-x-3"
-          style={{
-            borderColor: isDark ? '#2d3148' : COLORS.gray[200],
-            backgroundColor: isDark ? '#181a24' : '#ffffff',
-          }}
-        >
-          <button
-            onClick={onClose}
-            className="flex-1 py-3 rounded-lg font-semibold border transition-fast"
-            style={{
-              borderColor: isDark ? '#2d3148' : COLORS.gray[300],
-              color: isDark ? '#d1d5db' : COLORS.gray[700],
-              backgroundColor: isDark ? '#1e2130' : 'transparent',
-            }}
+          {/* ─── About Section ─── */}
+          <div
+            className="text-center pt-4"
+            style={{ borderTop: `1px solid ${isDark ? '#2d3148' : COLORS.gray[200]}` }}
           >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            className="flex-1 py-3 rounded-lg font-semibold text-white hover-lift transition-spring"
-            style={{ backgroundColor: COLORS.primary[500] }}
-          >
-            <Save size={18} className="inline mr-2" />
-            Save Changes
-          </button>
+            <p className="text-xs" style={{ color: isDark ? '#6b7280' : COLORS.gray[400] }}>
+              Cheffy v1.0.0
+            </p>
+          </div>
         </div>
       </div>
     </>
