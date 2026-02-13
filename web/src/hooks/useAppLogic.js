@@ -438,6 +438,7 @@ const useAppLogic = ({
                 showFailedIngredientsLogs: showFailedIngredientsLogs,
                 showMacroDebugLog: showMacroDebugLog,
                 selectedModel: selectedModel,
+                theme: localStorage.getItem('cheffy-theme') || 'dark',   // ← Added Theme Persistence
                 lastUpdated: new Date().toISOString()
             };
 
@@ -464,6 +465,14 @@ const useAppLogic = ({
                 setShowFailedIngredientsLogs(data.showFailedIngredientsLogs ?? true);
                 setShowMacroDebugLog(data.showMacroDebugLog ?? false);
                 if (data.selectedModel) setSelectedModel(data.selectedModel);
+                
+                // --- Theme Sync ---
+                if (data.theme) {
+                    localStorage.setItem('cheffy-theme', data.theme);
+                    // The ThemeProvider will pick this up on next mount, or manually set for instant feedback
+                    document.documentElement.setAttribute('data-theme', data.theme);
+                }
+
                 console.log("[SETTINGS] Settings loaded successfully");
             }
             
