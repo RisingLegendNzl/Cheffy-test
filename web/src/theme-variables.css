@@ -21,79 +21,54 @@
 /* ── 1. CUSTOM PROPERTIES ─────────────────────────────────────────────────── */
 
 [data-theme="dark"] {
-  /* Surfaces */
   --color-bg-primary:       #0f1117;
   --color-bg-secondary:     #181a24;
   --color-bg-card:          #1e2130;
   --color-bg-card-hover:    #252839;
   --color-bg-elevated:      #252839;
   --color-bg-input:         #1e2130;
-
-  /* Borders */
   --color-border:           #2d3148;
   --color-border-light:     #23263a;
   --color-border-focus:     #6366f1;
-
-  /* Text */
   --color-text-primary:     #f0f1f5;
   --color-text-secondary:   #9ca3b0;
   --color-text-tertiary:    #6b7280;
   --color-text-inverse:     #111827;
-
-  /* Brand */
   --color-brand-bg:         rgba(99, 102, 241, 0.12);
   --color-brand-border:     rgba(99, 102, 241, 0.25);
-
-  /* Overlays */
   --color-backdrop:         rgba(0, 0, 0, 0.65);
-
-  /* Shadows */
   --shadow-card:            0 2px 10px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(99,102,241,0.06);
   --shadow-card-hover:      0 6px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(99,102,241,0.1);
   --shadow-panel:           0 8px 32px rgba(0, 0, 0, 0.5);
-
   color-scheme: dark;
 }
 
 [data-theme="light"] {
-  /* Surfaces */
   --color-bg-primary:       #f9fafb;
   --color-bg-secondary:     #ffffff;
   --color-bg-card:          #ffffff;
   --color-bg-card-hover:    #f3f4f6;
   --color-bg-elevated:      #ffffff;
   --color-bg-input:         #ffffff;
-
-  /* Borders */
   --color-border:           #e5e7eb;
   --color-border-light:     #f3f4f6;
   --color-border-focus:     #6366f1;
-
-  /* Text */
   --color-text-primary:     #111827;
   --color-text-secondary:   #4b5563;
   --color-text-tertiary:    #9ca3af;
   --color-text-inverse:     #ffffff;
-
-  /* Brand */
   --color-brand-bg:         rgba(99, 102, 241, 0.06);
   --color-brand-border:     rgba(99, 102, 241, 0.15);
-
-  /* Overlays */
   --color-backdrop:         rgba(0, 0, 0, 0.4);
-
-  /* Shadows */
   --shadow-card:            0 2px 8px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(99,102,241,0.04);
   --shadow-card-hover:      0 4px 20px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(99,102,241,0.08);
   --shadow-panel:           0 8px 32px rgba(0, 0, 0, 0.12);
-
   color-scheme: light;
 }
 
 
 /* ── 2. GLOBAL SURFACE OVERRIDES ──────────────────────────────────────────── */
 
-/* Body / root background */
 [data-theme="dark"] body,
 [data-theme="dark"] #root {
   background-color: var(--color-bg-primary) !important;
@@ -107,18 +82,24 @@
 }
 
 
-/* ── 3. DARK MODE — COMPONENT SURFACE OVERRIDES ──────────────────────────── */
+/* ── 3. DARK MODE — TAILWIND CLASS SURFACE OVERRIDES ─────────────────────── */
 
-/* Generic white backgrounds → dark card */
-[data-theme="dark"] .bg-white {
+/*
+ * IMPORTANT: Wizard / Plan Setup form inputs are EXCLUDED from dark overrides.
+ * The .wizard-form-exclude marker class is placed on the wizard container
+ * and all children with bg-white inside it remain white.
+ */
+
+/* Generic white backgrounds → dark card (excluding wizard forms) */
+[data-theme="dark"] .bg-white:not(.wizard-form-exclude):not(.wizard-form-exclude *):not(.keep-light) {
   background-color: var(--color-bg-card) !important;
 }
 
-[data-theme="dark"] .bg-gray-50 {
+[data-theme="dark"] .bg-gray-50:not(.wizard-form-exclude):not(.wizard-form-exclude *):not(.keep-light) {
   background-color: var(--color-bg-secondary) !important;
 }
 
-[data-theme="dark"] .bg-gray-100 {
+[data-theme="dark"] .bg-gray-100:not(.wizard-form-exclude):not(.wizard-form-exclude *):not(.keep-light) {
   background-color: var(--color-bg-card) !important;
 }
 
@@ -129,23 +110,23 @@
 }
 
 /* Text overrides for Tailwind gray scale */
-[data-theme="dark"] .text-gray-900 {
+[data-theme="dark"] .text-gray-900:not(.wizard-form-exclude *):not(.keep-light *) {
   color: var(--color-text-primary) !important;
 }
 
-[data-theme="dark"] .text-gray-800 {
+[data-theme="dark"] .text-gray-800:not(.wizard-form-exclude *):not(.keep-light *) {
   color: #e5e7eb !important;
 }
 
-[data-theme="dark"] .text-gray-700 {
+[data-theme="dark"] .text-gray-700:not(.wizard-form-exclude *):not(.keep-light *) {
   color: #d1d5db !important;
 }
 
-[data-theme="dark"] .text-gray-600 {
+[data-theme="dark"] .text-gray-600:not(.wizard-form-exclude *):not(.keep-light *) {
   color: #9ca3af !important;
 }
 
-[data-theme="dark"] .text-gray-500 {
+[data-theme="dark"] .text-gray-500:not(.wizard-form-exclude *):not(.keep-light *) {
   color: var(--color-text-tertiary) !important;
 }
 
@@ -158,13 +139,19 @@
   background-color: var(--color-bg-card-hover) !important;
 }
 
-/* Form inputs & selects */
-[data-theme="dark"] select,
-[data-theme="dark"] input[type="text"],
-[data-theme="dark"] input[type="number"],
-[data-theme="dark"] input[type="email"],
-[data-theme="dark"] input[type="password"],
-[data-theme="dark"] textarea {
+/* Form inputs & selects — EXCLUDE wizard forms (issue #6) */
+[data-theme="dark"] select:not(.wizard-form-exclude select):not(.keep-light select),
+[data-theme="dark"] textarea:not(.wizard-form-exclude textarea):not(.keep-light textarea) {
+  background-color: var(--color-bg-input) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border) !important;
+}
+
+/* Only target inputs that are NOT inside wizard forms */
+[data-theme="dark"] input[type="text"]:not(.wizard-form-exclude input):not(.keep-light input),
+[data-theme="dark"] input[type="number"]:not(.wizard-form-exclude input):not(.keep-light input),
+[data-theme="dark"] input[type="email"]:not(.wizard-form-exclude input):not(.keep-light input),
+[data-theme="dark"] input[type="password"]:not(.wizard-form-exclude input):not(.keep-light input) {
   background-color: var(--color-bg-input) !important;
   color: var(--color-text-primary) !important;
   border-color: var(--color-border) !important;
@@ -201,24 +188,7 @@
 }
 
 
-/* ── 6. MEAL CARDS — DARK MODE ───────────────────────────────────────────── */
-
-[data-theme="dark"] .meal-card-surface {
-  background-color: var(--color-bg-card) !important;
-  border-color: var(--color-border) !important;
-}
-
-
-/* ── 7. BOTTOM NAV — DARK MODE ───────────────────────────────────────────── */
-
-[data-theme="dark"] nav[class*="bottom"],
-[data-theme="dark"] .bottom-nav-surface {
-  background-color: rgba(24, 26, 36, 0.95) !important;
-  border-top-color: var(--color-border) !important;
-}
-
-
-/* ── 8. CONCENTRIC RINGS CARD — DARK MODE ────────────────────────────────── */
+/* ── 6. CONCENTRIC RINGS CARD — DARK MODE ────────────────────────────────── */
 
 [data-theme="dark"] .concept-b-rings-card {
   background: var(--color-bg-card) !important;
@@ -247,49 +217,7 @@
 }
 
 
-/* ── 9. PROFILE TAB / WIZARD — DARK MODE ─────────────────────────────────── */
-
-[data-theme="dark"] .profile-card-surface {
-  background-color: var(--color-bg-card) !important;
-  border-color: var(--color-border) !important;
-}
-
-
-/* ── 10. DROPDOWN / MENU — DARK MODE ─────────────────────────────────────── */
-
-[data-theme="dark"] .dropdown-menu-surface {
-  background-color: var(--color-bg-card) !important;
-  border-color: var(--color-border) !important;
-  box-shadow: var(--shadow-panel) !important;
-}
-
-
-/* ── 11. TOAST — DARK MODE ───────────────────────────────────────────────── */
-
-[data-theme="dark"] .toast-surface {
-  background-color: var(--color-bg-elevated) !important;
-  border-color: var(--color-border) !important;
-  color: var(--color-text-primary) !important;
-}
-
-
-/* ── 12. MODALS — DARK MODE ──────────────────────────────────────────────── */
-
-[data-theme="dark"] .modal-surface {
-  background-color: var(--color-bg-card) !important;
-  border-color: var(--color-border) !important;
-}
-
-
-/* ── 13. SHOPPING LIST — DARK MODE ───────────────────────────────────────── */
-
-[data-theme="dark"] .shopping-list-surface {
-  background-color: var(--color-bg-card) !important;
-  border-color: var(--color-border) !important;
-}
-
-
-/* ── 14. RED / WARNING BACKGROUNDS — DARK MODE ───────────────────────────── */
+/* ── 7. SEMANTIC BG COLOURS — DARK MODE ──────────────────────────────────── */
 
 [data-theme="dark"] .bg-red-50 {
   background-color: rgba(239, 68, 68, 0.1) !important;
@@ -315,15 +243,16 @@
   background-color: rgba(168, 85, 247, 0.1) !important;
 }
 
-
-/* ── 15. HOVER RED — DARK MODE ───────────────────────────────────────────── */
-
 [data-theme="dark"] .hover\:bg-red-50:hover {
   background-color: rgba(239, 68, 68, 0.15) !important;
 }
 
+[data-theme="dark"] .bg-green-600 {
+  /* Keep green bg for "Eaten" button */
+}
 
-/* ── 16. SCROLLBAR — DARK MODE ───────────────────────────────────────────── */
+
+/* ── 8. SCROLLBAR — DARK MODE ────────────────────────────────────────────── */
 
 [data-theme="dark"] ::-webkit-scrollbar {
   width: 8px;
@@ -343,7 +272,38 @@
 }
 
 
-/* ── 17. TRANSITION — Smooth theme switch ────────────────────────────────── */
+/* ── 9. PROFILE CARD STRIPE — DARK MODE (Issue #1) ──────────────────────── */
+/* Hide the purple gradient stripe on top of User Profile card in dark mode */
+[data-theme="dark"] .profile-card-stripe {
+  display: none !important;
+}
+
+
+/* ── 10. TARGETS CARD "Your Daily Nutritional Blueprint" — DARK MODE (Issue #5) */
+/* The card container and inner panels need dark treatment */
+[data-theme="dark"] .targets-card-surface {
+  background-color: var(--color-bg-card) !important;
+  border-color: var(--color-border) !important;
+}
+
+/* The left side with the calorie ring */
+[data-theme="dark"] .targets-card-ring-panel {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06)) !important;
+  border-right-color: var(--color-border) !important;
+}
+
+/* The right side macro breakdown */
+[data-theme="dark"] .targets-card-macro-panel {
+  background-color: var(--color-bg-card) !important;
+}
+
+/* Footer info panel */
+[data-theme="dark"] .targets-card-footer {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06)) !important;
+}
+
+
+/* ── 11. TRANSITION — Smooth theme switch ────────────────────────────────── */
 
 html[data-theme] body,
 html[data-theme] #root {
