@@ -400,6 +400,7 @@ const App = () => {
                     handleSavePlan={logic.handleSavePlan}
                     handleLoadPlan={logic.handleLoadPlan}
                     handleDeletePlan={logic.handleDeletePlan}
+                     handleRenamePlan={logic.handleRenamePlan}
                     savingPlan={logic.savingPlan}
                     loadingPlan={logic.loadingPlan}
 
