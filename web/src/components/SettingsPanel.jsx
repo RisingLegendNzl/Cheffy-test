@@ -15,13 +15,18 @@ import {
   Terminal,
   ListX,
   Target,
-  Cpu
+  Cpu,
+  Sun,
+  Moon,
+  Palette
 } from 'lucide-react';
 import { COLORS, Z_INDEX, SHADOWS } from '../constants';
 import { APP_CONFIG } from '../constants';
+import { useTheme } from '../contexts/ThemeContext';
 
 /**
- * Settings panel/modal for app preferences
+ * Settings panel/modal for app preferences.
+ * Now includes Appearance section for Dark/Light mode toggle.
  */
 const SettingsPanel = ({ 
   isOpen, 
@@ -29,19 +34,18 @@ const SettingsPanel = ({
   currentStore = 'Woolworths',
   onStoreChange,
   onClearData,
-  onEditProfile, // Prop is still received but not used
+  onEditProfile,
   showOrchestratorLogs = true,
   onToggleOrchestratorLogs,
   showFailedIngredientsLogs = true,
   onToggleFailedIngredientsLogs,
-  // NEW: Macro Debug Log props with defensive defaults
   showMacroDebugLog = false,
   onToggleMacroDebugLog = () => {},
-  // AI Model selection
   selectedModel = 'gpt-5.1',
   onModelChange = () => {},
 }) => {
   const [selectedStore, setSelectedStore] = useState(currentStore);
+  const { theme, setTheme, isDark } = useTheme();
 
   if (!isOpen) return null;
 
@@ -49,12 +53,9 @@ const SettingsPanel = ({
     if (onStoreChange) {
       onStoreChange(selectedStore);
     }
-    // Model change is already live (onChange fires immediately),
-    // but we call onClose to dismiss the panel.
     onClose();
   };
 
-  // This function is no longer called from the UI, but kept to avoid breaking prop chain
   const handleEditProfileClick = () => {
     if (onEditProfile) {
       onEditProfile();
@@ -62,7 +63,6 @@ const SettingsPanel = ({
   };
 
   const handleClearAllData = () => {
-    // Replaced window.confirm with a simple console log as per instructions
     console.log('Attempting to clear all data. (Confirmation skipped)');
     if (onClearData) {
       onClearData();
@@ -81,8 +81,11 @@ const SettingsPanel = ({
 
       {/* Panel */}
       <div
-        className="fixed top-0 right-0 bottom-0 w-full md:w-96 bg-white shadow-2xl overflow-y-auto animate-slideLeft"
-        style={{ zIndex: Z_INDEX.modal }}
+        className="settings-panel-body fixed top-0 right-0 bottom-0 w-full md:w-96 shadow-2xl overflow-y-auto animate-slideLeft"
+        style={{
+          zIndex: Z_INDEX.modal,
+          backgroundColor: isDark ? '#181a24' : '#ffffff',
+        }}
       >
         {/* Header */}
         <div
@@ -100,21 +103,70 @@ const SettingsPanel = ({
 
         {/* Content */}
         <div className="p-6 space-y-6">
-          
-          {/* Profile Section Removed */}
 
-          {/* Preferences Section */}
+          {/* ─── Appearance / Theme Section ─── */}
+          <div>
+            <div className="flex items-center mb-4">
+              <Palette size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
+              <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
+                Appearance
+              </h3>
+            </div>
+
+            <div
+              className="flex rounded-xl overflow-hidden"
+              style={{
+                border: `2px solid ${isDark ? '#2d3148' : COLORS.gray[200]}`,
+                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
+              }}
+            >
+              {/* Light Mode Button */}
+              <button
+                onClick={() => setTheme('light')}
+                className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 font-semibold text-sm transition-all duration-200"
+                style={{
+                  backgroundColor: !isDark ? COLORS.primary[500] : 'transparent',
+                  color: !isDark ? '#ffffff' : (isDark ? '#9ca3b0' : COLORS.gray[500]),
+                }}
+              >
+                <Sun size={16} />
+                Light
+              </button>
+
+              {/* Dark Mode Button */}
+              <button
+                onClick={() => setTheme('dark')}
+                className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 font-semibold text-sm transition-all duration-200"
+                style={{
+                  backgroundColor: isDark ? COLORS.primary[500] : 'transparent',
+                  color: isDark ? '#ffffff' : COLORS.gray[500],
+                }}
+              >
+                <Moon size={16} />
+                Dark
+              </button>
+            </div>
+
+            <p className="text-xs mt-3" style={{ color: isDark ? '#6b7280' : COLORS.gray[500] }}>
+              Your preference is saved automatically and persists across sessions.
+            </p>
+          </div>
+
+          {/* ─── Preferences Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Store size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
-              <h3 className="font-bold" style={{ color: COLORS.gray[900] }}>
+              <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
                 Preferences
               </h3>
             </div>
 
             {/* Default Store */}
             <div className="mb-4">
-              <label className="block text-sm font-semibold mb-2" style={{ color: COLORS.gray[700] }}>
+              <label
+                className="block text-sm font-semibold mb-2"
+                style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
+              >
                 Default Store
               </label>
               <select
@@ -122,8 +174,9 @@ const SettingsPanel = ({
                 onChange={(e) => setSelectedStore(e.target.value)}
                 className="w-full p-3 border rounded-lg"
                 style={{
-                  borderColor: COLORS.gray[300],
-                  color: COLORS.gray[900],
+                  borderColor: isDark ? '#2d3148' : COLORS.gray[300],
+                  color: isDark ? '#f0f1f5' : COLORS.gray[900],
+                  backgroundColor: isDark ? '#1e2130' : '#ffffff',
                 }}
               >
                 <option value="Woolworths">Woolworths</option>
@@ -133,14 +186,18 @@ const SettingsPanel = ({
 
             {/* Units */}
             <div className="mb-4">
-              <label className="block text-sm font-semibold mb-2" style={{ color: COLORS.gray[700] }}>
+              <label
+                className="block text-sm font-semibold mb-2"
+                style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
+              >
                 Measurement Units
               </label>
               <select
                 className="w-full p-3 border rounded-lg"
                 style={{
-                  borderColor: COLORS.gray[300],
-                  color: COLORS.gray[900],
+                  borderColor: isDark ? '#2d3148' : COLORS.gray[300],
+                  color: isDark ? '#f0f1f5' : COLORS.gray[900],
+                  backgroundColor: isDark ? '#1e2130' : '#ffffff',
                 }}
               >
                 <option value="metric">Metric (kg, g)</option>
@@ -149,17 +206,20 @@ const SettingsPanel = ({
             </div>
           </div>
 
-          {/* AI Model Section */}
+          {/* ─── AI Model Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Cpu size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
-              <h3 className="font-bold" style={{ color: COLORS.gray[900] }}>
+              <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
                 AI Model
               </h3>
             </div>
 
             <div className="mb-4">
-              <label className="block text-sm font-semibold mb-2" style={{ color: COLORS.gray[700] }}>
+              <label
+                className="block text-sm font-semibold mb-2"
+                style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
+              >
                 Generation Model
               </label>
               <select
@@ -167,8 +227,9 @@ const SettingsPanel = ({
                 onChange={(e) => onModelChange(e.target.value)}
                 className="w-full p-3 border rounded-lg"
                 style={{
-                  borderColor: COLORS.gray[300],
-                  color: COLORS.gray[900],
+                  borderColor: isDark ? '#2d3148' : COLORS.gray[300],
+                  color: isDark ? '#f0f1f5' : COLORS.gray[900],
+                  backgroundColor: isDark ? '#1e2130' : '#ffffff',
                 }}
               >
                 <option value="gpt-5.1">GPT-5.1 (Primary — Recommended)</option>
@@ -176,29 +237,39 @@ const SettingsPanel = ({
               </select>
             </div>
 
-            <div className="flex items-center p-3 rounded-lg" style={{ backgroundColor: COLORS.primary[50] }}>
+            <div
+              className="flex items-center p-3 rounded-lg"
+              style={{
+                backgroundColor: isDark ? 'rgba(99,102,241,0.1)' : COLORS.primary[50],
+              }}
+            >
               <Info size={14} className="mr-2 flex-shrink-0" style={{ color: COLORS.primary[600] }} />
-              <p className="text-xs" style={{ color: COLORS.primary[700] }}>
+              <p className="text-xs" style={{ color: isDark ? '#a5b4fc' : COLORS.primary[700] }}>
                 <strong>Current:</strong> {selectedModel === 'gpt-5.1' ? 'GPT-5.1' : 'Gemini 2.0 Flash'}.
                 {' '}The selected model is used for meal plan generation. If it fails, the other model is used as a fallback automatically.
               </p>
             </div>
           </div>
 
-          {/* Diagnostics Section */}
+          {/* ─── Diagnostics Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Terminal size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
-              <h3 className="font-bold" style={{ color: COLORS.gray[900] }}>
+              <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
                 Diagnostics
               </h3>
             </div>
 
-            {/* Show Orchestrator Logs Toggle */}
-            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg mb-3 hover:bg-gray-100 transition-fast">
+            {/* Orchestrator Logs Toggle */}
+            <div
+              className="flex items-center justify-between p-4 rounded-lg mb-3 transition-fast"
+              style={{
+                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
+              }}
+            >
               <div className="flex items-center">
-                <Terminal size={16} className="mr-2" style={{ color: COLORS.gray[600] }} />
-                <label className="text-sm font-semibold" style={{ color: COLORS.gray[700] }}>
+                <Terminal size={16} className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }} />
+                <label className="text-sm font-semibold" style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}>
                   Orchestrator Logs
                 </label>
               </div>
@@ -206,19 +277,24 @@ const SettingsPanel = ({
                 onClick={() => onToggleOrchestratorLogs && onToggleOrchestratorLogs(!showOrchestratorLogs)}
                 className="p-2 rounded-lg transition-fast"
                 style={{
-                  backgroundColor: showOrchestratorLogs ? COLORS.success.light : COLORS.gray[200],
-                  color: showOrchestratorLogs ? COLORS.success.dark : COLORS.gray[600],
+                  backgroundColor: showOrchestratorLogs ? COLORS.success.light : (isDark ? '#2d3148' : COLORS.gray[200]),
+                  color: showOrchestratorLogs ? COLORS.success.dark : (isDark ? '#6b7280' : COLORS.gray[600]),
                 }}
               >
                 {showOrchestratorLogs ? <Eye size={18} /> : <EyeOff size={18} />}
               </button>
             </div>
 
-            {/* Show Failed Ingredients Logs Toggle */}
-            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg mb-3 hover:bg-gray-100 transition-fast">
+            {/* Failed Ingredients Logs Toggle */}
+            <div
+              className="flex items-center justify-between p-4 rounded-lg mb-3 transition-fast"
+              style={{
+                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
+              }}
+            >
               <div className="flex items-center">
-                <ListX size={16} className="mr-2" style={{ color: COLORS.gray[600] }} />
-                <label className="text-sm font-semibold" style={{ color: COLORS.gray[700] }}>
+                <ListX size={16} className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }} />
+                <label className="text-sm font-semibold" style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}>
                   Failed Ingredients Log
                 </label>
               </div>
@@ -226,52 +302,57 @@ const SettingsPanel = ({
                 onClick={() => onToggleFailedIngredientsLogs && onToggleFailedIngredientsLogs(!showFailedIngredientsLogs)}
                 className="p-2 rounded-lg transition-fast"
                 style={{
-                  backgroundColor: showFailedIngredientsLogs ? COLORS.success.light : COLORS.gray[200],
-                  color: showFailedIngredientsLogs ? COLORS.success.dark : COLORS.gray[600],
+                  backgroundColor: showFailedIngredientsLogs ? COLORS.success.light : (isDark ? '#2d3148' : COLORS.gray[200]),
+                  color: showFailedIngredientsLogs ? COLORS.success.dark : (isDark ? '#6b7280' : COLORS.gray[600]),
                 }}
               >
                 {showFailedIngredientsLogs ? <Eye size={18} /> : <EyeOff size={18} />}
               </button>
             </div>
 
-            {/* NEW: Show Macro Debug Log Toggle */}
-            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg mb-3 hover:bg-gray-100 transition-fast">
+            {/* Macro Debug Log Toggle */}
+            <div
+              className="flex items-center justify-between p-4 rounded-lg mb-3 transition-fast"
+              style={{
+                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
+              }}
+            >
               <div className="flex items-center">
-                <Target size={16} className="mr-2" style={{ color: COLORS.gray[600] }} />
-                <label className="text-sm font-semibold" style={{ color: COLORS.gray[700] }}>
+                <Target size={16} className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }} />
+                <label className="text-sm font-semibold" style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}>
                   Macro Debug Log
                 </label>
               </div>
               <button
-                onClick={() => onToggleMacroDebugLog && onToggleMacroDebugLog(!showMacroDebugLog)}
+                onClick={() => onToggleMacroDebugLog(!showMacroDebugLog)}
                 className="p-2 rounded-lg transition-fast"
                 style={{
-                  backgroundColor: showMacroDebugLog ? COLORS.success.light : COLORS.gray[200],
-                  color: showMacroDebugLog ? COLORS.success.dark : COLORS.gray[600],
+                  backgroundColor: showMacroDebugLog ? COLORS.success.light : (isDark ? '#2d3148' : COLORS.gray[200]),
+                  color: showMacroDebugLog ? COLORS.success.dark : (isDark ? '#6b7280' : COLORS.gray[600]),
                 }}
               >
                 {showMacroDebugLog ? <Eye size={18} /> : <EyeOff size={18} />}
               </button>
             </div>
 
-            <p className="text-xs mt-3" style={{ color: COLORS.gray[500] }}>
+            <p className="text-xs mt-3" style={{ color: isDark ? '#6b7280' : COLORS.gray[500] }}>
               Toggle diagnostic logs on/off. These are useful for troubleshooting but can clutter the interface.
             </p>
           </div>
 
-          {/* App Info */}
+          {/* ─── About Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Info size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
-              <h3 className="font-bold" style={{ color: COLORS.gray[900] }}>
+              <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
                 About
               </h3>
             </div>
             <div className="space-y-2 text-sm">
-              <p style={{ color: COLORS.gray[600] }}>
+              <p style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}>
                 <strong>App Name:</strong> {APP_CONFIG.name}
               </p>
-              <p style={{ color: COLORS.gray[600] }}>
+              <p style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}>
                 <strong>Version:</strong> {APP_CONFIG.version}
               </p>
               <button
@@ -283,7 +364,7 @@ const SettingsPanel = ({
             </div>
           </div>
 
-          {/* Danger Zone */}
+          {/* ─── Danger Zone ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Trash2 size={20} className="mr-2" style={{ color: COLORS.error.main }} />
@@ -293,8 +374,12 @@ const SettingsPanel = ({
             </div>
             <button
               onClick={handleClearAllData}
-              className="w-full p-4 bg-red-50 border-2 border-red-200 rounded-lg hover:bg-red-100 transition-fast"
-              style={{ color: COLORS.error.main }}
+              className="w-full p-4 border-2 rounded-lg transition-fast"
+              style={{
+                backgroundColor: isDark ? 'rgba(239,68,68,0.08)' : '#fef2f2',
+                borderColor: isDark ? 'rgba(239,68,68,0.25)' : '#fecaca',
+                color: COLORS.error.main,
+              }}
             >
               <Trash2 size={20} className="inline mr-2" />
               Clear All Data
@@ -304,15 +389,19 @@ const SettingsPanel = ({
 
         {/* Footer Actions */}
         <div
-          className="sticky bottom-0 bg-white border-t p-6 flex space-x-3"
-          style={{ borderColor: COLORS.gray[200] }}
+          className="settings-panel-footer sticky bottom-0 border-t p-6 flex space-x-3"
+          style={{
+            borderColor: isDark ? '#2d3148' : COLORS.gray[200],
+            backgroundColor: isDark ? '#181a24' : '#ffffff',
+          }}
         >
           <button
             onClick={onClose}
             className="flex-1 py-3 rounded-lg font-semibold border transition-fast"
             style={{
-              borderColor: COLORS.gray[300],
-              color: COLORS.gray[700],
+              borderColor: isDark ? '#2d3148' : COLORS.gray[300],
+              color: isDark ? '#d1d5db' : COLORS.gray[700],
+              backgroundColor: isDark ? '#1e2130' : 'transparent',
             }}
           >
             Cancel
@@ -332,4 +421,3 @@ const SettingsPanel = ({
 };
 
 export default SettingsPanel;
-
