@@ -602,7 +602,8 @@ const handleEditProfileClean = useCallback(() => {
                     <div 
                         className="p-2 text-xs text-center cursor-pointer"
                         style={{
-                            backgroundColor: isDark ? '#181a24' : '#1f2937',\n                            color: '#ffffff',
+                            backgroundColor: isDark ? '#181a24' : '#1f2937',
+                            color: '#ffffff',
                         }}
                         onClick={() => { setShowOrchestratorLogs(true); setShowFailedIngredientsLogs(true); setShowMacroDebugLog(true); }}
                     >
