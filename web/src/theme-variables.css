@@ -191,7 +191,7 @@
 [data-theme="dark"] header {
   background-color: rgba(15, 17, 23, 0.92) !important;
   backdrop-filter: blur(20px) saturate(180%);
-  border-bottom-color: var(--color-border) !important;
+  border-bottom: none !important;
 }
 
 [data-theme="dark"] header h1 {
