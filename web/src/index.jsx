@@ -1,20 +1,21 @@
 // web/src/index.jsx
+import './theme-variables.css';          // Theme custom properties (must be first)
 import './animations.css';
 import './dashboard-enhancements.css';
 import './concept-b-rings.css';
+import './mpd-theme-override.css';       // Nutrition card light-mode overrides
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
-
-// Note: We are not importing a global CSS file
-// Styling is handled by Tailwind CDN linked in index.html
+import { ThemeProvider } from './contexts/ThemeContext';
 
 const rootElement = document.getElementById('root');
 const root = ReactDOM.createRoot(rootElement);
 
-// [FIX] Removed React.StrictMode
-// This was causing the SSE fetch stream to be double-invoked in development,
-// leading to a "Body is disturbed or locked" error.
+// ThemeProvider wraps the entire app so every component can
+// access theme state via the useTheme() hook.
 root.render(
-    <App />
+    <ThemeProvider>
+        <App />
+    </ThemeProvider>
 );
