@@ -1,30 +1,24 @@
 /* =============================================================================
    cheffy-sticky-tabs-enhancements.css
-   
-   Enhanced styles for the WELDED SEGMENTED StickyTabs component (Concept 2).
-   
-   CHANGES FROM PREVIOUS VERSION:
-   1. Updated class names to match welded-tabs-* naming
-   2. Segmented control track and pill optimizations
-   3. Focus-visible styles updated for rounded pill buttons
-   4. iOS flicker fixes for the welded container
-   
+
+   Styles for the WELDED SEGMENTED TABS embedded inside Header.jsx (Concept 2).
+
+   The tabs now live inside the <header> element itself, so all the old
+   .sticky-tabs-container positioning hacks are gone. What remains:
+   - GPU-accelerated pill and button transitions
+   - Focus-visible accessibility styles
+   - Responsive adjustments for the segmented track
+   - Backdrop-filter fallbacks
+   - iOS flicker prevention
+   - Reduced-motion and print overrides
+   - Scrollbar styling
+
    Import in index.jsx AFTER cheffy-patches.css:
      import './cheffy-sticky-tabs-enhancements.css';
    ============================================================================= */
 
-/* ── WELDED TABS CONTAINER OPTIMIZATION ────────────────────────────────── */
-
-.welded-tabs-container {
-  contain: layout style paint;
-  will-change: top, opacity;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
 /* ── PERFORMANCE: GPU ACCELERATION ──────────────────────────────────────── */
 
-.welded-tabs-container,
 .welded-tabs-pill,
 .welded-tabs-button {
   transform: translateZ(0);
@@ -32,7 +26,12 @@
   -webkit-backface-visibility: hidden;
 }
 
-/* ── PREVENT SCROLL JANK ────────────────────────────────────────────────── */
+.welded-tabs-area {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── PREVENT HORIZONTAL SCROLL ──────────────────────────────────────────── */
 
 body {
   overflow-x: hidden;
@@ -46,7 +45,7 @@ body {
   border-radius: 11px;
 }
 
-/* ── SEGMENTED TRACK: DARK MODE GLOW ────────────────────────────────────── */
+/* ── DARK MODE: PILL GLOW ───────────────────────────────────────────────── */
 
 [data-theme="dark"] .welded-tabs-pill {
   box-shadow:
@@ -61,39 +60,22 @@ body {
     0 0.5px 1px rgba(0,0,0,0.06);
 }
 
-/* ── RESPONSIVE ADJUSTMENTS ─────────────────────────────────────────────── */
+/* ── RESPONSIVE ─────────────────────────────────────────────────────────── */
 
 @media (max-width: 480px) {
-  .welded-tabs-container {
-    padding: 0 2px;
-  }
-  /* Tighten gap between icon and label on very small screens */
   .welded-tabs-button {
     gap: 5px !important;
     font-size: 12px !important;
   }
 }
 
-@media (min-width: 481px) and (max-width: 768px) {
-  .welded-tabs-container {
-    padding: 0 4px;
-  }
-}
-
 /* ── BACKDROP-FILTER FALLBACK ───────────────────────────────────────────── */
 
-@supports (backdrop-filter: blur(24px)) {
-  .welded-tabs-container {
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-  }
-}
-
-@supports not (backdrop-filter: blur(24px)) {
-  [data-theme="dark"] .welded-tabs-container {
+@supports not (backdrop-filter: blur(20px)) {
+  [data-theme="dark"] header {
     background-color: rgba(15, 17, 23, 1) !important;
   }
-  [data-theme="light"] .welded-tabs-container {
+  [data-theme="light"] header {
     background-color: rgba(255, 255, 255, 1) !important;
   }
 }
@@ -101,7 +83,7 @@ body {
 /* ── iOS FLICKER FIX ────────────────────────────────────────────────────── */
 
 @supports (-webkit-touch-callout: none) {
-  .welded-tabs-container {
+  .welded-tabs-area {
     -webkit-transform: translateZ(0);
     -webkit-backface-visibility: hidden;
     -webkit-perspective: 1000;
@@ -111,9 +93,9 @@ body {
 /* ── REDUCED MOTION ─────────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
-  .welded-tabs-container,
   .welded-tabs-pill,
-  .welded-tabs-button {
+  .welded-tabs-button,
+  .welded-tabs-area {
     transition-duration: 0.01ms !important;
   }
 }
@@ -121,12 +103,12 @@ body {
 /* ── PRINT: HIDE TABS ───────────────────────────────────────────────────── */
 
 @media print {
-  .welded-tabs-container {
+  .welded-tabs-area {
     display: none !important;
   }
 }
 
-/* ── SCROLLBAR STYLING (unchanged from previous) ────────────────────────── */
+/* ── SCROLLBAR STYLING ──────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar {
   width: 8px;
