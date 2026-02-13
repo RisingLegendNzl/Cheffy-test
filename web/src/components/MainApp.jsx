@@ -464,20 +464,23 @@ const MainApp = ({
             {showSavePlanPrompt && (
                 <>
                     <div
-                        className="fixed inset-0 bg-black bg-opacity-50 animate-fadeIn"
-                        style={{ zIndex: Z_INDEX.modalBackdrop }}
+                        className="fixed inset-0 animate-fadeIn"
+                        style={{
+                            zIndex: Z_INDEX.modalBackdrop,
+                            backgroundColor: isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.5)',
+                        }}
                         onClick={() => setShowSavePlanPrompt(false)}
                     />
                     <div
-                        className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-2xl p-6 w-80 shadow-2xl"
-                        style={{ 
+                        className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 rounded-2xl p-6 w-80 shadow-2xl"
+                        style={{
                             zIndex: Z_INDEX.modal,
-                            // Ensure background changes for dark mode if CSS overrides apply, or use inline fallback
-                            backgroundColor: isDark ? '#1e2130' : '#ffffff' 
+                            backgroundColor: isDark ? '#1e2130' : '#ffffff',
+                            border: isDark ? '1px solid #2d3148' : undefined,
                         }}
                     >
-                        <h3 
-                            className="text-lg font-bold mb-4" 
+                        <h3
+                            className="text-lg font-bold mb-4"
                             style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}
                         >
                             Save Current Plan
@@ -488,19 +491,20 @@ const MainApp = ({
                             onChange={(e) => setSavePlanName(e.target.value)}
                             placeholder="Plan name (optional)"
                             className="w-full px-4 py-2 border rounded-lg mb-4"
-                            style={{ 
-                                borderColor: COLORS.gray[300],
-                                backgroundColor: isDark ? '#2d3348' : '#fff',
-                                color: isDark ? '#fff' : '#000'
+                            style={{
+                                borderColor: isDark ? '#2d3148' : COLORS.gray[300],
+                                backgroundColor: isDark ? '#252839' : '#ffffff',
+                                color: isDark ? '#f0f1f5' : COLORS.gray[900],
                             }}
                         />
                         <div className="flex gap-3">
                             <button
                                 onClick={() => setShowSavePlanPrompt(false)}
                                 className="flex-1 px-4 py-2 rounded-lg border"
-                                style={{ 
-                                    borderColor: COLORS.gray[300], 
-                                    color: isDark ? '#9ca3af' : COLORS.gray[600] 
+                                style={{
+                                    borderColor: isDark ? '#2d3148' : COLORS.gray[300],
+                                    color: isDark ? '#d1d5db' : COLORS.gray[600],
+                                    backgroundColor: isDark ? '#1e2130' : 'transparent',
                                 }}
                             >
                                 Cancel
@@ -545,7 +549,14 @@ const MainApp = ({
                     <MacroDebugLogViewer macroDebug={macroDebug} onDownload={handleDownloadMacroDebugLogs} />
                 )}
                 {!showOrchestratorLogs && !showFailedIngredientsLogs && !showMacroDebugLog && (
-                    <div className="bg-gray-800 text-white p-2 text-xs text-center cursor-pointer hover:bg-gray-700" onClick={() => { setShowOrchestratorLogs(true); setShowFailedIngredientsLogs(true); setShowMacroDebugLog(true); }}>
+                    <div 
+                        className="p-2 text-xs text-center cursor-pointer"
+                        style={{
+                            backgroundColor: isDark ? '#181a24' : '#1f2937',
+                            color: '#ffffff',
+                        }}
+                        onClick={() => { setShowOrchestratorLogs(true); setShowFailedIngredientsLogs(true); setShowMacroDebugLog(true); }}
+                    >
                         📋 Show Logs
                     </div>
                 )}
