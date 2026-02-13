@@ -215,6 +215,13 @@ const MainApp = ({
         setContentView(newTab);
     };
     
+    // Wrapped handler for plan generation + redirect
+    const handleGenerateAndRedirect = async (e) => {
+        await handleGeneratePlan(e);
+        setContentView('profile');
+        setIsMenuOpen(false);
+    };
+
     // Local state for SavedPlansModal
     const [showSavedPlansModal, setShowSavedPlansModal] = useState(false);
     const [savePlanName, setSavePlanName] = useState('');
@@ -404,9 +411,7 @@ const handleEditProfileClean = useCallback(() => {
                                     formData={formData}
                                     onChange={handleChange}
                                     onSliderChange={handleSliderChange}
-                                    onSubmit={handleGeneratePlan}
-                                    onLoadProfile={() => handleLoadProfile(false)}
-                                    onSaveProfile={() => handleSaveProfile(false)}
+                                    onSubmit={handleGenerateAndRedirect}
                                     loading={loading}
                                     isAuthReady={isAuthReady}
                                     userId={userId}
@@ -414,6 +419,7 @@ const handleEditProfileClean = useCallback(() => {
                                     firebaseInitializationError={firebaseInitializationError}
                                     onClose={() => setIsMenuOpen(false)}
                                     isMobile={isMobile}
+                                    measurementUnits={formData.measurementUnits || 'metric'}
                                 />
                             </div>
     
@@ -484,11 +490,6 @@ const handleEditProfileClean = useCallback(() => {
             <SettingsPanel
                 isOpen={isSettingsOpen}
                 onClose={() => setIsSettingsOpen(false)}
-                currentStore={formData.store}
-                onStoreChange={(store) => {
-                    handleChange({ target: { name: 'store', value: store } });
-                    showToast(`Store changed to ${store}`, 'success');
-                }}
                 onClearData={() => {
                     showToast('All data cleared', 'success');
                 }}
@@ -501,6 +502,11 @@ const handleEditProfileClean = useCallback(() => {
                 onToggleMacroDebugLog={setShowMacroDebugLog}
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
+                measurementUnits={formData.measurementUnits || 'metric'}
+                onMeasurementUnitsChange={(units) => {
+                    handleChange({ target: { name: 'measurementUnits', value: units } });
+                    showToast(`Units changed to ${units === 'imperial' ? 'Imperial (lb, ft)' : 'Metric (kg, cm)'}`, 'success');
+                }}
             />
 
             {/* Save Plan Prompt */}
@@ -596,8 +602,7 @@ const handleEditProfileClean = useCallback(() => {
                     <div 
                         className="p-2 text-xs text-center cursor-pointer"
                         style={{
-                            backgroundColor: isDark ? '#181a24' : '#1f2937',
-                            color: '#ffffff',
+                            backgroundColor: isDark ? '#181a24' : '#1f2937',\n                            color: '#ffffff',
                         }}
                         onClick={() => { setShowOrchestratorLogs(true); setShowFailedIngredientsLogs(true); setShowMacroDebugLog(true); }}
                     >
