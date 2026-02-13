@@ -427,7 +427,19 @@ const handleEditProfileClean = useCallback(() => {
                                     <PlanCalculationErrorPanel />
                                 ) : (
                                     <div className="p-0">
-                                        
+                                        {loading && (
+                                            <div className="p-4 md:p-6">
+                                                <StoryModeGeneration
+                                                    activeStepKey={generationStepKey}
+                                                    errorMsg={error}
+                                                    latestLog={latestLog}
+                                                    formData={formData}
+                                                    nutritionalTargets={nutritionalTargets}
+                                                    results={results}
+                                                    mealPlan={mealPlan}
+                                                />
+                                            </div>
+                                        )}
                                 
                                         {contentView === 'profile' && (
                                             <ProfileTab 
@@ -610,4 +622,3 @@ const handleEditProfileClean = useCallback(() => {
 };
 
 export default MainApp;
-
