@@ -237,6 +237,42 @@ export const deletePlan = async ({ userId, db, planId }) => {
 };
 
 /**
+ * Rename an existing saved plan.
+ * Only updates the `name` field — all other data and the planId remain unchanged.
+ */
+export const renamePlan = async ({ userId, db, planId, newName }) => {
+    if (!userId || !db || !planId) {
+        throw new Error('Missing required parameters');
+    }
+
+    if (!newName || !newName.trim()) {
+        throw new Error('Plan name cannot be empty');
+    }
+
+    // Validate with backend
+    const isValid = await validateWithBackend('rename', userId, { planId, planName: newName.trim() });
+    if (!isValid) {
+        throw new Error('Plan rename validation failed');
+    }
+
+    // Load current plan doc, update name only
+    const planRef = doc(db, 'plans', userId, 'saved_plans', planId);
+    const planSnap = await getDoc(planRef);
+
+    if (!planSnap.exists()) {
+        throw new Error('Plan not found');
+    }
+
+    const existing = planSnap.data();
+    await setDoc(planRef, {
+        ...existing,
+        name: newName.trim()
+    });
+
+    console.log('[PLAN_SERVICE] Plan renamed successfully:', planId, '→', newName.trim());
+};
+
+/**
  * Set a plan as active. Clears the isActive flag on all other plans.
  */
 export const setActivePlan = async ({ userId, db, planId }) => {
