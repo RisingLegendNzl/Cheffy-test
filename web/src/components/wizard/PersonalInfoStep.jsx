@@ -434,4 +434,4 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
   );
 };
 
-export default PersonalInfoStep;
+export default PersonalStep;
