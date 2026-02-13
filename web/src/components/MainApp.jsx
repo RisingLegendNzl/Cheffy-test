@@ -348,24 +348,21 @@ const handleEditProfileClean = useCallback(() => {
     userName={formData?.name || ''}
     onOpenSettings={() => setIsSettingsOpen(true)}
     onNavigateToProfile={() => {
-        // Close Saved Plans if open — ensures both views
-        // are never active simultaneously (Requirement 3)
-        if (showSavedPlansModal) {
-            setShowSavedPlansModal(false);
-        }
         handleTabChange('profile');
         setIsMenuOpen(true);
     }}
     onSignOut={handleSignOut}
     onOpenSavedPlans={handleOpenSavedPlans}
+    onHeaderHeightChange={setHeaderHeight}
 />
     
     {/* StickyTabs — hidden when inside Edit Profile or My Saved Plans */}
 <StickyTabs
     activeTab={contentView}
     onTabChange={handleTabChange}
-    hidden={showSavedPlansModal || isSettingsOpen || isMenuOpen}
+    hidden={showSavedPlansModal || isSettingsOpen}
     disabled={showProfileGate}
+    headerHeight={headerHeight}
 />
     
             <PullToRefresh onRefresh={handleRefresh} refreshing={loading}>
