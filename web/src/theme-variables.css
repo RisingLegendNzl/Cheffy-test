@@ -85,73 +85,96 @@
 /* ── 3. DARK MODE — TAILWIND CLASS SURFACE OVERRIDES ─────────────────────── */
 
 /*
- * IMPORTANT: Wizard / Plan Setup form inputs are EXCLUDED from dark overrides.
- * The .wizard-form-exclude marker class is placed on the wizard container
- * and all children with bg-white inside it remain white.
+ * EXCLUSION SYSTEM
+ * ────────────────
+ * Two marker classes opt containers OUT of dark overrides:
+ *
+ *   .wizard-form-exclude  — Plan Setup Wizard (issue #6: inputs stay white)
+ *   .keep-light           — AuthModal / Free Trial card (always white)
+ *
+ * Every dark-mode selector below uses BOTH of these guards:
+ *   :not(.keep-light):not(.keep-light *)          ← skip element + descendants
+ *   :not(.wizard-form-exclude):not(.wizard-form-exclude *)
+ *
+ * This ensures that ANY element inside either container is fully
+ * untouched by dark overrides — backgrounds, text, borders, inputs.
  */
 
-/* Generic white backgrounds → dark card (excluding wizard forms) */
-[data-theme="dark"] .bg-white:not(.wizard-form-exclude):not(.wizard-form-exclude *):not(.keep-light) {
+/* ·· Backgrounds ·························································· */
+
+[data-theme="dark"] .bg-white:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
   background-color: var(--color-bg-card) !important;
 }
 
-[data-theme="dark"] .bg-gray-50:not(.wizard-form-exclude):not(.wizard-form-exclude *):not(.keep-light) {
+[data-theme="dark"] .bg-gray-50:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
   background-color: var(--color-bg-secondary) !important;
 }
 
-[data-theme="dark"] .bg-gray-100:not(.wizard-form-exclude):not(.wizard-form-exclude *):not(.keep-light) {
+[data-theme="dark"] .bg-gray-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
   background-color: var(--color-bg-card) !important;
 }
 
-/* Borders */
-[data-theme="dark"] .border-gray-200,
-[data-theme="dark"] .border-gray-300 {
+/* ·· Borders ······························································ */
+
+[data-theme="dark"] .border-gray-200:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *),
+[data-theme="dark"] .border-gray-300:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
   border-color: var(--color-border) !important;
 }
 
-/* Text overrides for Tailwind gray scale */
-[data-theme="dark"] .text-gray-900:not(.wizard-form-exclude *):not(.keep-light *) {
+[data-theme="dark"] .border-b:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  border-bottom-color: var(--color-border);
+}
+
+/* ·· Text ································································· */
+
+[data-theme="dark"] .text-gray-900:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
   color: var(--color-text-primary) !important;
 }
 
-[data-theme="dark"] .text-gray-800:not(.wizard-form-exclude *):not(.keep-light *) {
+[data-theme="dark"] .text-gray-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
   color: #e5e7eb !important;
 }
 
-[data-theme="dark"] .text-gray-700:not(.wizard-form-exclude *):not(.keep-light *) {
+[data-theme="dark"] .text-gray-700:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
   color: #d1d5db !important;
 }
 
-[data-theme="dark"] .text-gray-600:not(.wizard-form-exclude *):not(.keep-light *) {
+[data-theme="dark"] .text-gray-600:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
   color: #9ca3af !important;
 }
 
-[data-theme="dark"] .text-gray-500:not(.wizard-form-exclude *):not(.keep-light *) {
+[data-theme="dark"] .text-gray-500:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
   color: var(--color-text-tertiary) !important;
 }
 
-/* Hover states */
-[data-theme="dark"] .hover\:bg-gray-50:hover {
+/* ·· Hover states ························································· */
+
+[data-theme="dark"] .hover\:bg-gray-50:not(.keep-light):not(.keep-light *):hover {
   background-color: var(--color-bg-card-hover) !important;
 }
 
-[data-theme="dark"] .hover\:bg-gray-100:hover {
+[data-theme="dark"] .hover\:bg-gray-100:not(.keep-light):not(.keep-light *):hover {
   background-color: var(--color-bg-card-hover) !important;
 }
 
-/* Form inputs & selects — EXCLUDE wizard forms (issue #6) */
-[data-theme="dark"] select:not(.wizard-form-exclude select):not(.keep-light select),
-[data-theme="dark"] textarea:not(.wizard-form-exclude textarea):not(.keep-light textarea) {
+/* ·· Form inputs & selects ················································ */
+/*
+ * Descendant exclusion: :not(.keep-light *) ensures any input/select/textarea
+ * nested anywhere inside a .keep-light container is skipped entirely.
+ * Same for .wizard-form-exclude.
+ */
+
+[data-theme="dark"] select:not(.keep-light *):not(.wizard-form-exclude *),
+[data-theme="dark"] textarea:not(.keep-light *):not(.wizard-form-exclude *) {
   background-color: var(--color-bg-input) !important;
   color: var(--color-text-primary) !important;
   border-color: var(--color-border) !important;
 }
 
-/* Only target inputs that are NOT inside wizard forms */
-[data-theme="dark"] input[type="text"]:not(.wizard-form-exclude input):not(.keep-light input),
-[data-theme="dark"] input[type="number"]:not(.wizard-form-exclude input):not(.keep-light input),
-[data-theme="dark"] input[type="email"]:not(.wizard-form-exclude input):not(.keep-light input),
-[data-theme="dark"] input[type="password"]:not(.wizard-form-exclude input):not(.keep-light input) {
+[data-theme="dark"] input[type="text"]:not(.keep-light *):not(.wizard-form-exclude *),
+[data-theme="dark"] input[type="number"]:not(.keep-light *):not(.wizard-form-exclude *),
+[data-theme="dark"] input[type="email"]:not(.keep-light *):not(.wizard-form-exclude *),
+[data-theme="dark"] input[type="password"]:not(.keep-light *):not(.wizard-form-exclude *) {
   background-color: var(--color-bg-input) !important;
   color: var(--color-text-primary) !important;
   border-color: var(--color-border) !important;
