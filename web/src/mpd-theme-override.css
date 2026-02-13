@@ -59,13 +59,22 @@
   border-color: rgba(99, 102, 241, 0.12);
 }
 
+/* ── ACTIVE DAY — Issue #7 fix ──
+   The active day uses an indigo→purple gradient background.
+   Ensure the day number + label text is WHITE for contrast. */
+[data-theme="light"] .mpd-root .mpd-cal-day--active {
+  background: linear-gradient(135deg, #6366f1, #a855f7) !important;
+  border-color: transparent !important;
+  box-shadow: 0 3px 12px rgba(99, 102, 241, 0.35);
+}
+
 /* ── Day-of-week label ── */
 [data-theme="light"] .mpd-root .mpd-cal-dow {
   color: #9ca3af;
 }
 
 [data-theme="light"] .mpd-root .mpd-cal-day--active .mpd-cal-dow {
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.85) !important;
 }
 
 /* ── Day number ── */
@@ -74,7 +83,7 @@
 }
 
 [data-theme="light"] .mpd-root .mpd-cal-day--active .mpd-cal-num {
-  color: #ffffff;
+  color: #ffffff !important;
 }
 
 /* ── Eaten check dot ── */
@@ -83,7 +92,7 @@
 }
 
 [data-theme="light"] .mpd-root .mpd-cal-day--active .mpd-cal-check {
-  color: rgba(255, 255, 255, 0.9);
+  color: rgba(255, 255, 255, 0.9) !important;
 }
 
 /* ── Neon Tiles Grid ── */
@@ -133,7 +142,7 @@
 
 /* ── DARK-MODE ENHANCEMENTS for the Nutrition card ──
    The inline <style> in MealPlanDisplay already defines the dark
-   aesthetic, but we add a few polish tweaks here.               ── */
+   aesthetic, but we add a few polish tweaks here. ── */
 
 [data-theme="dark"] .mpd-root .mpd-section-card {
   box-shadow:
