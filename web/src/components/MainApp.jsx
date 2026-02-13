@@ -151,8 +151,6 @@ const MainApp = ({
     
     // Handlers
     handleGeneratePlan,
-    handleLoadProfile,
-    handleSaveProfile,
     handleFetchNutrition,
     handleSubstituteSelection,
     handleQuantityChange,
