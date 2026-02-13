@@ -319,11 +319,12 @@ const useAppLogic = ({
       localStorage.setItem('cheffy_selected_model', selectedModel);
     }, [selectedModel]);
 
-    // --- Base Helpers ---
     const showToast = useCallback((message, type = 'info', duration = 3000) => {
-      const id = Date.now();
-      setToasts(prev => [...prev, { id, message, type, duration }]);
-    }, []);
+    const id = Date.now();
+    // Only one notification at a time — replace, don't stack.
+    // This clears any previous toast and resets its timer cleanly.
+    setToasts([{ id, message, type, duration }]);
+}, []);
     
     const removeToast = useCallback((id) => {
       setToasts(prev => prev.filter(toast => toast.id !== id));
@@ -467,11 +468,15 @@ const useAppLogic = ({
                 if (data.selectedModel) setSelectedModel(data.selectedModel);
                 
                 // --- Theme Sync ---
-                if (data.theme) {
-                    localStorage.setItem('cheffy-theme', data.theme);
-                    // The ThemeProvider will pick this up on next mount, or manually set for instant feedback
-                    document.documentElement.setAttribute('data-theme', data.theme);
-                }
+// DO NOT override the locally stored theme from Firestore.
+// localStorage is the source of truth for theme on this device.
+// The user's most recent local preference should always win.
+// Firestore theme is only used as a fallback if localStorage has no value.
+const localTheme = localStorage.getItem('cheffy-theme');
+if (!localTheme && data.theme) {
+    localStorage.setItem('cheffy-theme', data.theme);
+    document.documentElement.setAttribute('data-theme', data.theme);
+}
 
                 console.log("[SETTINGS] Settings loaded successfully");
             }
