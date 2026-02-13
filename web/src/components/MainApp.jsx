@@ -27,7 +27,7 @@ import PlanSetupWizard from './wizard/PlanSetupWizard';
 import NewUserProfileGate from './NewUserProfileGate';
 
 import Header from './Header';
-import BottomNav from './BottomNav';
+import StickyTabs from './StickyTabs';
 import PullToRefresh from './PullToRefresh';
 import SettingsPanel from './SettingsPanel';
 import SuccessModal from './SuccessModal';
@@ -225,6 +225,19 @@ const MainApp = ({
         setShowSavedPlansModal(true);
     };
 
+// Close Saved Plans before navigating to Edit Profile
+// Ensures both views are never in the DOM simultaneously
+const handleEditProfileClean = useCallback(() => {
+    if (showSavedPlansModal) {
+        setShowSavedPlansModal(false);
+    }
+    // Delegate to the parent-provided handler after a tick
+    // so the modal has time to unmount cleanly
+    setTimeout(() => {
+        handleEditProfile();
+    }, 50);
+}, [showSavedPlansModal, handleEditProfile]);
+
     // Create a local handler for viewing recipe
     const handleViewRecipe = useCallback((meal) => {
         setSelectedMeal(meal);
@@ -342,15 +355,23 @@ const MainApp = ({
                 onOpenSavedPlans={handleOpenSavedPlans}
             />
     
+    {/* StickyTabs — hidden when inside Edit Profile or My Saved Plans */}
+<StickyTabs
+    activeTab={contentView}
+    onTabChange={handleTabChange}
+    hidden={showSavedPlansModal || isSettingsOpen}
+    disabled={showProfileGate}
+/>
+    
             <PullToRefresh onRefresh={handleRefresh} refreshing={loading}>
                 {/* --- Theme-Aware Background --- */}
                 <div 
                     className="min-h-screen p-4 md:p-8 transition-all duration-200 relative" 
                     style={{ 
-                        backgroundColor: isDark ? '#0f1117' : '#f3f4f6',
-                        paddingTop: '80px',
-                        paddingBottom: '6rem'
-                    }}
+    backgroundColor: isDark ? '#0f1117' : '#f3f4f6',
+    paddingTop: '120px',
+    paddingBottom: '2rem'
+}}
                 >
                     <div className="max-w-7xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden">
                         <div className="flex flex-col md:flex-row">
@@ -417,13 +438,6 @@ const MainApp = ({
                 </div>
             </PullToRefresh>
     
-            {/* BottomNav — always visible as primary navigation */}
-            <BottomNav
-                activeTab={contentView}
-                onTabChange={handleTabChange}
-                showPlanButton={false}
-                disabled={showProfileGate}
-            />
     
             <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
             
@@ -455,7 +469,7 @@ const MainApp = ({
                 onClearData={() => {
                     showToast('All data cleared', 'success');
                 }}
-                onEditProfile={handleEditProfile}
+                onEditProfile={handleEditProfileClean}
                 showOrchestratorLogs={showOrchestratorLogs}
                 onToggleOrchestratorLogs={setShowOrchestratorLogs}
                 showFailedIngredientsLogs={showFailedIngredientsLogs}
