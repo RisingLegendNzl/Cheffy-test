@@ -1,4 +1,5 @@
 // web/src/components/wizard/ReviewStep.jsx
+// UPDATED: Height & weight now display in the user's chosen measurement units.
 import React from 'react';
 import MacroPreviewCard from './MacroPreviewCard';
 import { COLORS } from '../../constants';
@@ -18,6 +19,26 @@ const GOAL_LABELS = {
   cut_aggressive: 'Aggressive Cut',
   bulk_lean: 'Lean Bulk',
   bulk_aggressive: 'Aggressive Bulk',
+};
+
+// ── Conversion helpers ──
+const formatHeight = (heightCm, units) => {
+  if (!heightCm) return '—';
+  if (units === 'imperial') {
+    const totalIn = parseFloat(heightCm) / 2.54;
+    const ft = Math.floor(totalIn / 12);
+    const inches = Math.round(totalIn % 12);
+    return `${ft}' ${inches}"`;
+  }
+  return `${heightCm} cm`;
+};
+
+const formatWeight = (weightKg, units) => {
+  if (!weightKg) return '—';
+  if (units === 'imperial') {
+    return `${(parseFloat(weightKg) * 2.20462).toFixed(1)} lb`;
+  }
+  return `${weightKg} kg`;
 };
 
 const SummaryItem = ({ label, value }) => (
@@ -56,7 +77,7 @@ const SummarySection = ({ icon, title, children }) => (
   </div>
 );
 
-const ReviewStep = ({ formData }) => {
+const ReviewStep = ({ formData, measurementUnits = 'metric' }) => {
   return (
     <div className="flex flex-col gap-5">
       {/* Macro preview (most important visual) */}
@@ -65,8 +86,8 @@ const ReviewStep = ({ formData }) => {
       {/* Profile summary */}
       <SummarySection icon="👤" title="Profile">
         <SummaryItem label="Name" value={formData.name || '—'} />
-        <SummaryItem label="Height" value={`${formData.height} cm`} />
-        <SummaryItem label="Weight" value={`${formData.weight} kg`} />
+        <SummaryItem label="Height" value={formatHeight(formData.height, measurementUnits)} />
+        <SummaryItem label="Weight" value={formatWeight(formData.weight, measurementUnits)} />
         <SummaryItem label="Age" value={formData.age} />
         <SummaryItem
           label="Body Fat"
