@@ -4,6 +4,7 @@ import './animations.css';
 import './dashboard-enhancements.css';
 import './concept-b-rings.css';
 import './mpd-theme-override.css';       // Nutrition card light-mode overrides
+import './cheffy-patches.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
