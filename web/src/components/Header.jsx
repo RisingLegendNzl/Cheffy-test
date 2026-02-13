@@ -1,24 +1,71 @@
 // web/src/components/Header.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ChefHat, Menu, X, User, Settings, LogOut, Bookmark } from 'lucide-react';
 import { COLORS, SPACING, SHADOWS, Z_INDEX } from '../constants';
 import { APP_CONFIG } from '../constants';
 import { useTheme } from '../contexts/ThemeContext';
 
+// ============================================================================
+// Z-INDEX STRATEGY (Header + Dropdown + StickyTabs)
+//
+//   Header bar itself  :  Z_INDEX.sticky   (1020)  — the chrome bar
+//   StickyTabs         :  990                       — sits visually below header
+//   Dropdown backdrop  :  Z_INDEX.dropdown + 9 (1009) — covers header + tabs
+//   Dropdown panel     :  Z_INDEX.dropdown + 10 (1010) — above backdrop & header
+//
+// This ensures the burger menu is ALWAYS fully visible and clickable above
+// both the header bar and the sticky tabs, regardless of scroll position.
+// ============================================================================
+
+const DROPDOWN_BACKDROP_Z = Z_INDEX.dropdown + 9;   // 1009
+const DROPDOWN_PANEL_Z    = Z_INDEX.dropdown + 10;   // 1010
+
 /**
  * Main app header with branding, user menu, and scroll behavior.
  * Theme-aware: adapts background, text, dropdown to dark/light mode.
+ *
+ * UPDATED:
+ *  - Dropdown z-index raised above header so burger menu is never obscured.
+ *  - Dropdown panel `top` adapts to expanded vs collapsed header height.
+ *  - Emits `onHeaderHeightChange(height)` so StickyTabs can reposition.
  */
-const Header = ({ userId, userName, onOpenSettings, onNavigateToProfile, onSignOut, onOpenSavedPlans }) => {
+const Header = ({
+  userId,
+  userName,
+  onOpenSettings,
+  onNavigateToProfile,
+  onSignOut,
+  onOpenSavedPlans,
+  onHeaderHeightChange,
+}) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { isDark } = useTheme();
+  const headerRef = useRef(null);
 
+  // ── Scroll listener ──
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // ── Measure actual header height and notify parent ──
+  const reportHeight = useCallback(() => {
+    if (headerRef.current && onHeaderHeightChange) {
+      const h = headerRef.current.getBoundingClientRect().height;
+      onHeaderHeightChange(h);
+    }
+  }, [onHeaderHeightChange]);
+
+  useEffect(() => {
+    reportHeight();
+  }, [isScrolled, reportHeight]);
+
+  useEffect(() => {
+    window.addEventListener('resize', reportHeight);
+    return () => window.removeEventListener('resize', reportHeight);
+  }, [reportHeight]);
 
   const displayName = (() => {
     if (userName && userName.trim()) return userName.trim();
@@ -50,9 +97,15 @@ const Header = ({ userId, userName, onOpenSettings, onNavigateToProfile, onSignO
   const dividerColor = isDark ? '#2d3148' : COLORS.gray[200];
   const versionColor = isDark ? '#4b5563' : COLORS.gray[400];
 
+  // Dropdown panel top: match actual header bottom edge.
+  // Expanded header ≈ 80px (py-4 + larger logo + subtitle line).
+  // Collapsed header ≈ 64px (py-3 + smaller logo, no subtitle).
+  const dropdownTop = isScrolled ? '64px' : '80px';
+
   return (
     <>
       <header
+        ref={headerRef}
         className={`fixed top-0 left-0 right-0 border-b transition-all duration-300 ${
           isScrolled ? 'shadow-md' : ''
         }`}
@@ -110,21 +163,22 @@ const Header = ({ userId, userName, onOpenSettings, onNavigateToProfile, onSignO
       {/* Dropdown Menu */}
       {isMenuOpen && (
         <>
-          {/* Backdrop */}
+          {/* Backdrop — ABOVE the header bar so it dims everything underneath */}
           <div
             className="fixed inset-0 animate-fadeIn"
             style={{
-              zIndex: Z_INDEX.dropdown - 1,
+              zIndex: DROPDOWN_BACKDROP_Z,
               backgroundColor: isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.25)',
             }}
             onClick={() => setIsMenuOpen(false)}
           />
 
-          {/* Menu Panel */}
+          {/* Menu Panel — positioned just below the header's bottom edge */}
           <div
-            className="fixed top-16 right-4 w-64 rounded-xl animate-scaleIn"
+            className="fixed right-4 w-64 rounded-xl animate-scaleIn"
             style={{
-              zIndex: Z_INDEX.dropdown,
+              top: dropdownTop,
+              zIndex: DROPDOWN_PANEL_Z,
               backgroundColor: dropdownBg,
               border: `1px solid ${dropdownBorder}`,
               boxShadow: dropdownShadow,
@@ -149,7 +203,7 @@ const Header = ({ userId, userName, onOpenSettings, onNavigateToProfile, onSignO
                 </div>
               )}
 
-              {/* Menu Items — Issue #2: ensure visible text in dark mode */}
+              {/* Menu Items */}
               <button
                 onClick={() => {
                   setIsMenuOpen(false);
@@ -192,7 +246,7 @@ const Header = ({ userId, userName, onOpenSettings, onNavigateToProfile, onSignO
                 <span>Settings</span>
               </button>
 
-              {/* Sign Out — Issue #4: fix divider lines in dark mode */}
+              {/* Sign Out */}
               {userId && !userId.startsWith('local_') && (
                 <>
                   <div
@@ -220,7 +274,7 @@ const Header = ({ userId, userName, onOpenSettings, onNavigateToProfile, onSignO
               )}
             </div>
 
-            {/* App Version — Issue #4: fix bottom divider */}
+            {/* App Version */}
             <div
               className="px-4 py-2 text-center"
               style={{
@@ -235,7 +289,7 @@ const Header = ({ userId, userName, onOpenSettings, onNavigateToProfile, onSignO
         </>
       )}
 
-      {/* Spacer */}
+      {/* Spacer — matches header height so content doesn't hide under it */}
       <div className={isScrolled ? 'h-16' : 'h-20'} />
     </>
   );
