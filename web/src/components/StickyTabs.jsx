@@ -6,9 +6,12 @@
 // scroll within Profile / Meals / Shop views. They are hidden when inside
 // Edit Profile or My Saved Plans views.
 //
-// UPDATED z-index: 990 — sits BELOW the Header dropdown menu (1000) so that
-// when the burger menu opens, tabs are visible but rendered behind the menu
-// overlay. Still above general content but below all overlays.
+// UPDATED:
+//  - Accepts `headerHeight` prop (measured in real-time by Header.jsx)
+//    so the tabs always sit flush beneath the header, whether it's in
+//    expanded state (~80px with subtitle) or collapsed state (~64px).
+//  - z-index 990 — below Header (1020) and dropdown (1009/1010),
+//    above general content. Burger menu renders on top of tabs.
 // ============================================================================
 
 import React from 'react';
@@ -22,25 +25,27 @@ const TABS = [
   { id: 'ingredients', label: 'Shop',     Icon: ShoppingCart },
 ];
 
-// z-index: BELOW Header dropdown (1000) so burger menu renders on top of tabs.
-// Still above general page content. Modals (1040+) also layer above.
+// z-index: BELOW Header (1020) and dropdown menu (1009/1010),
+// above general page content. Modals (1040+) also layer above.
 const TABS_Z = 990;
 
 /**
  * StickyTabs
  *
  * Props:
- *  - activeTab   {string}  Current contentView value
- *  - onTabChange {func}    Tab change callback
- *  - hidden      {bool}    When true, tabs slide out of view (used when
- *                           Edit Profile, My Saved Plans, or Settings is active)
- *  - disabled    {bool}    Disable interaction (e.g. during onboarding gate)
+ *  - activeTab    {string}  Current contentView value
+ *  - onTabChange  {func}    Tab change callback
+ *  - hidden       {bool}    When true, tabs slide out of view (used when
+ *                            Edit Profile, My Saved Plans, or Settings is active)
+ *  - disabled     {bool}    Disable interaction (e.g. during onboarding gate)
+ *  - headerHeight {number}  Measured height of the Header in px (default 64)
  */
 const StickyTabs = ({
   activeTab,
   onTabChange,
   hidden = false,
   disabled = false,
+  headerHeight = 64,
 }) => {
   const { isDark } = useTheme();
 
@@ -57,9 +62,9 @@ const StickyTabs = ({
     <div
       className="fixed left-0 right-0 transition-all duration-300 ease-in-out"
       style={{
-        // Positioned directly beneath the header (~64px tall when scrolled, ~72px otherwise).
-        // Using 64px as the safe default; the header's own sticky shrinks to this.
-        top: hidden ? '-60px' : '64px',
+        // Dynamic top: tracks the header's measured height so tabs sit
+        // flush beneath it in both expanded and collapsed states.
+        top: hidden ? '-60px' : `${headerHeight}px`,
         zIndex: TABS_Z,
         backgroundColor: tabBg,
         borderBottom: `1px solid ${borderColor}`,
