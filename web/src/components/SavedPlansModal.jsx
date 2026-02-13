@@ -1,6 +1,13 @@
 // web/src/components/SavedPlansModal.jsx
-// Theme-aware: heading, card backgrounds, and text all adapt to dark/light mode.
-// Adds inline rename functionality for each saved plan.
+// ============================================================================
+// SavedPlansModal — Theme-aware modal for loading/managing saved plans.
+//
+// UPDATES:
+// 1. Body scroll lock (iOS-safe position:fixed technique) when open.
+//    Prevents background scroll bleed. No layout jump.
+// 2. Clean state reset on close.
+// 3. Inline rename functionality preserved.
+// ============================================================================
 
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Calendar, Trash2, Download, CheckCircle, Pencil, Check } from 'lucide-react';
@@ -23,7 +30,55 @@ const SavedPlansModal = ({
     const [renameError, setRenameError] = useState('');
     const [renameSaving, setRenameSaving] = useState(false);
     const renameInputRef = useRef(null);
+    const scrollYRef = useRef(0);
     const { isDark } = useTheme();
+
+    // ── Body scroll lock (iOS-safe position:fixed technique) ──
+    useEffect(() => {
+        if (!isOpen) return;
+
+        scrollYRef.current = window.scrollY;
+        const scrollY = scrollYRef.current;
+        const body = document.body;
+        const html = document.documentElement;
+
+        // Calculate scrollbar width to prevent layout jump
+        const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
+        // Lock
+        body.style.position = 'fixed';
+        body.style.top = `-${scrollY}px`;
+        body.style.left = '0';
+        body.style.right = '0';
+        body.style.overflow = 'hidden';
+        html.style.overflow = 'hidden';
+        if (scrollbarWidth > 0) {
+            body.style.paddingRight = `${scrollbarWidth}px`;
+        }
+
+        return () => {
+            // Unlock
+            body.style.position = '';
+            body.style.top = '';
+            body.style.left = '';
+            body.style.right = '';
+            body.style.overflow = '';
+            html.style.overflow = '';
+            body.style.paddingRight = '';
+            window.scrollTo(0, scrollY);
+        };
+    }, [isOpen]);
+
+    // ── Clean state reset when modal closes ──
+    useEffect(() => {
+        if (!isOpen) {
+            setDeletingPlanId(null);
+            setRenamingPlanId(null);
+            setRenameValue('');
+            setRenameError('');
+            setRenameSaving(false);
+        }
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
@@ -48,7 +103,6 @@ const SavedPlansModal = ({
         setRenamingPlanId(plan.planId);
         setRenameValue(plan.name || '');
         setRenameError('');
-        // Focus after React renders the input
         setTimeout(() => renameInputRef.current?.focus(), 50);
     };
 
@@ -84,42 +138,29 @@ const SavedPlansModal = ({
 
     const handleRenameKeyDown = (e) => {
         if (e.key === 'Enter') {
+            e.preventDefault();
             confirmRename();
         } else if (e.key === 'Escape') {
             cancelRename();
         }
     };
 
-    const formatDate = (isoString) => {
-        try {
-            const date = new Date(isoString);
-            return date.toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric'
-            });
-        } catch (e) {
-            return 'Unknown date';
-        }
-    };
+    const isDeleting = deletingPlanId !== null;
 
     // Theme-derived colours
     const modalBg = isDark ? '#1e2130' : '#ffffff';
     const headerBorder = isDark ? '#2d3148' : COLORS.gray[200];
     const headingColor = isDark ? '#f0f1f5' : COLORS.gray[900];
-    const closeIconColor = isDark ? '#9ca3b0' : COLORS.gray[600];
+    const closeIconColor = isDark ? '#9ca3b0' : COLORS.gray[500];
     const closeHoverBg = isDark ? '#252839' : COLORS.gray[100];
-    const emptyIconColor = isDark ? '#4b5563' : COLORS.gray[400];
-    const emptyTitleColor = isDark ? '#9ca3b0' : COLORS.gray[600];
-    const emptySubColor = isDark ? '#6b7280' : COLORS.gray[500];
-    const planCardBorder = isDark ? '#2d3148' : COLORS.gray[200];
-    const planCardActiveBorder = isDark ? '#6366f1' : COLORS.primary[300];
-    const planCardActiveBg = isDark ? 'rgba(99,102,241,0.08)' : COLORS.primary[50];
-    const planCardBg = isDark ? '#252839' : '#ffffff';
+    const emptyTextColor = isDark ? '#6b7280' : COLORS.gray[500];
+    const cardBg = isDark ? '#252839' : COLORS.gray[50];
+    const cardBorder = isDark ? '#2d3148' : COLORS.gray[200];
+    const cardHoverBg = isDark ? '#2d3148' : COLORS.gray[100];
     const planNameColor = isDark ? '#f0f1f5' : COLORS.gray[900];
-    const planMetaColor = isDark ? '#9ca3b0' : COLORS.gray[600];
-    const planDotColor = isDark ? '#4b5563' : COLORS.gray[400];
-    const activeLabel = isDark ? '#a5b4fc' : COLORS.primary[600];
+    const planMetaColor = isDark ? '#9ca3b0' : COLORS.gray[500];
+    const activeBadgeBg = isDark ? 'rgba(99,102,241,0.15)' : '#eef2ff';
+    const activeBadgeColor = isDark ? '#a5b4fc' : COLORS.primary[600];
     const loadBtnColor = isDark ? '#a5b4fc' : COLORS.primary[600];
     const loadBtnHoverBg = isDark ? 'rgba(99,102,241,0.1)' : '#ffffff';
     const deleteBtnHoverBg = isDark ? 'rgba(239,68,68,0.1)' : '#fef2f2';
@@ -178,144 +219,131 @@ const SavedPlansModal = ({
                 {/* Content */}
                 <div className="max-h-[60vh] overflow-y-auto">
                     {(!savedPlans || savedPlans.length === 0) ? (
-                        <div className="p-12 text-center">
-                            <Calendar
-                                size={48}
-                                className="mx-auto mb-4 opacity-30"
-                                style={{ color: emptyIconColor }}
-                            />
-                            <p
-                                className="text-lg font-medium mb-2"
-                                style={{ color: emptyTitleColor }}
-                            >
-                                No saved plans yet
-                            </p>
-                            <p
-                                className="text-sm"
-                                style={{ color: emptySubColor }}
-                            >
-                                Generate a meal plan and save it to see it here
+                        <div className="p-8 text-center">
+                            <Calendar size={40} className="mx-auto mb-3" style={{ color: emptyTextColor }} />
+                            <p className="text-sm" style={{ color: emptyTextColor }}>
+                                No saved plans yet. Generate a meal plan to get started!
                             </p>
                         </div>
                     ) : (
-                        <div className="p-6 space-y-3">
+                        <div className="p-4 space-y-3">
                             {savedPlans.map((plan) => {
                                 const isActive = plan.planId === activePlanId;
-                                const isDeleting = deletingPlanId === plan.planId;
                                 const isRenaming = renamingPlanId === plan.planId;
 
                                 return (
                                     <div
                                         key={plan.planId}
-                                        className="rounded-xl p-4 transition-all"
+                                        className="p-4 rounded-xl border transition-colors"
                                         style={{
-                                            border: `1px solid ${isActive ? planCardActiveBorder : planCardBorder}`,
-                                            backgroundColor: isActive ? planCardActiveBg : planCardBg,
-                                            boxShadow: isDark
-                                                ? '0 2px 8px rgba(0,0,0,0.2)'
-                                                : undefined,
+                                            backgroundColor: isActive ? activeBadgeBg : cardBg,
+                                            borderColor: isActive ? activeBadgeColor : cardBorder,
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (!isActive) e.currentTarget.style.backgroundColor = cardHoverBg;
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            if (!isActive) e.currentTarget.style.backgroundColor = cardBg;
                                         }}
                                     >
                                         <div className="flex items-center justify-between">
-                                            <div className="flex-1 min-w-0">
-                                                {/* ── Inline Rename or Static Title ── */}
+                                            <div className="flex-1 min-w-0 mr-3">
                                                 {isRenaming ? (
-                                                    <div className="flex items-center space-x-2">
-                                                        <div className="flex-1 min-w-0">
-                                                            <input
-                                                                ref={renameInputRef}
-                                                                type="text"
-                                                                value={renameValue}
-                                                                onChange={(e) => {
-                                                                    setRenameValue(e.target.value);
-                                                                    if (renameError) setRenameError('');
-                                                                }}
-                                                                onKeyDown={handleRenameKeyDown}
-                                                                maxLength={80}
-                                                                className="w-full px-2.5 py-1 rounded-lg text-sm font-bold transition-colors"
-                                                                style={{
-                                                                    backgroundColor: renameInputBg,
-                                                                    border: `1px solid ${renameInputBorder}`,
-                                                                    color: renameInputColor,
-                                                                    outline: 'none',
-                                                                }}
-                                                                onFocus={(e) => {
-                                                                    e.currentTarget.style.borderColor = isDark ? '#6366f1' : COLORS.primary[500];
-                                                                }}
-                                                                onBlur={(e) => {
-                                                                    e.currentTarget.style.borderColor = renameInputBorder;
-                                                                }}
-                                                            />
-                                                            {renameError && (
-                                                                <p className="text-xs mt-1" style={{ color: errorColor }}>
-                                                                    {renameError}
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                        {/* Confirm rename */}
+                                                    <div className="flex items-center gap-2">
+                                                        <input
+                                                            ref={renameInputRef}
+                                                            type="text"
+                                                            value={renameValue}
+                                                            onChange={(e) => {
+                                                                setRenameValue(e.target.value);
+                                                                setRenameError('');
+                                                            }}
+                                                            onKeyDown={handleRenameKeyDown}
+                                                            className="flex-1 text-sm px-2 py-1 rounded border outline-none"
+                                                            style={{
+                                                                backgroundColor: renameInputBg,
+                                                                borderColor: renameInputBorder,
+                                                                color: renameInputColor,
+                                                            }}
+                                                            disabled={renameSaving}
+                                                        />
                                                         <button
                                                             onClick={confirmRename}
                                                             disabled={renameSaving}
-                                                            className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                                                            className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                                             style={{ color: confirmBtnColor }}
-                                                            title="Save name"
                                                         >
                                                             <Check size={18} />
                                                         </button>
-                                                        {/* Cancel rename */}
                                                         <button
                                                             onClick={cancelRename}
-                                                            className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                                                            disabled={renameSaving}
+                                                            className="p-1.5 rounded-lg transition-colors disabled:opacity-50"
                                                             style={{ color: closeIconColor }}
-                                                            title="Cancel"
                                                         >
                                                             <X size={18} />
                                                         </button>
                                                     </div>
                                                 ) : (
-                                                    <div className="flex items-center space-x-2">
-                                                        <h3
-                                                            className="font-bold truncate"
-                                                            style={{ color: planNameColor }}
-                                                        >
-                                                            {plan.name || 'Untitled Plan'}
-                                                        </h3>
-                                                        {isActive && (
-                                                            <span
-                                                                className="flex items-center text-xs font-semibold"
-                                                                style={{ color: activeLabel }}
+                                                    <>
+                                                        <div className="flex items-center gap-2">
+                                                            <h3
+                                                                className="text-sm font-semibold truncate"
+                                                                style={{ color: planNameColor }}
                                                             >
-                                                                <CheckCircle size={14} className="mr-1" />
-                                                                Active
-                                                            </span>
-                                                        )}
-                                                        {/* Rename button */}
-                                                        <button
-                                                            onClick={() => startRename(plan)}
-                                                            className="p-1 rounded-lg transition-colors flex-shrink-0 opacity-60 hover:opacity-100"
-                                                            style={{ color: renameBtnColor }}
-                                                            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = renameBtnHoverBg)}
-                                                            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                                                            title="Rename plan"
-                                                            aria-label="Rename plan"
+                                                                {plan.name || 'Untitled Plan'}
+                                                            </h3>
+                                                            {isActive && (
+                                                                <span
+                                                                    className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full"
+                                                                    style={{
+                                                                        backgroundColor: activeBadgeBg,
+                                                                        color: activeBadgeColor,
+                                                                    }}
+                                                                >
+                                                                    <CheckCircle size={12} />
+                                                                    Active
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p
+                                                            className="text-xs mt-1"
+                                                            style={{ color: planMetaColor }}
                                                         >
-                                                            <Pencil size={14} />
-                                                        </button>
-                                                    </div>
+                                                            {plan.createdAt
+                                                                ? new Date(plan.createdAt).toLocaleDateString(undefined, {
+                                                                      year: 'numeric',
+                                                                      month: 'short',
+                                                                      day: 'numeric',
+                                                                  })
+                                                                : 'Unknown date'}
+                                                            {plan.days && ` · ${plan.days} days`}
+                                                        </p>
+                                                    </>
                                                 )}
-
-                                                <div className="flex items-center space-x-2 mt-1 text-sm">
-                                                    <span style={{ color: planMetaColor }}>
-                                                        {plan.mealPlan?.length || 0} days
-                                                    </span>
-                                                    <span style={{ color: planDotColor }}>•</span>
-                                                    <span style={{ color: planMetaColor }}>
-                                                        {formatDate(plan.createdAt)}
-                                                    </span>
-                                                </div>
+                                                {renameError && isRenaming && (
+                                                    <p className="text-xs mt-1" style={{ color: errorColor }}>
+                                                        {renameError}
+                                                    </p>
+                                                )}
                                             </div>
 
-                                            <div className="flex items-center space-x-2 ml-4">
+                                            {/* Action buttons */}
+                                            <div className="flex items-center gap-1">
+                                                {!isRenaming && (
+                                                    <button
+                                                        onClick={() => startRename(plan)}
+                                                        disabled={loadingPlan || isDeleting}
+                                                        className="p-2 rounded-lg transition-colors disabled:opacity-50"
+                                                        style={{ color: renameBtnColor }}
+                                                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = renameBtnHoverBg)}
+                                                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                                                        aria-label="Rename plan"
+                                                    >
+                                                        <Pencil size={16} />
+                                                    </button>
+                                                )}
+
                                                 <button
                                                     onClick={() => handleLoadClick(plan.planId)}
                                                     disabled={loadingPlan || isDeleting}
