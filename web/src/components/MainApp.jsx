@@ -1,6 +1,6 @@
 // web/src/components/MainApp.jsx
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { RefreshCw, Zap, AlertTriangle, CheckCircle, Package, DollarSign, ExternalLink, Calendar, Users, Menu, X, ChevronsDown, ChevronsUp, ShoppingBag, BookOpen, ChefHat, Tag, Soup, Replace, Target, FileText, Terminal, Loader, ChevronRight, GripVertical, Flame, Droplet, Wheat, ChevronDown, ChevronUp, Download, ListX, Save, FolderDown, User, Check, ListChecks, ListOrdered, Utensils } from 'lucide-react';
+import { Zap, AlertTriangle, CheckCircle, Package, DollarSign, ExternalLink, Calendar, Users, Menu, X, ChevronsDown, ChevronsUp, ShoppingBag, BookOpen, ChefHat, Tag, Soup, Replace, Target, FileText, Terminal, Loader, ChevronRight, GripVertical, Flame, Droplet, Wheat, ChevronDown, ChevronUp, Download, ListX, Save, FolderDown, User, Check, ListChecks, ListOrdered, Utensils } from 'lucide-react';
 
 // --- Component Imports ---
 import MacroRing from './MacroRing';
@@ -28,7 +28,6 @@ import NewUserProfileGate from './NewUserProfileGate';
 
 import Header from './Header';
 import StickyTabs from './StickyTabs';
-import PullToRefresh from './PullToRefresh';
 import SettingsPanel from './SettingsPanel';
 import SuccessModal from './SuccessModal';
 import ToastContainer from './Toast';
@@ -384,7 +383,7 @@ const handleEditProfileClean = useCallback(() => {
     headerHeight={headerHeight}
 />
     
-            <PullToRefresh onRefresh={handleRefresh} refreshing={false}>
+            
                 {/* --- Theme-Aware Background --- */}
                 <div 
                     className="min-h-screen p-4 md:p-8 transition-all duration-200 relative" 
@@ -464,7 +463,7 @@ const handleEditProfileClean = useCallback(() => {
                         </div>
                     </div>
                 </div>
-            </PullToRefresh>
+            
     
     
             <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
