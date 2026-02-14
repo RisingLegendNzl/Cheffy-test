@@ -151,7 +151,7 @@ function _buildOpenAIRequest(modelName, geminiPayload, options = {}) {
         const effortMap = {
             mealPlan:     'medium',
             chefRecipe:   'medium',
-            groceryQuery: 'low',
+            groceryQuery: 'medium',
             default:      'medium',
         };
         body.reasoning_effort = effortMap[agentType] || 'medium';
