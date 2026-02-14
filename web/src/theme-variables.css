@@ -1,85 +1,334 @@
 /* =============================================================================
-   theme-variables-patch.css
+   theme-variables.css
    
-   PATCH: Dark mode overrides for MealPlanDisplay meal card elements
-   that were not covered by the original theme-variables.css.
+   Cheffy Dark / Light Mode — CSS Custom Properties + Surface Overrides
    
-   Covers:
-     - bg-indigo-100, bg-blue-100, bg-yellow-100, bg-green-100 (macro pills)
-     - text-indigo-800, text-blue-800, text-yellow-800, text-green-800
-     - border-green-300 (eaten meal card border)
-     - border-indigo-300, hover:border-indigo-300 (hovered meal card)
-     - bg-gray-200 (eaten toggle button)
-     - text-gray-400 (eaten toggle icon)
-     - hover:bg-gray-300
+   Strategy:
+     1. Define semantic CSS variables under [data-theme="dark"] and
+        [data-theme="light"] on <html>.
+     2. Apply broad surface overrides (backgrounds, borders, text)
+        so components using Tailwind classes or inline styles are
+        covered without per-component edits.
+     3. The MealPlanDisplay "Your Nutrition" card keeps its dark
+        inline styles in dark mode; mpd-theme-override.css activates
+        only under [data-theme="light"].
    
-   Append these rules to the END of theme-variables.css (after section 11).
+   Import in index.jsx BEFORE component CSS:
+     import './theme-variables.css';
    ============================================================================= */
 
 
-/* ── 12. MEAL CARD MACRO PILLS — DARK MODE ───────────────────────────────── */
+/* ── 1. CUSTOM PROPERTIES ─────────────────────────────────────────────────── */
 
-/* Macro pill backgrounds: light colour → semi-transparent dark tint */
-[data-theme="dark"] .bg-indigo-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
-  background-color: rgba(99, 102, 241, 0.15) !important;
+[data-theme="dark"] {
+  --color-bg-primary:       #0f1117;
+  --color-bg-secondary:     #181a24;
+  --color-bg-card:          #1e2130;
+  --color-bg-card-hover:    #252839;
+  --color-bg-elevated:      #252839;
+  --color-bg-input:         #1e2130;
+  --color-border:           #2d3148;
+  --color-border-light:     #23263a;
+  --color-border-focus:     #6366f1;
+  --color-text-primary:     #f0f1f5;
+  --color-text-secondary:   #9ca3b0;
+  --color-text-tertiary:    #6b7280;
+  --color-text-inverse:     #111827;
+  --color-brand-bg:         rgba(99, 102, 241, 0.12);
+  --color-brand-border:     rgba(99, 102, 241, 0.25);
+  --color-backdrop:         rgba(0, 0, 0, 0.65);
+  --shadow-card:            0 2px 10px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(99,102,241,0.06);
+  --shadow-card-hover:      0 6px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(99,102,241,0.1);
+  --shadow-panel:           0 8px 32px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
 }
 
-[data-theme="dark"] .bg-blue-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
-  background-color: rgba(59, 130, 246, 0.15) !important;
-}
-
-[data-theme="dark"] .bg-yellow-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
-  background-color: rgba(245, 158, 11, 0.15) !important;
-}
-
-[data-theme="dark"] .bg-green-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
-  background-color: rgba(16, 185, 129, 0.15) !important;
-}
-
-/* Macro pill text: dark shade → lighter readable shade */
-[data-theme="dark"] .text-indigo-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
-  color: #a5b4fc !important;
-}
-
-[data-theme="dark"] .text-blue-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
-  color: #93c5fd !important;
-}
-
-[data-theme="dark"] .text-yellow-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
-  color: #fcd34d !important;
-}
-
-[data-theme="dark"] .text-green-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
-  color: #6ee7b7 !important;
+[data-theme="light"] {
+  --color-bg-primary:       #f9fafb;
+  --color-bg-secondary:     #ffffff;
+  --color-bg-card:          #ffffff;
+  --color-bg-card-hover:    #f3f4f6;
+  --color-bg-elevated:      #ffffff;
+  --color-bg-input:         #ffffff;
+  --color-border:           #e5e7eb;
+  --color-border-light:     #f3f4f6;
+  --color-border-focus:     #6366f1;
+  --color-text-primary:     #111827;
+  --color-text-secondary:   #4b5563;
+  --color-text-tertiary:    #9ca3af;
+  --color-text-inverse:     #ffffff;
+  --color-brand-bg:         rgba(99, 102, 241, 0.06);
+  --color-brand-border:     rgba(99, 102, 241, 0.15);
+  --color-backdrop:         rgba(0, 0, 0, 0.4);
+  --shadow-card:            0 2px 8px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(99,102,241,0.04);
+  --shadow-card-hover:      0 4px 20px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(99,102,241,0.08);
+  --shadow-panel:           0 8px 32px rgba(0, 0, 0, 0.12);
+  color-scheme: light;
 }
 
 
-/* ── 13. MEAL CARD BORDERS & STATES — DARK MODE ─────────────────────────── */
+/* ── 2. GLOBAL SURFACE OVERRIDES ──────────────────────────────────────────── */
 
-/* Eaten card border */
-[data-theme="dark"] .border-green-300:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
-  border-color: rgba(16, 185, 129, 0.3) !important;
+[data-theme="dark"] body,
+[data-theme="dark"] #root {
+  background-color: var(--color-bg-primary) !important;
+  color: var(--color-text-primary);
 }
 
-/* Hover border on uneaten card */
-[data-theme="dark"] .hover\:border-indigo-300:not(.keep-light):not(.keep-light *):hover {
-  border-color: rgba(99, 102, 241, 0.35) !important;
+[data-theme="light"] body,
+[data-theme="light"] #root {
+  background-color: var(--color-bg-primary) !important;
+  color: var(--color-text-primary);
 }
 
-/* Eaten toggle button (uneaten state) */
-[data-theme="dark"] .bg-gray-200:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
-  background-color: #252839 !important;
+
+/* ── 3. DARK MODE — TAILWIND CLASS SURFACE OVERRIDES ─────────────────────── */
+
+/*
+ * EXCLUSION SYSTEM
+ * ────────────────
+ * Two marker classes opt containers OUT of dark overrides:
+ *
+ *   .wizard-form-exclude  — Plan Setup Wizard (issue #6: inputs stay white)
+ *   .keep-light           — AuthModal / Free Trial card (always white)
+ *
+ * Every dark-mode selector below uses BOTH of these guards:
+ *   :not(.keep-light):not(.keep-light *)          ← skip element + descendants
+ *   :not(.wizard-form-exclude):not(.wizard-form-exclude *)
+ *
+ * This ensures that ANY element inside either container is fully
+ * untouched by dark overrides — backgrounds, text, borders, inputs.
+ */
+
+/* ·· Backgrounds ·························································· */
+
+[data-theme="dark"] .bg-white:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  background-color: var(--color-bg-card) !important;
 }
 
-[data-theme="dark"] .text-gray-400:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
-  color: #6b7280 !important;
+[data-theme="dark"] .bg-gray-50:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  background-color: var(--color-bg-secondary) !important;
 }
 
-[data-theme="dark"] .hover\:bg-gray-300:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *):hover {
-  background-color: #2d3148 !important;
+[data-theme="dark"] .bg-gray-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  background-color: var(--color-bg-card) !important;
 }
 
-/* Hover shadow in dark — subtler than blinding white */
-[data-theme="dark"] .hover\:shadow-lg:not(.keep-light):not(.keep-light *):hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.1) !important;
+/* ·· Borders ······························································ */
+
+[data-theme="dark"] .border-gray-200:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *),
+[data-theme="dark"] .border-gray-300:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  border-color: var(--color-border) !important;
+}
+
+[data-theme="dark"] .border-b:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  border-bottom-color: var(--color-border);
+}
+
+/* ·· Text ································································· */
+
+[data-theme="dark"] .text-gray-900:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: var(--color-text-primary) !important;
+}
+
+[data-theme="dark"] .text-gray-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: #e5e7eb !important;
+}
+
+[data-theme="dark"] .text-gray-700:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: #d1d5db !important;
+}
+
+[data-theme="dark"] .text-gray-600:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: #9ca3af !important;
+}
+
+[data-theme="dark"] .text-gray-500:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: var(--color-text-tertiary) !important;
+}
+
+/* ·· Hover states ························································· */
+
+[data-theme="dark"] .hover\:bg-gray-50:not(.keep-light):not(.keep-light *):hover {
+  background-color: var(--color-bg-card-hover) !important;
+}
+
+[data-theme="dark"] .hover\:bg-gray-100:not(.keep-light):not(.keep-light *):hover {
+  background-color: var(--color-bg-card-hover) !important;
+}
+
+/* ·· Form inputs & selects ················································ */
+/*
+ * Descendant exclusion: :not(.keep-light *) ensures any input/select/textarea
+ * nested anywhere inside a .keep-light container is skipped entirely.
+ * Same for .wizard-form-exclude.
+ */
+
+[data-theme="dark"] select:not(.keep-light *):not(.wizard-form-exclude *),
+[data-theme="dark"] textarea:not(.keep-light *):not(.wizard-form-exclude *) {
+  background-color: var(--color-bg-input) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border) !important;
+}
+
+[data-theme="dark"] input[type="text"]:not(.keep-light *):not(.wizard-form-exclude *),
+[data-theme="dark"] input[type="number"]:not(.keep-light *):not(.wizard-form-exclude *),
+[data-theme="dark"] input[type="email"]:not(.keep-light *):not(.wizard-form-exclude *),
+[data-theme="dark"] input[type="password"]:not(.keep-light *):not(.wizard-form-exclude *) {
+  background-color: var(--color-bg-input) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border) !important;
+}
+
+[data-theme="dark"] select option {
+  background-color: var(--color-bg-card);
+  color: var(--color-text-primary);
+}
+
+
+/* ── 4. HEADER — DARK MODE ───────────────────────────────────────────────── */
+
+[data-theme="dark"] header {
+  background-color: rgba(15, 17, 23, 0.92) !important;
+  backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: none !important;
+}
+
+[data-theme="dark"] header h1 {
+  color: var(--color-text-primary) !important;
+}
+
+
+/* ── 5. SETTINGS PANEL — DARK MODE ───────────────────────────────────────── */
+
+[data-theme="dark"] .settings-panel-body {
+  background-color: var(--color-bg-secondary) !important;
+}
+
+[data-theme="dark"] .settings-panel-footer {
+  background-color: var(--color-bg-secondary) !important;
+  border-top-color: var(--color-border) !important;
+}
+
+
+/* ── 6. CONCENTRIC RINGS CARD — DARK MODE ────────────────────────────────── */
+
+[data-theme="dark"] .concept-b-rings-card {
+  background: var(--color-bg-card) !important;
+  border-color: var(--color-border) !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+[data-theme="dark"] .concept-b-rings-card:hover {
+  box-shadow: var(--shadow-card-hover) !important;
+}
+
+[data-theme="dark"] .concept-b-ring-center-num {
+  color: var(--color-text-primary) !important;
+}
+
+[data-theme="dark"] .concept-b-label-text {
+  color: #9ca3af !important;
+}
+
+[data-theme="dark"] .concept-b-label-current {
+  color: var(--color-text-primary) !important;
+}
+
+[data-theme="dark"] .concept-b-label-row:hover {
+  background-color: var(--color-bg-card-hover) !important;
+}
+
+
+/* ── 7. SEMANTIC BG COLOURS — DARK MODE ──────────────────────────────────── */
+
+[data-theme="dark"] .bg-red-50 {
+  background-color: rgba(239, 68, 68, 0.1) !important;
+}
+
+[data-theme="dark"] .bg-green-50 {
+  background-color: rgba(16, 185, 129, 0.1) !important;
+}
+
+[data-theme="dark"] .bg-yellow-50 {
+  background-color: rgba(245, 158, 11, 0.1) !important;
+}
+
+[data-theme="dark"] .bg-blue-50 {
+  background-color: rgba(59, 130, 246, 0.1) !important;
+}
+
+[data-theme="dark"] .bg-indigo-50 {
+  background-color: rgba(99, 102, 241, 0.1) !important;
+}
+
+[data-theme="dark"] .bg-purple-50 {
+  background-color: rgba(168, 85, 247, 0.1) !important;
+}
+
+[data-theme="dark"] .hover\:bg-red-50:hover {
+  background-color: rgba(239, 68, 68, 0.15) !important;
+}
+
+[data-theme="dark"] .bg-green-600 {
+  /* Keep green bg for "Eaten" button */
+}
+
+
+/* ── 8. SCROLLBAR — DARK MODE ────────────────────────────────────────────── */
+
+[data-theme="dark"] ::-webkit-scrollbar {
+  width: 8px;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: var(--color-bg-primary);
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #3d4158;
+  border-radius: 4px;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #4d5170;
+}
+
+
+/* ── 9. PROFILE CARD STRIPE — DARK MODE (Issue #1) ──────────────────────── */
+/* Hide the purple gradient stripe on top of User Profile card in dark mode */
+[data-theme="dark"] .profile-card-stripe {
+  display: none !important;
+}
+
+
+/* ── 10. TARGETS CARD "Your Daily Nutritional Blueprint" — DARK MODE (Issue #5) */
+/* The card container and inner panels need dark treatment */
+[data-theme="dark"] .targets-card-surface {
+  background-color: var(--color-bg-card) !important;
+  border-color: var(--color-border) !important;
+}
+
+/* The left side with the calorie ring */
+[data-theme="dark"] .targets-card-ring-panel {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06)) !important;
+  border-right-color: var(--color-border) !important;
+}
+
+/* The right side macro breakdown */
+[data-theme="dark"] .targets-card-macro-panel {
+  background-color: var(--color-bg-card) !important;
+}
+
+/* Footer info panel */
+[data-theme="dark"] .targets-card-footer {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06)) !important;
+}
+
+
+/* ── 11. TRANSITION — Smooth theme switch ────────────────────────────────── */
+
+html[data-theme] body,
+html[data-theme] #root {
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
