@@ -2,22 +2,25 @@
 // =============================================================================
 // ShoppingListWithDetails — Shopping list with product cards and detail modal
 //
-// REDESIGN: Category selector now uses Calendar-Strip style (Concept D)
-// matching the "Your Nutrition" day selector. Full dark/light mode support.
+// REDESIGN v2: Category selector now lives INSIDE the Shopping List section
+// card as a native sub-section, exactly mirroring how the CalendarStripSelector
+// lives inside the mpd-section-card in MealPlanDisplay.
 //
-// FIXES PRESERVED:
-// 1. KEY LOOKUP: Use item.normalizedKey (from backend normalizeKey()) instead
-//    of item.originalIngredient.toLowerCase().trim() — the results object is
-//    keyed by snake_case normalizedKey, not by lowercase original ingredient.
-//    This was the primary cause of most products not appearing.
-// 2. PRICE FILTER REMOVED: The old .filter(p => p.price !== null) silently
-//    dropped every ingredient whose lookup failed or had price=0.
-//    All ingredients now render; items without price show "N/A".
-// 3. PRICE=0 FIX: parseFloat guard now treats 0 as a valid price.
-// 4. isOpen PROP: Confirmed !!selectedProductModal (not inverted).
+// Structure:
+//   .sld-section-card               ← mirrors .mpd-section-card
+//     .sld-header                   ← gradient header area
+//     .sld-cat-strip-wrapper        ← mirrors .mpd-cal-strip-wrapper (bleed trick)
+//       .sld-cat-strip              ← mirrors .mpd-cal-strip
+//         .sld-cat-cell             ← mirrors .mpd-cal-day
+//           .sld-cat-count          ← mirrors .mpd-cal-num
+//           .sld-cat-label          ← mirrors .mpd-cal-dow
+//   Product list (outside card)
+//
+// FIXES PRESERVED: key lookup, price filter removal, price=0, isOpen prop.
+// NO LOGIC CHANGES.
 // =============================================================================
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   ShoppingBag, 
   Copy,
@@ -42,6 +45,16 @@ const ShoppingListWithDetails = ({
 }) => {
   const [activeCategory, setActiveCategory] = useState('all');
   const [selectedProductModal, setSelectedProductModal] = useState(null);
+  const stripRef = useRef(null);
+
+  // Auto-scroll active category into view
+  useEffect(() => {
+    if (!stripRef.current) return;
+    const activeEl = stripRef.current.querySelector('[data-active="true"]');
+    if (activeEl) {
+      activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [activeCategory]);
 
   // Store name detection
   const actualStoreName = useMemo(() => {
@@ -63,14 +76,12 @@ const ShoppingListWithDetails = ({
   // Transform ingredients into product cards
   const products = useMemo(() => {
     return ingredients.map((item, idx) => {
-      // FIX 1: Use item.normalizedKey (backend snake_case key) for the results lookup.
       const normalizedKey = item.normalizedKey || item.originalIngredient?.toLowerCase().trim();
       const result = results[normalizedKey] || {};
       const allProducts = result.allProducts || result.products || [];
       const selectedIndex = result.selectedIndex ?? 0;
       const selectedProduct = allProducts[selectedIndex];
 
-      // FIX 3: parseFloat guard treats 0 as valid
       let price = null;
       if (selectedProduct) {
         const rawPrice = selectedProduct.product_price ?? selectedProduct.price;
@@ -102,7 +113,6 @@ const ShoppingListWithDetails = ({
         category: item.category || 'uncategorized',
       };
     });
-    // FIX 2: No .filter(p => p.price !== null)
   }, [ingredients, results]);
 
   // Categorize products
@@ -230,76 +240,35 @@ const ShoppingListWithDetails = ({
   };
 
   return (
-    <div style={{
-      fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-      padding: '20px',
-      maxWidth: '800px',
-      margin: '0 auto',
-    }}>
-      {/* Header */}
-      <div style={{
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        borderRadius: '20px',
-        padding: '24px',
-        marginBottom: '24px',
-        boxShadow: '0 8px 24px rgba(102, 126, 234, 0.25)',
-      }}>
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          marginBottom: '16px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <div style={{
-              background: 'rgba(255, 255, 255, 0.2)',
-              borderRadius: '14px',
-              padding: '12px',
-              marginRight: '16px',
-              backdropFilter: 'blur(10px)',
-            }}>
-              <ShoppingBag size={28} color="#ffffff" />
+    <div className="sld-root">
+
+      {/* ════════════════════════════════════════════════════════════════════════
+           SECTION CARD — mirrors .mpd-section-card
+           Contains: header + action buttons + category strip as unified component
+           ════════════════════════════════════════════════════════════════════════ */}
+      <div className="sld-section-card">
+
+        {/* ── Header area ── */}
+        <div className="sld-header">
+          <div className="sld-header-left">
+            <div className="sld-header-icon">
+              <ShoppingBag size={22} color="#ffffff" />
             </div>
             <div>
-              <h2 style={{
-                fontSize: '22px',
-                fontWeight: '700',
-                color: '#ffffff',
-                margin: '0 0 4px 0',
-              }}>
-                Shopping List
-              </h2>
-              <p style={{
-                fontSize: '14px',
-                color: 'rgba(255, 255, 255, 0.75)',
-                margin: 0,
-              }}>
+              <h2 className="sld-header-title">Shopping List</h2>
+              <p className="sld-header-sub">
                 {products.length} items from {actualStoreName}
               </p>
             </div>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <p style={{
-              fontSize: '28px',
-              fontWeight: '700',
-              color: '#ffffff',
-              margin: '0 0 2px 0',
-              lineHeight: 1,
-            }}>
-              ${totalCost.toFixed(2)}
-            </p>
-            <p style={{
-              fontSize: '12px',
-              color: 'rgba(255, 255, 255, 0.65)',
-              margin: 0,
-            }}>
-              Total Cost
-            </p>
+          <div className="sld-header-right">
+            <p className="sld-header-total">${totalCost.toFixed(2)}</p>
+            <p className="sld-header-total-label">Total Cost</p>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        {/* ── Action Buttons — styled like mpd-copy-btn ── */}
+        <div className="sld-actions">
           {[
             { Icon: Copy, label: 'Copy', onClick: handleCopyList },
             { Icon: Printer, label: 'Print', onClick: handlePrint },
@@ -308,67 +277,49 @@ const ShoppingListWithDetails = ({
             <button
               key={label}
               onClick={onClick}
-              className="shopping-action-button"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '10px 16px',
-                background: 'rgba(255, 255, 255, 0.2)',
-                border: '1.5px solid rgba(255, 255, 255, 0.3)',
-                borderRadius: '12px',
-                color: '#ffffff',
-                fontSize: '14px',
-                fontWeight: '600',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                backdropFilter: 'blur(10px)',
-              }}
+              className="sld-action-btn"
             >
-              <Icon size={16} />
-              <span>{label}</span>
+              <Icon size={15} />
+              <span className="sld-action-btn__label">{label}</span>
             </button>
           ))}
         </div>
-      </div>
 
-      {/* ════════ Category Selector — Calendar Strip Style (Concept D) ════════ */}
-      <div style={{ marginBottom: '20px' }}>
-        <div className="cat-strip-wrapper">
-          <div className="cat-strip">
+        {/* ── Category Strip — mirrors .mpd-cal-strip-wrapper / .mpd-cal-strip ──
+             Uses the same negative-margin bleed trick so the strip sits
+             edge-to-edge within the section card's 22px padding. ── */}
+        <div className="sld-cat-strip-wrapper">
+          <div ref={stripRef} className="sld-cat-strip">
             {categories.map(({ id, label, count }) => {
               const isActive = activeCategory === id;
               return (
                 <button
                   key={id}
+                  data-active={isActive}
                   onClick={() => setActiveCategory(id)}
-                  className={`cat-strip__item ${isActive ? 'cat-strip__item--active' : ''}`}
+                  className={`sld-cat-cell ${isActive ? 'sld-cat-cell--active' : ''}`}
                 >
-                  <span className="cat-strip__count">{count}</span>
-                  <span className="cat-strip__label">{label}</span>
+                  <span className="sld-cat-count">{count}</span>
+                  <span className="sld-cat-label">{label}</span>
                 </button>
               );
             })}
           </div>
         </div>
-      </div>
 
-      {/* Product list */}
-      <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '12px',
-      }}>
+      </div>
+      {/* ── end .sld-section-card ── */}
+
+
+      {/* ════════ Product list ════════ */}
+      <div className="sld-product-list">
         {filteredProducts.length === 0 ? (
-          <div className="shopping-empty-state">
-            <ShoppingBag 
-              size={48} 
-              className="shopping-empty-state__icon"
-            />
-            <div className="shopping-empty-state__title">
+          <div className="sld-empty-state">
+            <ShoppingBag size={48} className="sld-empty-state__icon" />
+            <div className="sld-empty-state__title">
               No {activeCategory !== 'all' ? activeCategory : ''} items yet
             </div>
-            <div className="shopping-empty-state__text">
+            <div className="sld-empty-state__text">
               Add items to your list to get started
             </div>
           </div>
@@ -387,7 +338,7 @@ const ShoppingListWithDetails = ({
         )}
       </div>
 
-      {/* Product Detail Modal — FIX 4: isOpen is !!selectedProductModal (not inverted) */}
+      {/* ════════ Product Detail Modal ════════ */}
       {modalProductData && (
         <ProductDetailModal
           isOpen={!!selectedProductModal}
@@ -404,144 +355,359 @@ const ShoppingListWithDetails = ({
         />
       )}
 
-      {/* Styles */}
+
+      {/* ════════════════════════════════════════════════════════════════════════
+           SCOPED STYLES
+           ════════════════════════════════════════════════════════════════════════
+           Every value below is copied verbatim from MealPlanDisplay's inline
+           <style> block and mpd-theme-override.css so the Shopping List card
+           is a pixel-perfect sibling of the Nutrition card.
+           ════════════════════════════════════════════════════════════════════════ */}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
-        
+
         * { box-sizing: border-box; }
 
-
-        /* ==============================================
-           CATEGORY SELECTOR — Calendar Strip (Concept D)
-           Mirrors the MealPlanDisplay .mpd-cal-strip
-           ============================================== */
-
-        .cat-strip-wrapper {
-          /* Negative margin trick to bleed into container edges, matching mpd-cal-strip-wrapper */
+        .sld-root {
+          font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          padding: 16px;
+          max-width: 800px;
+          margin: 0 auto;
         }
 
-        .cat-strip {
+
+        /* ==========================================================
+           SECTION CARD
+           Source: .mpd-section-card { background: #1a1d2a;
+             border-radius: 20px; padding: 22px; border: 1px solid #262a3a; }
+           ========================================================== */
+
+        .sld-section-card {
+          background: #1a1d2a;
+          border-radius: 20px;
+          padding: 22px;
+          border: 1px solid #262a3a;
+          margin-bottom: 20px;
+          box-shadow:
+            0 4px 16px rgba(0, 0, 0, 0.35),
+            0 0 0 1px rgba(99, 102, 241, 0.08);
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-section-card */
+        [data-theme="light"] .sld-section-card {
+          background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+          border: 1px solid #e0e7ff;
+          box-shadow:
+            0 2px 8px rgba(99, 102, 241, 0.06),
+            0 0 0 1px rgba(99, 102, 241, 0.04);
+        }
+
+
+        /* ==========================================================
+           HEADER — mirrors .mpd-header layout
+           ========================================================== */
+
+        .sld-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          margin-bottom: 16px;
+        }
+
+        .sld-header-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .sld-header-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 42px;
+          height: 42px;
+          border-radius: 12px;
+          background: linear-gradient(135deg, #6366f1, #a855f7);
+          flex-shrink: 0;
+        }
+
+        /* Source: .mpd-header-title { font-size: 1.15rem; font-weight: 700; color: #f0f1f5; } */
+        .sld-header-title {
+          font-size: 1.15rem;
+          font-weight: 700;
+          color: #f0f1f5;
+          line-height: 1.2;
+          margin: 0;
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-header-title */
+        [data-theme="light"] .sld-header-title {
+          color: #1f2937;
+        }
+
+        /* Source: .mpd-header-sub { font-size: 0.75rem; color: #7b809a; } */
+        .sld-header-sub {
+          font-size: 0.75rem;
+          color: #7b809a;
+          margin: 1px 0 0 0;
+        }
+
+        [data-theme="light"] .sld-header-sub {
+          color: #6b7280;
+        }
+
+        .sld-header-right {
+          text-align: right;
+          flex-shrink: 0;
+        }
+
+        .sld-header-total {
+          font-size: 1.6rem;
+          font-weight: 700;
+          color: #f0f1f5;
+          line-height: 1;
+          margin: 0 0 2px 0;
+          font-variant-numeric: tabular-nums;
+        }
+
+        [data-theme="light"] .sld-header-total {
+          color: #1f2937;
+        }
+
+        .sld-header-total-label {
+          font-size: 0.7rem;
+          color: #7b809a;
+          margin: 0;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          font-weight: 600;
+        }
+
+        [data-theme="light"] .sld-header-total-label {
+          color: #9ca3af;
+        }
+
+
+        /* ==========================================================
+           ACTION BUTTONS — mirrors .mpd-copy-btn
+           Source: .mpd-copy-btn { padding: 8px 14px; border-radius: 10px;
+             background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.2);
+             color: #818cf8; font-size: 0.78rem; font-weight: 600; }
+           ========================================================== */
+
+        .sld-actions {
+          display: flex;
+          gap: 6px;
+          margin-bottom: 16px;
+          flex-wrap: wrap;
+        }
+
+        .sld-action-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 14px;
+          border-radius: 10px;
+          background: rgba(99, 102, 241, 0.12);
+          border: 1px solid rgba(99, 102, 241, 0.2);
+          color: #818cf8;
+          font-size: 0.78rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-family: inherit;
+        }
+
+        .sld-action-btn:hover {
+          background: rgba(99, 102, 241, 0.22);
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-copy-btn */
+        [data-theme="light"] .sld-action-btn {
+          background: rgba(99, 102, 241, 0.08);
+          border-color: rgba(99, 102, 241, 0.18);
+          color: #4f46e5;
+        }
+
+        [data-theme="light"] .sld-action-btn:hover {
+          background: rgba(99, 102, 241, 0.15);
+        }
+
+
+        /* ==========================================================
+           CATEGORY STRIP
+           Source: .mpd-cal-strip-wrapper { margin: 0 -22px 18px; padding: 0 22px; }
+           Source: .mpd-cal-strip { display: flex; gap: 8px; padding: 8px;
+             background: rgba(255,255,255,0.04); border-radius: 14px;
+             border: 1px solid #262a3a; overflow-x: auto; }
+           ========================================================== */
+
+        .sld-cat-strip-wrapper {
+          margin: 0 -22px 0;
+          padding: 0 22px;
+        }
+
+        .sld-cat-strip {
           display: flex;
           gap: 8px;
           padding: 8px;
           background: rgba(255, 255, 255, 0.04);
           border-radius: 14px;
-          border: 1px solid var(--color-border, #2d3148);
+          border: 1px solid #262a3a;
           overflow-x: auto;
           -ms-overflow-style: none;
           scrollbar-width: none;
         }
 
-        .cat-strip::-webkit-scrollbar { display: none; }
+        .sld-cat-strip::-webkit-scrollbar { display: none; }
 
-        /* Light mode strip */
-        [data-theme="light"] .cat-strip {
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-strip */
+        [data-theme="light"] .sld-cat-strip {
           background: rgba(99, 102, 241, 0.04);
           border-color: #e0e7ff;
         }
 
 
-        /* ── Individual category cell ── */
+        /* ==========================================================
+           CATEGORY CELL
+           Source: .mpd-cal-day { display: flex; flex-direction: column;
+             align-items: center; padding: 8px 12px; border-radius: 12px;
+             cursor: pointer; transition: all 0.25s ease; flex-shrink: 0;
+             min-width: 50px; border: 1px solid transparent; background: transparent; }
+           ========================================================== */
 
-        .cat-strip__item {
+        .sld-cat-cell {
           display: flex;
           flex-direction: column;
           align-items: center;
-          padding: 10px 14px;
+          padding: 8px 12px;
           border-radius: 12px;
           cursor: pointer;
           transition: all 0.25s ease;
           flex-shrink: 0;
-          min-width: 56px;
+          min-width: 50px;
           border: 1px solid transparent;
           background: transparent;
           font-family: inherit;
           -webkit-tap-highlight-color: transparent;
         }
 
-        .cat-strip__item:hover:not(.cat-strip__item--active) {
+        /* Source: .mpd-cal-day:hover:not(.mpd-cal-day--active) */
+        .sld-cat-cell:hover:not(.sld-cat-cell--active) {
           background: rgba(255, 255, 255, 0.06);
           border-color: rgba(255, 255, 255, 0.08);
         }
 
-        [data-theme="light"] .cat-strip__item:hover:not(.cat-strip__item--active) {
+        /* Source: mpd-theme-override.css light mode cal-day */
+        [data-theme="light"] .sld-cat-cell {
+          background: transparent;
+          border-color: transparent;
+        }
+
+        [data-theme="light"] .sld-cat-cell:hover:not(.sld-cat-cell--active) {
           background: rgba(99, 102, 241, 0.06);
           border-color: rgba(99, 102, 241, 0.12);
         }
 
-        .cat-strip__item:active {
+        .sld-cat-cell:active {
           transform: scale(0.95);
         }
 
 
-        /* ── Active state — gradient background matching Cheffy brand ── */
+        /* ── Active state ──
+           Source: .mpd-cal-day--active { background: linear-gradient(135deg, #6366f1, #a855f7);
+             border-color: rgba(99,102,241,0.4); box-shadow: 0 4px 20px rgba(99,102,241,0.35); }
+        */
 
-        .cat-strip__item--active {
+        .sld-cat-cell--active {
           background: linear-gradient(135deg, #6366f1, #a855f7);
           border-color: rgba(99, 102, 241, 0.4);
           box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
         }
 
-        [data-theme="light"] .cat-strip__item--active {
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-day--active */
+        [data-theme="light"] .sld-cat-cell--active {
           background: linear-gradient(135deg, #6366f1, #a855f7);
           border-color: transparent;
           box-shadow: 0 3px 12px rgba(99, 102, 241, 0.35);
         }
 
 
-        /* ── Count number ── */
+        /* ── Count number ──
+           Source: .mpd-cal-num { font-size: 1.15rem; font-weight: 700; color: #e8eaf0; }
+           Source: .mpd-cal-day--active .mpd-cal-num { color: white; }
+        */
 
-        .cat-strip__count {
-          font-size: 16px;
+        .sld-cat-count {
+          font-family: 'DM Sans', -apple-system, sans-serif;
+          font-size: 1.15rem;
           font-weight: 700;
           color: #e8eaf0;
           line-height: 1;
-          margin-bottom: 3px;
-          font-family: 'DM Sans', -apple-system, sans-serif;
         }
 
-        .cat-strip__item--active .cat-strip__count {
-          color: #ffffff;
+        .sld-cat-cell--active .sld-cat-count {
+          color: white;
         }
 
-        [data-theme="light"] .cat-strip__count {
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-num { color: #374151; } */
+        [data-theme="light"] .sld-cat-count {
           color: #374151;
         }
 
-        [data-theme="light"] .cat-strip__item--active .cat-strip__count {
+        [data-theme="light"] .sld-cat-cell--active .sld-cat-count {
           color: #ffffff;
         }
 
 
-        /* ── Category label ── */
+        /* ── Category label ──
+           Source: .mpd-cal-dow { font-size: 0.6rem; text-transform: uppercase;
+             letter-spacing: 0.12em; color: #7b809a; margin-bottom: 3px;
+             font-weight: 600; }
+           Source: .mpd-cal-day--active .mpd-cal-dow { color: rgba(255,255,255,0.8); }
+        */
 
-        .cat-strip__label {
-          font-size: 10px;
+        .sld-cat-label {
+          font-size: 0.6rem;
           text-transform: uppercase;
-          letter-spacing: 0.1em;
+          letter-spacing: 0.12em;
           color: #7b809a;
+          margin-top: 3px;
           font-weight: 600;
           line-height: 1;
         }
 
-        .cat-strip__item--active .cat-strip__label {
-          color: rgba(255, 255, 255, 0.85);
+        .sld-cat-cell--active .sld-cat-label {
+          color: rgba(255, 255, 255, 0.8);
         }
 
-        [data-theme="light"] .cat-strip__label {
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-dow { color: #9ca3af; } */
+        [data-theme="light"] .sld-cat-label {
           color: #9ca3af;
         }
 
-        [data-theme="light"] .cat-strip__item--active .cat-strip__label {
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-day--active .mpd-cal-dow */
+        [data-theme="light"] .sld-cat-cell--active .sld-cat-label {
           color: rgba(255, 255, 255, 0.85);
         }
 
 
-        /* ==============================================
-           EMPTY STATE — Dark/Light mode aware
-           ============================================== */
+        /* ==========================================================
+           PRODUCT LIST
+           ========================================================== */
 
-        .shopping-empty-state {
+        .sld-product-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+
+        /* ==========================================================
+           EMPTY STATE — theme-aware
+           ========================================================== */
+
+        .sld-empty-state {
           text-align: center;
           padding: 60px 20px;
           background: var(--color-bg-card, #1e2130);
@@ -549,60 +715,77 @@ const ShoppingListWithDetails = ({
           border: 2px dashed var(--color-border, #2d3148);
         }
 
-        [data-theme="light"] .shopping-empty-state {
+        [data-theme="light"] .sld-empty-state {
           background: #ffffff;
           border-color: #e2e8f0;
         }
 
-        .shopping-empty-state__icon {
+        .sld-empty-state__icon {
           color: var(--color-text-tertiary, #6b7280);
           margin: 0 auto 16px;
           display: block;
         }
 
-        .shopping-empty-state__title {
+        .sld-empty-state__title {
           font-size: 18px;
           font-weight: 600;
           color: var(--color-text-primary, #f0f1f5);
           margin-bottom: 8px;
         }
 
-        [data-theme="light"] .shopping-empty-state__title {
+        [data-theme="light"] .sld-empty-state__title {
           color: #4a5568;
         }
 
-        .shopping-empty-state__text {
+        .sld-empty-state__text {
           font-size: 14px;
           color: var(--color-text-secondary, #9ca3b0);
         }
 
-        [data-theme="light"] .shopping-empty-state__text {
+        [data-theme="light"] .sld-empty-state__text {
           color: #718096;
         }
 
 
-        /* ==============================================
-           EXISTING STYLES (preserved)
-           ============================================== */
-
-        .shopping-action-button:hover {
-          background: rgba(255, 255, 255, 0.3) !important;
-          transform: translateY(-1px);
-        }
-        .shopping-action-button:active { transform: translateY(0); }
+        /* ==========================================================
+           RESPONSIVE
+           ========================================================== */
 
         @media (max-width: 768px) {
-          .shopping-action-button span { display: none; }
-          .shopping-action-button {
-            min-width: 44px !important;
-            padding: 12px !important;
+          .sld-action-btn__label { display: none; }
+          .sld-action-btn {
+            min-width: 40px;
+            padding: 10px;
+            justify-content: center;
           }
         }
-        
+
+        @media (max-width: 400px) {
+          .sld-header-total {
+            font-size: 1.3rem;
+          }
+          .sld-header-title {
+            font-size: 1rem;
+          }
+        }
+
+
+        /* ==========================================================
+           PRINT
+           ========================================================== */
+
         @media print {
           body { background: white !important; }
-          .shopping-action-button,
-          .cat-strip-wrapper { display: none !important; }
+          .sld-actions,
+          .sld-cat-strip-wrapper { display: none !important; }
+          .sld-section-card {
+            background: white !important;
+            border-color: #e5e7eb !important;
+            box-shadow: none !important;
+            color: #111 !important;
+          }
+          .sld-header-title,
+          .sld-header-total { color: #111 !important; }
           .glass-card {
             break-inside: avoid;
             page-break-inside: avoid;
