@@ -1,8 +1,9 @@
 // web/src/components/wizard/PersonalInfoStep.jsx
-// UPDATED: Name is now mandatory, unit selectors for weight (kg/lb) and height (cm/ft+in).
+// UPDATED: Full dark mode support — inputs, labels, unit toggles, gender selector.
 // All values stored internally as metric (cm, kg) in formData.
 import React, { useState, useEffect, useCallback } from 'react';
 import { COLORS } from '../../constants';
+import { useTheme } from '../../contexts/ThemeContext';
 
 // ── Conversion helpers ──────────────────────────────────────────────────────
 const kgToLb = (kg) => {
@@ -28,70 +29,52 @@ const ftInToCm = (ft, inches) => {
   return ((f * 12 + i) * 2.54).toFixed(1);
 };
 
-// ── Shared styles ───────────────────────────────────────────────────────────
-const inputStyle = {
-  width: '100%',
-  padding: '10px 12px',
-  borderRadius: '8px',
-  border: `1.5px solid ${COLORS.gray[300]}`,
-  fontSize: '15px',
-  color: COLORS.gray[900],
-  backgroundColor: '#fff',
-  outline: 'none',
-  transition: 'border-color 0.2s',
-};
+// ── Inline unit toggle (theme-aware) ────────────────────────────────────────
+const UnitToggle = ({ options, value, onChange }) => {
+  const { isDark } = useTheme();
+  const borderColor = isDark ? '#3d4158' : COLORS.gray[300];
+  const inactiveBg = isDark ? '#252839' : '#fff';
+  const inactiveColor = isDark ? '#9ca3b0' : COLORS.gray[600];
 
-const labelStyle = {
-  display: 'block',
-  fontSize: '13px',
-  fontWeight: 600,
-  color: COLORS.gray[700],
-  marginBottom: '6px',
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        border: `1.5px solid ${borderColor}`,
+        flexShrink: 0,
+      }}
+    >
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          onClick={() => onChange(opt.value)}
+          style={{
+            padding: '6px 14px',
+            fontSize: '13px',
+            fontWeight: 600,
+            border: 'none',
+            cursor: 'pointer',
+            backgroundColor: value === opt.value ? COLORS.primary[500] : inactiveBg,
+            color: value === opt.value ? '#fff' : inactiveColor,
+            transition: 'all 0.15s',
+          }}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
 };
-
-const errorStyle = {
-  fontSize: '12px',
-  color: '#ef4444',
-  marginTop: '4px',
-};
-
-// ── Inline unit toggle ──────────────────────────────────────────────────────
-const UnitToggle = ({ options, value, onChange }) => (
-  <div
-    style={{
-      display: 'inline-flex',
-      borderRadius: '8px',
-      overflow: 'hidden',
-      border: `1.5px solid ${COLORS.gray[300]}`,
-      flexShrink: 0,
-    }}
-  >
-    {options.map((opt) => (
-      <button
-        key={opt.value}
-        type="button"
-        onClick={() => onChange(opt.value)}
-        style={{
-          padding: '6px 14px',
-          fontSize: '13px',
-          fontWeight: 600,
-          border: 'none',
-          cursor: 'pointer',
-          backgroundColor: value === opt.value ? COLORS.primary[500] : '#fff',
-          color: value === opt.value ? '#fff' : COLORS.gray[600],
-          transition: 'all 0.15s',
-        }}
-      >
-        {opt.label}
-      </button>
-    ))}
-  </div>
-);
 
 // ═════════════════════════════════════════════════════════════════════════════
 // PersonalStep — "About You" wizard step
 // ═════════════════════════════════════════════════════════════════════════════
 const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'metric' }) => {
+  const { isDark } = useTheme();
+
   // ── Local unit state (defaults from app-level setting) ──
   const [weightUnit, setWeightUnit] = useState(
     measurementUnits === 'imperial' ? 'lb' : 'kg'
@@ -129,7 +112,7 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Unit‐switch handlers (convert display without touching formData) ──
+  // ── Unit‐switch handlers ──
   const handleWeightUnitChange = useCallback(
     (newUnit) => {
       if (newUnit === weightUnit) return;
@@ -191,12 +174,37 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
     onChange({ target: { name: 'height', value: cm } });
   };
 
+  // ── Theme-aware styles ──
+  const inputStyle = {
+    width: '100%',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    border: `1.5px solid ${isDark ? '#3d4158' : COLORS.gray[300]}`,
+    fontSize: '15px',
+    color: isDark ? '#f0f1f5' : COLORS.gray[900],
+    backgroundColor: isDark ? '#252839' : '#fff',
+    outline: 'none',
+    transition: 'border-color 0.2s',
+  };
+
+  const labelStyle = {
+    display: 'block',
+    fontSize: '13px',
+    fontWeight: 600,
+    color: isDark ? '#d1d5db' : COLORS.gray[700],
+    marginBottom: '6px',
+  };
+
+  const errorStyle = {
+    fontSize: '12px',
+    color: '#ef4444',
+    marginTop: '4px',
+  };
+
   // ═════════════════════════════════════════════════════════════════════════
   return (
     <div
-      className="wizard-form-exclude"
       style={{
-        padding: '20px 24px',
         display: 'flex',
         flexDirection: 'column',
         gap: '18px',
@@ -216,7 +224,7 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
           autoComplete="given-name"
           style={{
             ...inputStyle,
-            borderColor: errors.name ? '#ef4444' : COLORS.gray[300],
+            borderColor: errors.name ? '#ef4444' : (isDark ? '#3d4158' : COLORS.gray[300]),
           }}
         />
         {errors.name && <div style={errorStyle}>{errors.name}</div>}
@@ -242,9 +250,13 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
                   flex: 1,
                   padding: '10px',
                   borderRadius: '10px',
-                  border: `2px solid ${isActive ? COLORS.primary[500] : COLORS.gray[200]}`,
-                  backgroundColor: isActive ? `${COLORS.primary[500]}10` : '#fff',
-                  color: isActive ? COLORS.primary[700] : COLORS.gray[600],
+                  border: `2px solid ${isActive ? COLORS.primary[500] : (isDark ? '#3d4158' : COLORS.gray[200])}`,
+                  backgroundColor: isActive
+                    ? `${COLORS.primary[500]}10`
+                    : (isDark ? '#252839' : '#fff'),
+                  color: isActive
+                    ? (isDark ? '#a5b4fc' : COLORS.primary[700])
+                    : (isDark ? '#9ca3b0' : COLORS.gray[600]),
                   fontWeight: 600,
                   fontSize: '14px',
                   cursor: 'pointer',
@@ -292,7 +304,7 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
           placeholder={weightUnit === 'kg' ? 'e.g. 75' : 'e.g. 165'}
           style={{
             ...inputStyle,
-            borderColor: errors.weight ? '#ef4444' : COLORS.gray[300],
+            borderColor: errors.weight ? '#ef4444' : (isDark ? '#3d4158' : COLORS.gray[300]),
           }}
         />
         {errors.weight && <div style={errorStyle}>{errors.weight}</div>}
@@ -328,12 +340,12 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
             placeholder="e.g. 180"
             style={{
               ...inputStyle,
-              borderColor: errors.height ? '#ef4444' : COLORS.gray[300],
+              borderColor: errors.height ? '#ef4444' : (isDark ? '#3d4158' : COLORS.gray[300]),
             }}
           />
         ) : (
           <div style={{ display: 'flex', gap: '10px' }}>
-            <div style={{ flex: 1, position: 'relative' }}>
+            <div style={{ flex: 1 }}>
               <input
                 type="number"
                 inputMode="numeric"
@@ -342,24 +354,11 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
                 placeholder="ft"
                 style={{
                   ...inputStyle,
-                  borderColor: errors.height ? '#ef4444' : COLORS.gray[300],
+                  borderColor: errors.height ? '#ef4444' : (isDark ? '#3d4158' : COLORS.gray[300]),
                 }}
               />
-              <span
-                style={{
-                  position: 'absolute',
-                  right: '12px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  fontSize: '12px',
-                  color: COLORS.gray[400],
-                  pointerEvents: 'none',
-                }}
-              >
-                ft
-              </span>
             </div>
-            <div style={{ flex: 1, position: 'relative' }}>
+            <div style={{ flex: 1 }}>
               <input
                 type="number"
                 inputMode="numeric"
@@ -368,22 +367,9 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
                 placeholder="in"
                 style={{
                   ...inputStyle,
-                  borderColor: errors.height ? '#ef4444' : COLORS.gray[300],
+                  borderColor: errors.height ? '#ef4444' : (isDark ? '#3d4158' : COLORS.gray[300]),
                 }}
               />
-              <span
-                style={{
-                  position: 'absolute',
-                  right: '12px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  fontSize: '12px',
-                  color: COLORS.gray[400],
-                  pointerEvents: 'none',
-                }}
-              >
-                in
-              </span>
             </div>
           </div>
         )}
@@ -402,7 +388,7 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
           placeholder="e.g. 30"
           style={{
             ...inputStyle,
-            borderColor: errors.age ? '#ef4444' : COLORS.gray[300],
+            borderColor: errors.age ? '#ef4444' : (isDark ? '#3d4158' : COLORS.gray[300]),
           }}
         />
         {errors.age && <div style={errorStyle}>{errors.age}</div>}
@@ -412,7 +398,7 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
       <div>
         <label style={labelStyle}>
           Body Fat %{' '}
-          <span style={{ fontSize: '11px', fontWeight: 400, color: COLORS.gray[400] }}>
+          <span style={{ fontSize: '11px', fontWeight: 400, color: isDark ? '#6b7280' : COLORS.gray[400] }}>
             (optional)
           </span>
         </label>
@@ -425,7 +411,7 @@ const PersonalStep = ({ formData, onChange, errors = {}, measurementUnits = 'met
           placeholder="e.g. 18"
           style={{
             ...inputStyle,
-            borderColor: errors.bodyFat ? '#ef4444' : COLORS.gray[300],
+            borderColor: errors.bodyFat ? '#ef4444' : (isDark ? '#3d4158' : COLORS.gray[300]),
           }}
         />
         {errors.bodyFat && <div style={errorStyle}>{errors.bodyFat}</div>}
