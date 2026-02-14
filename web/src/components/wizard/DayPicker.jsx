@@ -1,13 +1,23 @@
 // web/src/components/wizard/DayPicker.jsx
+// UPDATED: Full dark mode support — day buttons, labels, borders.
 import React from 'react';
 import { COLORS, SHADOWS } from '../../constants';
+import { useTheme } from '../../contexts/ThemeContext';
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7];
 
 const DayPicker = ({ value, onChange }) => {
+  const { isDark } = useTheme();
+
   const handleSelect = (day) => {
     onChange({ target: { name: 'days', value: day } });
   };
+
+  const labelColor = isDark ? '#9ca3b0' : COLORS.gray[400];
+  const valueColor = isDark ? '#a5b4fc' : COLORS.primary[600];
+  const unselectedBg = isDark ? '#252839' : '#fff';
+  const unselectedBorder = isDark ? '#3d4158' : COLORS.gray[200];
+  const unselectedColor = isDark ? '#6b7280' : COLORS.gray[500];
 
   return (
     <div>
@@ -18,14 +28,14 @@ const DayPicker = ({ value, onChange }) => {
           style={{
             fontSize: '11px',
             letterSpacing: '0.05em',
-            color: COLORS.gray[400],
+            color: labelColor,
           }}
         >
           Plan Duration
         </span>
         <span
           className="font-bold"
-          style={{ fontSize: '20px', color: COLORS.primary[600] }}
+          style={{ fontSize: '20px', color: valueColor }}
         >
           {value} day{value > 1 ? 's' : ''}
         </span>
@@ -45,9 +55,9 @@ const DayPicker = ({ value, onChange }) => {
                 height: '44px',
                 fontSize: '15px',
                 fontWeight: isSelected ? '700' : '500',
-                border: `1.5px solid ${isSelected ? COLORS.primary[500] : COLORS.gray[200]}`,
-                background: isSelected ? COLORS.primary[500] : '#fff',
-                color: isSelected ? '#fff' : COLORS.gray[500],
+                border: `1.5px solid ${isSelected ? COLORS.primary[500] : unselectedBorder}`,
+                background: isSelected ? COLORS.primary[500] : unselectedBg,
+                color: isSelected ? '#fff' : unselectedColor,
                 transform: isSelected ? 'scale(1.08)' : 'scale(1)',
                 boxShadow: isSelected ? SHADOWS.md : 'none',
                 cursor: 'pointer',
