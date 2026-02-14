@@ -17,7 +17,7 @@ import MealPlanDisplay from './MealPlanDisplay';
 import ShoppingListWithDetails from './ShoppingListWithDetails';
 import LogEntry from './LogEntry';
 import DiagnosticLogViewer from './DiagnosticLogViewer';
-import ProductMatchLogViewer.jsx from './ProductMatchLogViewer.jsx';
+import ProductMatchLogViewer from './ProductMatchLogViewer';
 import MacroDebugLogViewer from './MacroDebugLogViewer';
 import RecipeModal from './RecipeModal';
 import EmojiIcon from './EmojiIcon';
