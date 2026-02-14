@@ -111,7 +111,10 @@ const useAppLogic = ({
     const [loadingNutritionFor, setLoadingNutritionFor] = useState(null);
     const [logHeight, setLogHeight] = useState(250);
     const [isLogOpen, setIsLogOpen] = useState(false);
-    const [failedIngredientsHistory, setFailedIngredientsHistory] = useState([]);
+    
+    // REPLACED: failedIngredientsHistory -> matchTraces
+    const [matchTraces, setMatchTraces] = useState([]);
+    
     const [statusMessage, setStatusMessage] = useState({ text: '', type: '' });
     
     // Macro Debug State
@@ -124,8 +127,10 @@ const useAppLogic = ({
     const [showOrchestratorLogs, setShowOrchestratorLogs] = useState(
       () => JSON.parse(localStorage.getItem('cheffy_show_orchestrator_logs') ?? 'true')
     );
-    const [showFailedIngredientsLogs, setShowFailedIngredientsLogs] = useState(
-      () => JSON.parse(localStorage.getItem('cheffy_show_failed_ingredients_logs') ?? 'true')
+    
+    // REPLACED: showFailedIngredientsLogs -> showMatchTraceLogs
+    const [showMatchTraceLogs, setShowMatchTraceLogs] = useState(
+      () => JSON.parse(localStorage.getItem('cheffy_show_match_trace_logs') ?? 'true')
     );
     
     const [generationStepKey, setGenerationStepKey] = useState(null);
@@ -293,9 +298,10 @@ const useAppLogic = ({
       localStorage.setItem('cheffy_show_orchestrator_logs', JSON.stringify(showOrchestratorLogs));
     }, [showOrchestratorLogs]);
 
+    // UPDATED: Persist showMatchTraceLogs instead of showFailedIngredientsLogs
     useEffect(() => {
-      localStorage.setItem('cheffy_show_failed_ingredients_logs', JSON.stringify(showFailedIngredientsLogs));
-    }, [showFailedIngredientsLogs]);
+      localStorage.setItem('cheffy_show_match_trace_logs', JSON.stringify(showMatchTraceLogs));
+    }, [showMatchTraceLogs]);
     
     // Macro Debug Log Persistence
     useEffect(() => {
@@ -428,7 +434,7 @@ const useAppLogic = ({
         try {
             const settingsData = {
                 showOrchestratorLogs: showOrchestratorLogs,
-                showFailedIngredientsLogs: showFailedIngredientsLogs,
+                showMatchTraceLogs: showMatchTraceLogs, // UPDATED: changed from showFailedIngredientsLogs
                 showMacroDebugLog: showMacroDebugLog,
                 selectedModel: selectedModel,
                 theme: localStorage.getItem('cheffy-theme') || 'dark',
@@ -442,7 +448,7 @@ const useAppLogic = ({
         } catch (error) {
             console.error("[SETTINGS] Error saving settings:", error);
         }
-    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, selectedModel, userId, db, isAuthReady, formData.measurementUnits]);
+    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, selectedModel, userId, db, isAuthReady, formData.measurementUnits]);
 
     const handleLoadSettings = useCallback(async () => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
@@ -456,7 +462,10 @@ const useAppLogic = ({
             if (settingsSnap.exists()) {
                 const data = settingsSnap.data();
                 setShowOrchestratorLogs(data.showOrchestratorLogs ?? true);
-                setShowFailedIngredientsLogs(data.showFailedIngredientsLogs ?? true);
+                
+                // UPDATED: Load showMatchTraceLogs, fallback to old key if missing
+                setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs ?? true);
+                
                 setShowMacroDebugLog(data.showMacroDebugLog ?? false);
                 if (data.selectedModel) setSelectedModel(data.selectedModel);
                 
@@ -546,7 +555,7 @@ const useAppLogic = ({
         if (userId && !userId.startsWith('local_') && isAuthReady) {
             handleSaveSettings();
         }
-    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, userId, isAuthReady, handleSaveSettings, formData.measurementUnits]);
+    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, userId, isAuthReady, handleSaveSettings, formData.measurementUnits]);
 
     useEffect(() => {
         if (userId && !userId.startsWith('local_') && isAuthReady && db) {
@@ -637,7 +646,10 @@ const useAppLogic = ({
         setMealPlan([]);
         setTotalCost(0);
         setEatenMeals({});
-        setFailedIngredientsHistory([]);
+        
+        // UPDATED: Reset matchTraces instead of failedIngredientsHistory
+        setMatchTraces([]);
+        
         setGenerationStepKey('targets');
         if (!isLogOpen) { setLogHeight(250); setIsLogOpen(true); }
         setMacroDebug(null);
@@ -763,14 +775,18 @@ const useAppLogic = ({
                                     [eventData.key]: eventData.data
                                 }));
                                 break;
+                                
+                            // UPDATED: Handle new match_trace event
+                            case 'ingredient:match_trace':
+                                if (eventData.trace) {
+                                    setMatchTraces(prev => [...prev, eventData.trace]);
+                                }
+                                break;
 
                             case 'ingredient:failed':
-                                const failedItem = {
-                                    timestamp: new Date().toISOString(),
-                                    originalIngredient: eventData.key,
-                                    error: eventData.reason,
-                                };
-                                setFailedIngredientsHistory(prev => [...prev, failedItem]);
+                                // Removed setFailedIngredientsHistory() call as that state is gone.
+                                // We rely on match_trace for history now.
+                                // Still updating results to show failure status in the UI lists.
                                 setResults(prev => ({
                                     ...prev,
                                     [eventData.key]: {
@@ -973,23 +989,62 @@ const useAppLogic = ({
     });
 }, [recalculateTotalCost]); 
 
-    const handleDownloadFailedLogs = useCallback(() => {
-        if (failedIngredientsHistory.length === 0) return;
-        let logContent = "Failed Ingredient History\n==========================\n\n";
-        failedIngredientsHistory.forEach((item, index) => {
-            logContent += `Failure ${index + 1}:\nTimestamp: ${new Date(item.timestamp).toLocaleString()}\nIngredient: ${item.originalIngredient}\nTight Query: ${item.tightQuery || 'N/A'}\nNormal Query: ${item.normalQuery || 'N/A'}\nWide Query: ${item.wideQuery || 'N/A'}\n${item.error ? `Error: ${item.error}\n` : ''}\n`;
-        });
-        const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
+    // REPLACED: handleDownloadFailedLogs -> handleDownloadMatchTraceReport
+    const handleDownloadMatchTraceReport = useCallback(() => {
+        if (matchTraces.length === 0) return;
+        
+        let output = '';
+        output += '═══════════════════════════════════════════════════════\n';
+        output += '  PRODUCT MATCH TRACE REPORT\n';
+        output += `  Generated: ${new Date().toISOString()}\n`;
+        output += `  Total: ${matchTraces.length}\n`;
+        output += `  Success: ${matchTraces.filter(t => t.outcome === 'success').length}\n`;
+        output += `  Failed: ${matchTraces.filter(t => t.outcome === 'failed').length}\n`;
+        output += '═══════════════════════════════════════════════════════\n\n';
+        
+        for (const trace of matchTraces) {
+            const icon = trace.outcome === 'success' ? '[OK]' : trace.outcome === 'failed' ? '[FAIL]' : '[ERR]';
+            output += `${icon} ${trace.ingredient}\n`;
+            output += '-'.repeat(55) + '\n';
+            output += `  Queries: T="${trace.queries.tight || 'N/A'}" N="${trace.queries.normal || 'N/A'}" W="${trace.queries.wide || 'N/A'}"\n`;
+            output += `  Required: [${trace.validationRules.requiredWords.join(', ')}]\n`;
+            output += `  Negative: [${trace.validationRules.negativeKeywords.join(', ')}]\n`;
+            output += `  Categories: [${trace.validationRules.allowedCategories.join(', ')}]\n`;
+            
+            for (const attempt of trace.attempts) {
+                output += `\n  [${attempt.status}] ${attempt.queryType.toUpperCase()} → "${attempt.queryString}"\n`;
+                output += `    Raw: ${attempt.rawCount} | Pass: ${attempt.passCount} | Best: ${attempt.bestScore}\n`;
+                
+                for (const raw of attempt.rawResults) {
+                    output += `      • "${raw.name}" ($${raw.price || '?'})\n`;
+                }
+                for (const scored of attempt.scoredResults) {
+                    output += `      ★ "${scored.name}" score=${scored.score}\n`;
+                }
+                for (const rej of attempt.rejections) {
+                    output += `      ✗ "${rej.name}" → ${rej.reason}\n`;
+                }
+            }
+            
+            if (trace.selection) {
+                output += `\n  ► SELECTED: "${trace.selection.productName}" score=${trace.selection.score || 'N/A'} via ${trace.selection.viaQueryType}\n`;
+            } else if (trace.outcome === 'failed') {
+                output += `\n  ► FAILED: ${trace.failureReason || 'No match'}\n`;
+            }
+            output += `  Duration: ${trace.durationMs}ms\n\n`;
+        }
+        
+        const blob = new Blob([output], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        link.download = `cheffy_failed_ingredients_${timestamp}.txt`;
+        link.download = `cheffy_match_trace_${timestamp}.txt`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-    }, [failedIngredientsHistory]); 
+    }, [matchTraces]);
 
     const handleDownloadLogs = useCallback(() => {
         if (!diagnosticLogs || diagnosticLogs.length === 0) return;
@@ -1196,10 +1251,12 @@ const useAppLogic = ({
         loadingNutritionFor,
         logHeight,
         isLogOpen,
-        failedIngredientsHistory,
+        // REPLACED: failedIngredientsHistory -> matchTraces
+        matchTraces,
         statusMessage,
         showOrchestratorLogs,
-        showFailedIngredientsLogs,
+        // REPLACED: showFailedIngredientsLogs -> showMatchTraceLogs
+        showMatchTraceLogs,
         generationStepKey,
         generationStatus,
         selectedMeal,
@@ -1218,7 +1275,8 @@ const useAppLogic = ({
         setLogHeight,
         setIsLogOpen,
         setShowOrchestratorLogs,
-        setShowFailedIngredientsLogs,
+        // REPLACED: setShowFailedIngredientsLogs -> setShowMatchTraceLogs
+        setShowMatchTraceLogs,
         setShowMacroDebugLog,
         setSelectedMeal,
         setSelectedModel,
@@ -1236,7 +1294,8 @@ const useAppLogic = ({
         handleFetchNutrition,
         handleSubstituteSelection,
         handleQuantityChange,
-        handleDownloadFailedLogs,
+        // REPLACED: handleDownloadFailedLogs -> handleDownloadMatchTraceReport
+        handleDownloadMatchTraceReport,
         handleDownloadLogs,
         handleDownloadMacroDebugLogs,
         handleSignUp,
