@@ -4,6 +4,11 @@
 //
 // DARK MODE: All colors are now theme-aware via useTheme().
 //
+// FIX: Ingredient field mapping corrected to match backend data structure:
+//   item.key  → ingredient name (NOT item.name / item.ingredient)
+//   item.qty  → numeric quantity (NOT item.quantity / item.amount)
+//   item.unit → unit string like "g", "ml" etc.
+//
 // FIXES APPLIED:
 // 1. z-index raised to 9999 — above Header (1020), BottomNav (1030),
 //    SettingsPanel (1050), ProductDetailModal (1001), and log bar (100).
@@ -128,6 +133,22 @@ const RecipeModal = ({ meal, onClose }) => {
         stepNumBg:       isDark ? 'rgba(16,185,129,0.15)' : '#d1fae5',
         stepNumColor:    isDark ? '#34d399' : '#047857',
         stepText:        isDark ? '#d1d5db' : '#374151',
+    };
+
+    // ── Extract ingredient display fields ──
+    // Backend shape: { key: "chicken breast", qty: 200, unit: "g", stateHint, methodHint }
+    // Fallbacks cover alternative shapes (name/ingredient, quantity/amount)
+    const getIngredientName = (item) => {
+        if (typeof item === 'string') return item;
+        return item.key || item.name || item.ingredient || '';
+    };
+
+    const getIngredientQty = (item) => {
+        if (typeof item !== 'object') return '';
+        const val = item.qty ?? item.qty_value ?? item.quantity ?? item.amount ?? '';
+        const unit = item.unit ?? item.qty_unit ?? '';
+        if (val === '' && unit === '') return '';
+        return `${val}${unit}`;
     };
 
     return (
@@ -296,14 +317,8 @@ const RecipeModal = ({ meal, onClose }) => {
                                 }}
                             >
                                 {meal.items.map((item, index) => {
-                                    const name =
-                                        typeof item === 'string'
-                                            ? item
-                                            : item.name || item.ingredient || '';
-                                    const qty =
-                                        typeof item === 'object'
-                                            ? item.quantity || item.amount || ''
-                                            : '';
+                                    const name = getIngredientName(item);
+                                    const qty = getIngredientQty(item);
                                     return (
                                         <li
                                             key={index}
