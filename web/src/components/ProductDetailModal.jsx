@@ -6,6 +6,8 @@
 // escapes any ancestor overflow:hidden / overflow:clip / transform
 // containers that were clipping it to a partial viewport height.
 //
+// DARK MODE: All colors are now theme-aware via useTheme().
+//
 // FIXES APPLIED:
 // 1. Portal rendering — modal is no longer trapped by parent layout
 // 2. Full viewport coverage using 100dvh with vh fallback
@@ -22,6 +24,7 @@ import {
   X, ShoppingBag, AlertTriangle, ExternalLink,
   ChevronDown, ChevronUp, Minus, Plus, Tag,
 } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
 
 const MODAL_Z = 9998;
 
@@ -38,6 +41,7 @@ const ProductDetailModal = ({
   onSelectSubstitute,
   onQuantityChange,
 }) => {
+  const { isDark } = useTheme();
   const [showAlternatives, setShowAlternatives] = useState(false);
   const scrollRef = useRef(null);
 
@@ -84,7 +88,7 @@ const ProductDetailModal = ({
           max-width: 520px;
           height: auto;
           max-height: min(90vh, 90dvh);
-          border-radius: 16px;
+          border-radius: 20px;
         }
       }
     `;
@@ -101,16 +105,49 @@ const ProductDetailModal = ({
     };
   }, [isOpen]);
 
-  // Reset alternatives when product changes
-  useEffect(() => { setShowAlternatives(false); }, [normalizedKey]);
-
   if (!isOpen) return null;
 
-  const isFailed = result?.source === 'failed' || result?.source === 'error';
-  const isAbsoluteCheapest =
-    absoluteCheapestProduct && currentSelection &&
-    currentSelection.url === absoluteCheapestProduct.url;
+  // ── Theme tokens ──
+  const t = {
+    cardBg:         isDark ? '#1e2130' : '#ffffff',
+    headerBg:       isDark ? '#1e2130' : '#ffffff',
+    headerBorder:   isDark ? '#2d3148' : '#e5e7eb',
+    titleColor:     isDark ? '#f0f1f5' : '#111827',
+    subtitleColor:  isDark ? '#818cf8' : '#6366f1',
+    bodyBg:         isDark ? '#181a24' : '#f8fafc',
+    sectionBg:      isDark ? '#1e2130' : '#ffffff',
+    sectionBorder:  isDark ? '#2d3148' : '#e5e7eb',
+    labelColor:     isDark ? '#9ca3b0' : '#6b7280',
+    valueColor:     isDark ? '#f0f1f5' : '#111827',
+    mutedColor:     isDark ? '#6b7280' : '#9ca3af',
+    priceBg:        isDark ? 'rgba(16,185,129,0.12)' : '#dcfce7',
+    priceColor:     isDark ? '#34d399' : '#166534',
+    sizeBg:         isDark ? 'rgba(99,102,241,0.12)' : '#eef2ff',
+    sizeColor:      isDark ? '#a5b4fc' : '#4338ca',
+    unitPriceBg:    isDark ? 'rgba(255,255,255,0.06)' : '#f9fafb',
+    unitPriceColor: isDark ? '#9ca3b0' : '#6b7280',
+    altToggleBg:    isDark ? '#252839' : '#ffffff',
+    altToggleBorder:isDark ? '#3d4158' : '#e2e8f0',
+    altToggleColor: isDark ? '#f0f1f5' : '#0f172a',
+    subCardBg:      isDark ? '#252839' : '#fafafa',
+    subCardBorder:  isDark ? '#3d4158' : '#e5e7eb',
+    subNameColor:   isDark ? '#f0f1f5' : '#1f2937',
+    viewLinkBg:     isDark ? 'rgba(255,255,255,0.08)' : '#f3f4f6',
+    viewLinkColor:  isDark ? '#d1d5db' : '#374151',
+    errorBg:        isDark ? 'rgba(239,68,68,0.1)' : '#fef2f2',
+    errorBorder:    isDark ? 'rgba(239,68,68,0.2)' : '#fecaca',
+    errorColor:     isDark ? '#fca5a5' : '#991b1b',
+    qtyBtnBg:       isDark ? '#252839' : '#f3f4f6',
+    qtyBtnColor:    isDark ? '#f0f1f5' : '#111827',
+    qtyBtnBorder:   isDark ? '#3d4158' : '#e5e7eb',
+    closeBtnBg:     isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+    closeBtnColor:  isDark ? '#d1d5db' : '#6b7280',
+    divider:        isDark ? '#2d3148' : '#f1f5f9',
+  };
 
+  const isFailed = result?.source === 'failed';
+
+  // Helpers
   const getPrice = (p) => {
     if (!p) return null;
     const num = parseFloat(p.price ?? p.current_price ?? p.product_price);
@@ -140,7 +177,7 @@ const ProductDetailModal = ({
           position: 'fixed',
           top: 0, left: 0, right: 0, bottom: 0,
           zIndex: MODAL_Z,
-          background: 'rgba(0,0,0,0.55)',
+          background: isDark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.55)',
           backdropFilter: 'blur(4px)',
           WebkitBackdropFilter: 'blur(4px)',
           display: 'flex',
@@ -154,12 +191,14 @@ const ProductDetailModal = ({
           className="pdm-card"
           onClick={(e) => e.stopPropagation()}
           style={{
-            background: '#ffffff',
+            background: t.cardBg,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
             borderTop: '3.5px solid #6366f1',
-            boxShadow: '0 0 0 1px rgba(99,102,241,0.12), 0 24px 48px -12px rgba(0,0,0,0.3)',
+            boxShadow: isDark
+              ? '0 0 0 1px rgba(99,102,241,0.15), 0 24px 48px -12px rgba(0,0,0,0.6)'
+              : '0 0 0 1px rgba(99,102,241,0.12), 0 24px 48px -12px rgba(0,0,0,0.3)',
             fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
           }}
         >
@@ -171,8 +210,8 @@ const ProductDetailModal = ({
             gap: '0.75rem',
             padding: '1rem 1.25rem',
             paddingTop: 'max(1rem, calc(env(safe-area-inset-top, 0px) + 0.5rem))',
-            borderBottom: '1px solid #e5e7eb',
-            background: '#ffffff',
+            borderBottom: `1px solid ${t.headerBorder}`,
+            background: t.headerBg,
             flexShrink: 0,
             minHeight: '64px',
             zIndex: 2,
@@ -181,7 +220,7 @@ const ProductDetailModal = ({
               <h2 style={{
                 fontSize: '1.2rem',
                 fontWeight: 700,
-                color: '#111827',
+                color: t.titleColor,
                 margin: 0,
                 lineHeight: 1.3,
                 overflow: 'hidden',
@@ -192,35 +231,27 @@ const ProductDetailModal = ({
               </h2>
               {result?.source && !isFailed && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px' }}>
-                  <ShoppingBag size={12} style={{ color: '#6366f1' }} />
+                  <ShoppingBag size={12} style={{ color: t.subtitleColor }} />
                   <span style={{
-                    fontSize: '11px', fontWeight: 600, color: '#6366f1',
+                    fontSize: '11px', fontWeight: 600, color: t.subtitleColor,
                     textTransform: 'uppercase', letterSpacing: '0.5px',
                   }}>
-                    {result.source === 'api' ? 'Live Price' : result.source || ''}
+                    {result.source === 'api' ? 'DISCOVERY' : result.source.toUpperCase()}
                   </span>
                 </div>
               )}
             </div>
-
             <button
               onClick={onClose}
-              aria-label="Close"
               style={{
-                width: 40, height: 40, minWidth: 40, minHeight: 40,
-                borderRadius: '50%',
-                border: '2px solid #e5e7eb',
-                background: '#f3f4f6',
-                cursor: 'pointer',
+                width: '36px', height: '36px', borderRadius: '10px',
+                border: 'none', cursor: 'pointer',
+                background: t.closeBtnBg, color: t.closeBtnColor,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                flexShrink: 0,
-                transition: 'background 0.15s, border-color 0.15s',
-                WebkitTapHighlightColor: 'transparent',
+                transition: 'all 0.2s',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = '#e5e7eb'; e.currentTarget.style.borderColor = '#d1d5db'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = '#f3f4f6'; e.currentTarget.style.borderColor = '#e5e7eb'; }}
             >
-              <X size={20} color="#374151" strokeWidth={2.5} />
+              <X size={20} />
             </button>
           </div>
 
@@ -228,190 +259,152 @@ const ProductDetailModal = ({
           <div
             ref={scrollRef}
             style={{
-              flex: 1,
-              minHeight: 0,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              WebkitOverflowScrolling: 'touch',
+              flex: 1, minHeight: 0, overflowY: 'auto',
+              padding: '1.25rem',
+              background: t.bodyBg,
               overscrollBehavior: 'contain',
-              touchAction: 'pan-y',
-              padding: '1.5rem',
-              paddingBottom: 'max(2rem, calc(2rem + env(safe-area-inset-bottom, 0px)))',
+              WebkitOverflowScrolling: 'touch',
             }}
           >
             {isFailed ? (
+              /* FAILED STATE */
               <div style={{
-                padding: '40px 20px', textAlign: 'center',
-                background: '#fef2f2', borderRadius: '12px', border: '1px solid #fecaca',
+                padding: '24px', textAlign: 'center',
+                background: t.errorBg, borderRadius: '16px',
+                border: `1px solid ${t.errorBorder}`,
               }}>
-                <AlertTriangle size={32} style={{ color: '#dc2626', margin: '0 auto 12px' }} />
-                <div style={{ fontSize: '16px', fontWeight: 600, color: '#991b1b', marginBottom: '4px' }}>
-                  Product Not Found
-                </div>
-                <div style={{ fontSize: '14px', color: '#991b1b', opacity: 0.8 }}>
-                  Unable to load product details
-                </div>
+                <AlertTriangle size={32} style={{ color: isDark ? '#f87171' : '#dc2626', marginBottom: '12px' }} />
+                <p style={{ fontWeight: 700, color: t.errorColor, marginBottom: '4px' }}>
+                  Product not found
+                </p>
+                <p style={{ fontSize: '13px', color: t.mutedColor }}>
+                  We couldn't find this item at the selected store.
+                </p>
               </div>
             ) : (
               <>
-                {/* Total Needed */}
+                {/* Quantity & Total Row */}
                 <div style={{
-                  padding: '16px',
-                  background: 'linear-gradient(135deg, #eff6ff, #f0f9ff)',
-                  borderRadius: '12px', border: '1.5px solid #bfdbfe',
-                  marginBottom: '20px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '16px', marginBottom: '16px',
+                  background: t.sectionBg, borderRadius: '14px',
+                  border: `1px solid ${t.sectionBorder}`,
                 }}>
-                  <div style={{
-                    fontSize: '12px', fontWeight: 600, color: '#1e40af',
-                    textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px',
-                  }}>
-                    Total Needed
+                  {/* Total Needed */}
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: t.labelColor, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                      Total Needed
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 700, color: t.valueColor }}>
+                      {totalGrams > 0 ? `${Math.round(totalGrams)}${quantityUnits || 'g'}` : '—'}
+                    </div>
                   </div>
-                  <div style={{
-                    fontSize: '28px', fontWeight: 800, color: '#1e3a8a',
-                    fontVariantNumeric: 'tabular-nums',
-                  }}>
-                    {totalGrams > 0 ? `${totalGrams.toFixed(0)}g` : quantityUnits || 'N/A'}
+
+                  {/* Divider */}
+                  <div style={{ width: '1px', height: '36px', background: t.divider }} />
+
+                  {/* Quantity Stepper */}
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: t.labelColor, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px', textAlign: 'center' }}>
+                      Units to Purchase
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        onClick={() => onQuantityChange && onQuantityChange(normalizedKey, Math.max(1, currentQuantity - 1))}
+                        style={{
+                          width: '32px', height: '32px', borderRadius: '8px',
+                          border: `1px solid ${t.qtyBtnBorder}`,
+                          background: t.qtyBtnBg, color: t.qtyBtnColor,
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >
+                        <Minus size={14} />
+                      </button>
+                      <span style={{ fontSize: '18px', fontWeight: 700, color: t.valueColor, minWidth: '24px', textAlign: 'center' }}>
+                        {currentQuantity}
+                      </span>
+                      <button
+                        onClick={() => onQuantityChange && onQuantityChange(normalizedKey, currentQuantity + 1)}
+                        style={{
+                          width: '32px', height: '32px', borderRadius: '8px',
+                          border: `1px solid ${t.qtyBtnBorder}`,
+                          background: t.qtyBtnBg, color: t.qtyBtnColor,
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Divider */}
+                  <div style={{ width: '1px', height: '36px', background: t.divider }} />
+
+                  {/* Total Cost */}
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: t.labelColor, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                      Total Cost
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 700, color: isDark ? '#34d399' : '#059669' }}>
+                      {totalCost !== null ? `$${totalCost.toFixed(2)}` : '—'}
+                    </div>
                   </div>
                 </div>
 
-                {/* Units to Purchase */}
-                <div style={{
-                  padding: '16px',
-                  background: 'linear-gradient(135deg, #fef3c7, #fef9c3)',
-                  borderRadius: '12px', border: '1.5px solid #fde68a',
-                  marginBottom: '20px',
-                }}>
-                  <div style={{
-                    fontSize: '12px', fontWeight: 600, color: '#92400e',
-                    textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px',
-                  }}>
-                    Units to Purchase
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <button
-                      onClick={() => onQuantityChange?.(normalizedKey, Math.max(1, currentQuantity - 1))}
-                      disabled={currentQuantity <= 1}
-                      style={{
-                        width: 36, height: 36, borderRadius: '8px',
-                        border: '2px solid #f59e0b',
-                        background: currentQuantity <= 1 ? '#f3f4f6' : '#ffffff',
-                        color: currentQuantity <= 1 ? '#9ca3af' : '#92400e',
-                        cursor: currentQuantity <= 1 ? 'not-allowed' : 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 0.15s',
-                      }}
-                    >
-                      <Minus size={16} />
-                    </button>
-                    <div style={{
-                      fontSize: '32px', fontWeight: 800, color: '#78350f',
-                      fontVariantNumeric: 'tabular-nums', minWidth: '48px', textAlign: 'center',
-                    }}>
-                      {currentQuantity}
-                    </div>
-                    <button
-                      onClick={() => onQuantityChange?.(normalizedKey, currentQuantity + 1)}
-                      style={{
-                        width: 36, height: 36, borderRadius: '8px',
-                        border: '2px solid #f59e0b', background: '#ffffff',
-                        color: '#92400e', cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 0.15s',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = '#fef3c7'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = '#ffffff'; }}
-                    >
-                      <Plus size={16} />
-                    </button>
-                  </div>
-
-                  {/* Total Cost Display */}
-                  {totalCost !== null && (
-                    <div style={{
-                      marginTop: '12px',
-                      paddingTop: '12px',
-                      borderTop: '1px solid #fde68a',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                    }}>
-                      <span style={{
-                        fontSize: '13px', fontWeight: 600, color: '#92400e',
-                        textTransform: 'uppercase', letterSpacing: '0.3px',
-                      }}>
-                        Total Cost
-                      </span>
-                      <span style={{
-                        fontSize: '24px', fontWeight: 800, color: '#78350f',
-                        fontVariantNumeric: 'tabular-nums',
-                      }}>
-                        ${totalCost.toFixed(2)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Selected Product */}
-                <div style={{ marginBottom: '20px' }}>
-                  <div style={{
-                    fontSize: '12px', fontWeight: 600, color: '#6366f1',
-                    textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px',
-                  }}>
+                {/* Selected Product Card */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: t.labelColor, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>
                     Selected Product
                   </div>
+
                   {currentSelection ? (
                     <div style={{
-                      padding: '16px', background: '#f8fafc',
-                      borderRadius: '12px', border: '2px solid #e0e7ff',
-                      position: 'relative',
+                      padding: '16px', background: t.sectionBg,
+                      borderRadius: '14px', border: `1px solid ${t.sectionBorder}`,
                     }}>
-                      {isAbsoluteCheapest && (
-                        <div style={{
-                          position: 'absolute', top: '-10px', right: '16px',
-                          background: 'linear-gradient(135deg, #10b981, #059669)',
-                          color: '#ffffff', fontSize: '11px', fontWeight: 700,
-                          padding: '4px 12px', borderRadius: '12px',
-                          textTransform: 'uppercase', letterSpacing: '0.5px',
-                          boxShadow: '0 2px 8px rgba(16,185,129,0.3)',
-                        }}>
-                          Best Value
-                        </div>
-                      )}
-                      <div style={{ fontSize: '16px', fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>
+                      <div style={{ fontSize: '15px', fontWeight: 600, color: t.valueColor, marginBottom: '10px' }}>
                         {currentSelection.name || currentSelection.product_name || 'Product'}
                       </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+
+                      {/* Price / Size / Unit Price pills */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
                         {unitPrice !== null && (
-                          <div style={{
-                            display: 'inline-flex', alignItems: 'center', gap: '4px',
-                            background: '#dcfce7', color: '#166534',
+                          <span style={{
+                            background: t.priceBg, color: t.priceColor,
                             padding: '4px 10px', borderRadius: '6px',
                             fontSize: '13px', fontWeight: 600,
                           }}>
-                            <Tag size={12} />
                             ${unitPrice.toFixed(2)}
-                          </div>
+                          </span>
                         )}
                         {getSize(currentSelection) && (
-                          <div style={{
-                            background: '#e0e7ff', color: '#3730a3',
+                          <span style={{
+                            background: t.sizeBg, color: t.sizeColor,
                             padding: '4px 10px', borderRadius: '6px',
                             fontSize: '13px', fontWeight: 600,
                           }}>
                             {getSize(currentSelection)}
-                          </div>
+                          </span>
                         )}
-                        {currentSelection.unit_price_per_100 && (
-                          <div style={{
-                            background: '#f3f4f6', color: '#4b5563',
+                        {unitPrice !== null && getSize(currentSelection) && (
+                          <span style={{
+                            background: t.unitPriceBg, color: t.unitPriceColor,
                             padding: '4px 10px', borderRadius: '6px',
                             fontSize: '12px', fontWeight: 500,
                           }}>
-                            ${currentSelection.unit_price_per_100}/100g
-                          </div>
+                            {(() => {
+                              const sizeStr = getSize(currentSelection);
+                              const sizeNum = parseFloat(sizeStr);
+                              if (!isNaN(sizeNum) && sizeNum > 0) {
+                                return `$${(unitPrice / sizeNum * 100).toFixed(2)}/100g`;
+                              }
+                              return '';
+                            })()}
+                          </span>
                         )}
                       </div>
+
+                      {/* View in Store CTA */}
                       {currentSelection.url && (
                         <a
                           href={currentSelection.url}
@@ -420,11 +413,9 @@ const ProductDetailModal = ({
                           className="pdm-store-link"
                           style={{
                             display: 'inline-flex', alignItems: 'center', gap: '6px',
-                            padding: '10px 16px', background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-                            color: '#ffffff', borderRadius: '8px',
-                            fontSize: '13px', fontWeight: 600,
-                            textDecoration: 'none', transition: 'all 0.2s ease',
-                            boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
+                            padding: '10px 20px', background: '#6366f1', color: '#ffffff',
+                            borderRadius: '10px', fontSize: '14px', fontWeight: 600,
+                            textDecoration: 'none', transition: 'all 0.2s',
                           }}
                         >
                           <ShoppingBag size={14} />
@@ -436,8 +427,8 @@ const ProductDetailModal = ({
                   ) : (
                     <div style={{
                       padding: '20px', textAlign: 'center',
-                      background: '#fef2f2', borderRadius: '12px',
-                      border: '1px solid #fecaca', color: '#991b1b',
+                      background: t.errorBg, borderRadius: '12px',
+                      border: `1px solid ${t.errorBorder}`, color: t.errorColor,
                     }}>
                       No product selected
                     </div>
@@ -452,9 +443,9 @@ const ProductDetailModal = ({
                       className="pdm-alt-toggle"
                       style={{
                         width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                        padding: '14px 18px', background: '#ffffff',
-                        border: '2px solid #e2e8f0', borderRadius: '12px',
-                        fontSize: '15px', fontWeight: 700, color: '#0f172a',
+                        padding: '14px 18px', background: t.altToggleBg,
+                        border: `2px solid ${t.altToggleBorder}`, borderRadius: '12px',
+                        fontSize: '15px', fontWeight: 700, color: t.altToggleColor,
                         cursor: 'pointer', transition: 'all 0.2s ease',
                       }}
                     >
@@ -487,8 +478,8 @@ const ProductDetailModal = ({
                               key={idx}
                               className="pdm-sub-card"
                               style={{
-                                padding: '14px', background: '#fafafa',
-                                borderRadius: '10px', border: '1.5px solid #e5e7eb',
+                                padding: '14px', background: t.subCardBg,
+                                borderRadius: '10px', border: `1.5px solid ${t.subCardBorder}`,
                                 position: 'relative', transition: 'all 0.2s ease',
                               }}
                             >
@@ -503,13 +494,13 @@ const ProductDetailModal = ({
                                   Best
                                 </div>
                               )}
-                              <div style={{ fontSize: '14px', fontWeight: 600, color: '#1f2937', marginBottom: '6px' }}>
+                              <div style={{ fontSize: '14px', fontWeight: 600, color: t.subNameColor, marginBottom: '6px' }}>
                                 {sub.name || sub.product_name || 'Product'}
                               </div>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                                 {subPrice !== null && (
                                   <span style={{
-                                    background: '#dcfce7', color: '#166534',
+                                    background: t.priceBg, color: t.priceColor,
                                     padding: '3px 8px', borderRadius: '5px',
                                     fontSize: '12px', fontWeight: 600,
                                   }}>
@@ -518,26 +509,17 @@ const ProductDetailModal = ({
                                 )}
                                 {subSize && (
                                   <span style={{
-                                    background: '#e0e7ff', color: '#3730a3',
+                                    background: t.sizeBg, color: t.sizeColor,
                                     padding: '3px 8px', borderRadius: '5px',
                                     fontSize: '12px', fontWeight: 600,
                                   }}>
                                     {subSize}
                                   </span>
                                 )}
-                                {sub.unit_price_per_100 && (
-                                  <span style={{
-                                    background: '#f3f4f6', color: '#6b7280',
-                                    padding: '3px 8px', borderRadius: '5px',
-                                    fontSize: '11px', fontWeight: 500,
-                                  }}>
-                                    ${sub.unit_price_per_100}/100g
-                                  </span>
-                                )}
                               </div>
                               <div style={{ display: 'flex', gap: '8px' }}>
                                 <button
-                                  onClick={() => onSelectSubstitute?.(normalizedKey, sub)}
+                                  onClick={() => onSelectSubstitute && onSelectSubstitute(normalizedKey, sub)}
                                   className="pdm-select-btn"
                                   style={{
                                     flex: 1, padding: '8px 14px',
@@ -556,7 +538,7 @@ const ProductDetailModal = ({
                                     rel="noopener noreferrer"
                                     className="pdm-view-link"
                                     style={{
-                                      padding: '8px 14px', background: '#f3f4f6', color: '#374151',
+                                      padding: '8px 14px', background: t.viewLinkBg, color: t.viewLinkColor,
                                       borderRadius: '8px', fontSize: '13px', fontWeight: 600,
                                       textDecoration: 'none', display: 'inline-flex',
                                       alignItems: 'center', gap: '4px',
@@ -581,22 +563,22 @@ const ProductDetailModal = ({
         </div>
       </div>
 
-      {/* Hover styles */}
+      {/* Hover styles — theme-aware */}
       <style>{`
         .pdm-store-link:hover {
           box-shadow: 0 4px 14px rgba(99,102,241,0.4) !important;
           transform: translateY(-1px);
         }
         .pdm-alt-toggle:hover {
-          background: #f8fafc !important;
-          border-color: #cbd5e0 !important;
+          background: ${isDark ? '#2d3148' : '#f8fafc'} !important;
+          border-color: ${isDark ? '#4d5170' : '#cbd5e0'} !important;
         }
         .pdm-sub-card:hover {
-          border-color: #c7d2fe !important;
-          box-shadow: 0 2px 8px rgba(99,102,241,0.1);
+          border-color: ${isDark ? 'rgba(99,102,241,0.3)' : '#c7d2fe'} !important;
+          box-shadow: 0 2px 8px ${isDark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.1)'};
         }
         .pdm-select-btn:hover { background: #4f46e5 !important; }
-        .pdm-view-link:hover  { background: #e2e8f0 !important; }
+        .pdm-view-link:hover  { background: ${isDark ? 'rgba(255,255,255,0.12)' : '#e2e8f0'} !important; }
       `}</style>
     </>
   );
