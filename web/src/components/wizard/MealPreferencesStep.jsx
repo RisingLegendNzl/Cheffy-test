@@ -1,4 +1,5 @@
 // web/src/components/wizard/MealPreferencesStep.jsx
+// No changes needed to this file — FloatingSelect and DayPicker handle dark mode.
 import React from 'react';
 import FloatingSelect from './FloatingSelect';
 import DayPicker from './DayPicker';
