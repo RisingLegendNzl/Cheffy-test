@@ -1,5 +1,6 @@
 // web/src/components/SettingsPanel.jsx
-// UPDATED: Added model descriptions to AI selector. Fixed model IDs to match backend SUPPORTED_MODELS.
+// [V3.0] Updated AI model selector with usage descriptions and correct model IDs.
+// Fixed model IDs to match backend SUPPORTED_MODELS.
 // Removed "System" option from Appearance (#5).
 // "Default Store" was already removed in a prior update.
 import React from 'react';
@@ -182,7 +183,7 @@ const SettingsPanel = ({
             </select>
           </div>
 
-          {/* ─── AI Model Section (UPDATED: card-style selector with descriptions) ─── */}
+          {/* ─── AI Model Section (V3.0: card-style selector with descriptions) ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Cpu size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
