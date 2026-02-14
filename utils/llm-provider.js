@@ -49,6 +49,9 @@ const DEFAULT_MAX_TOKENS = {
 // UPDATED: Added gemini-2.5-flash-lite to supported models
 const SUPPORTED_MODELS = {
     'gpt-5.1':              { provider: 'openai',  label: 'GPT-5.1 (Primary)' },
+    'gpt-4.1':              { provider: 'openai',  label: 'GPT-4.1' },
+    'gpt-4.1-mini':         { provider: 'openai',  label: 'GPT-4.1 Mini' },
+    'o4-mini':              { provider: 'openai',  label: 'o4-mini (Reasoning)' },
     'gemini-2.0-flash':     { provider: 'gemini',  label: 'Gemini 2.0 Flash' },
     'gemini-2.5-flash-lite': { provider: 'gemini',  label: 'Gemini 2.5 Flash Lite' },
 };
