@@ -4,7 +4,7 @@
 // 1. Compute Targets (passed in)
 // 2. Generate ALL meals
 // 3. Aggregate/Dedupe ALL ingredients
-// 4. Run ONE Market Run
+// 4. Run ONE Market Run (Enhanced with V13.0 Grocery Matching)
 // 5. [NEW] Separate Price Extraction (Mod Zone 3)
 // 6. [NEW] Run ONE Ingredient-Centric Nutrition Fetch (Mod Zone 1 & 2)
 // 7. Run Solver (V1) in SHADOW mode / Reconciler (V0) as LIVE path
@@ -41,6 +41,11 @@ try {
 
 // --- [NEW] Import validation helper (Task 1) ---
 const { validateDayPlan } = require('../../utils/validation');
+
+// --- [NEW] Grocery Matching Integrations (V13.0) ---
+const { preprocessIngredientBatch, generateFallbackQueries } = require('../../utils/ingredient-preprocessor');
+const { scoreProduct, BANNED_KEYWORDS: SCORER_BANNED_KEYWORDS } = require('../../utils/product-scorer');
+const { GROCERY_OPTIMIZER_SYSTEM_PROMPT: ENHANCED_GROCERY_PROMPT } = require('../../utils/grocery-prompts');
 
 /// ===== IMPORTS-END ===== ////
 
@@ -91,12 +96,9 @@ const TOKEN_BUCKET_REFILL_PER_SEC = 10;
 const TOKEN_BUCKET_MAX_WAIT_MS = 250;
 const FAIL_FAST_CATEGORIES = ["produce", "meat", "dairy", "veg", "fruit", "seafood"];
 
-const BANNED_KEYWORDS = [
-    'cigarette', 'capsule', 'deodorant', 'pet', 'cat', 'dog', 'bird', 'toy',
-    'non-food', 'supplement', 'vitamin', 'tobacco', 'vape', 'roll-on', 'binder',
-    'folder', 'stationery', 'lighter', 'shampoo', 'conditioner', 'soap', 'lotion',
-    'cleaner', 'spray', 'polish', 'air freshener', 'mouthwash', 'toothpaste', 'floss', 'gum'
-];
+// [REMOVED] Local BANNED_KEYWORDS array replaced by SCORER_BANNED_KEYWORDS in utils/product-scorer
+// const BANNED_KEYWORDS = [ ... ];
+
 const PRICE_OUTLIER_Z_SCORE = 2.0;
 const PANTRY_CATEGORIES = ["pantry", "grains", "canned", "spreads", "condiments", "drinks"];
 const MAX_CALORIES_PER_ITEM = 1200; // Sanity check
@@ -537,59 +539,13 @@ function sizeOk(productSizeParsed, targetSize, allowedCategories = [], log, ingr
 /**
  * Runs a comprehensive checklist against a single product.
  */
+// --- [MODIFIED V13.0] Enhanced Scorer Wrapper ---
 function runSmarterChecklist(product, ingredientData, log) {
-    const productNameLower = product.product_name?.toLowerCase() || '';
-    if (!productNameLower) return { pass: false, score: 0 };
-    
-    if (!ingredientData || typeof ingredientData !== 'object' || !ingredientData.originalIngredient) {
-        log(`Checklist: Invalid/missing ingredientData for "${product.product_name}"`, 'ERROR', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-    
-    const { originalIngredient, requiredWords = [], negativeKeywords = [], targetSize, allowedCategories = [] } = ingredientData;
-    const checkLogPrefix = `Checklist [${originalIngredient}] for "${product.product_name}"`;
-
-    // 1. Global Banned List
-    const bannedWordFound = BANNED_KEYWORDS.find(kw => productNameLower.includes(kw));
-    if (bannedWordFound) {
-        log(`${checkLogPrefix}: FAIL (Global Banned: '${bannedWordFound}')`, 'DEBUG', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-    
-    // 2. Negative Keywords
-    if ((negativeKeywords ?? []).length > 0) {
-        const negativeWordFound = negativeKeywords.find(kw => kw && productNameLower.includes(kw.toLowerCase()));
-        if (negativeWordFound) {
-            log(`${checkLogPrefix}: FAIL (Negative Keyword: '${negativeWordFound}')`, 'DEBUG', 'CHECKLIST');
-            return { pass: false, score: 0 };
-        }
-    }
-    
-    // 3. Required Words
-    if (!passRequiredWords(productNameLower, requiredWords ?? [])) {
-        log(`${checkLogPrefix}: FAIL (Required words missing: [${(requiredWords ?? []).join(', ')}])`, 'DEBUG', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-
-    // 4. Category (Not yet implemented in API response - keeping day.js logic for now)
-    // In day.js, the LLM provides allowedCategories which we use here.
-    if (!passCategory(product, allowedCategories)) {
-         log(`${checkLogPrefix}: FAIL (Category Mismatch: "${product.product_category}" not in [${(allowedCategories || []).join(', ')}])`, 'DEBUG', 'CHECKLIST');
-         return { pass: false, score: 0 };
-    }
-    
-    // 5. Size Check (skip for produce/fruit/veg)
-    const isProduceOrFruit = (allowedCategories || []).some(c => c === 'fruit' || c === 'produce' || c === 'veg');
-    const productSizeParsed = parseSize(product.product_size);
-    
-    if (!isProduceOrFruit && !sizeOk(productSizeParsed, targetSize, allowedCategories, log, originalIngredient, checkLogPrefix)) {
-        return { pass: false, score: 0 }; // Failed size check
-    } else if (isProduceOrFruit) {
-         log(`${checkLogPrefix}: INFO (Bypassing size check for fruit/produce)`, 'DEBUG', 'CHECKLIST');
-    }
-
-    log(`${checkLogPrefix}: PASS`, 'DEBUG', 'CHECKLIST');
-    return { pass: true, score: 1.0 }; // Simple score
+    // Delegate to the enhanced scorer
+    const result = scoreProduct(product, ingredientData, log, {
+        preprocessed: ingredientData._preprocessed || null,
+    });
+    return result; // Returns { pass, score, reason } — compatible with existing code
 }
 
 // --- State Hint Normalizer (New function for step 4) ---
@@ -742,43 +698,8 @@ JSON Structure:
 }
 `;
 
-// --- Grocery Optimizer Prompt ---
-const GROCERY_OPTIMIZER_SYSTEM_PROMPT = (store, australianTermNote) => `
-You are an expert grocery query optimizer for store: ${store}.
-Your SOLE task is to take a JSON array of ingredient names and generate the full query/validation JSON for each.
-RULES:
-1.  'originalIngredient' MUST match the input ingredient name exactly.
-2.  'normalQuery' (REQUIRED): 2-4 generic words, STORE-PREFIXED. CRITICAL: Use MOST COMMON GENERIC NAME. DO NOT include brands, sizes, fat content, specific forms (sliced/grated), or dryness unless ESSENTIAL.${australianTermNote}
-3.  'tightQuery' (OPTIONAL, string | null): Hyper-specific, STORE-PREFIXED. Return null if 'normalQuery' is sufficient.
-4.  'wideQuery' (OPTIONAL, string | null): 1-2 broad words, STORE-PREFIXED. Return null if 'normalQuery' is sufficient.
-5.  'requiredWords' (REQUIRED): Array[1-2] ESSENTIAL CORE NOUNS ONLY, lowercase singular. NO adjectives, forms, plurals. These words MUST exist in product names.
-6.  'negativeKeywords' (REQUIRED): Array[1-3] lowercase words for INCORRECT product. Be concise.
-7.  'targetSize' (REQUIRED): Object {value: NUM, unit: "g"|"ml"} | null. Null if N/A. Prefer common package sizes.
-8.  'totalGramsRequired' (REQUIRED): BEST ESTIMATE total g/ml for THIS DAY. **Since you only have the ingredient list, estimate a common portion (e.g., 200g for a meal protein, 100g for carbs).** This is a rough estimate.
-9.  'quantityUnits' (REQUIRED): A string describing the common purchase unit (e.g., "1kg Bag", "250g Punnet", "500ml Bottle").
-10. 'allowedCategories' (REQUIRED): Array[1-2] precise, lowercase categories from this exact set: ["produce","fruit","veg","dairy","bakery","meat","seafood","pantry","frozen","drinks","canned","grains","spreads","condiments","snacks"].
-
-Output ONLY the valid JSON object described below. ABSOLUTELY NO PROSE OR MARKDOWN.
-
-JSON Structure:
-{
-  "ingredients": [
-    {
-      "originalIngredient": "string",
-      "category": "string",
-      "tightQuery": "string|null",
-      "normalQuery": "string",
-      "wideQuery": "string|null",
-      "requiredWords": ["string"],
-      "negativeKeywords": ["string"],
-      "targetSize": { "value": number, "unit": "g"|"ml" }|null,
-      "totalGramsRequired": number,
-      "quantityUnits": "string",
-      "allowedCategories": ["string"]
-    }
-  ]
-}
-`;
+// --- Grocery Optimizer Prompt (REPLACED by ENHANCED_GROCERY_PROMPT from utils) ---
+// The prompt function definition has been removed in V13.0 and replaced by the imported version.
 
 // --- Chef AI Prompt (Consolidated Definition) ---
 const CHEF_SYSTEM_PROMPT = (store) => `
@@ -928,6 +849,7 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
 /**
  * Generates grocery query details for the *entire* aggregated list.
  */
+// --- [MODIFIED V13.0] Added Preprocessing & Enhanced Prompt ---
 async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gpt-5.1', fallbackModel = 'gemini-2.0-flash') {
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
@@ -942,18 +864,24 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log,
     if (cached) return cached;
     log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
     
+    // PREPROCESSING (V13.0)
+    const preprocessedIngredients = preprocessIngredientBatch(aggregatedIngredients);
+    const llmInput = preprocessedIngredients.map(item => ({
+        originalIngredient: item.originalIngredient,
+        cleanName: item._cleanIngredientForLLM,
+        requested_total_g: item.requested_total_g
+    }));
+
     // 2. Prepare Prompt
     const isAustralianStore = (store === 'Coles' || store === 'Woolworths');
     const australianTermNote = isAustralianStore ? " Use common Australian terms (e.g., 'spring onion', 'capsicum')." : "";
 
-    const systemPrompt = GROCERY_OPTIMIZER_SYSTEM_PROMPT(store, australianTermNote);
+    // Use ENHANCED_GROCERY_PROMPT imported from utils
+    const systemPrompt = ENHANCED_GROCERY_PROMPT(store, australianTermNote);
     
-    // Map aggregated list to the format the LLM needs
-    const llmInput = aggregatedIngredients.map(item => ({
-        originalIngredient: item.originalIngredient,
-        requested_total_g: item.requested_total_g
-    }));
-    let userQuery = `Generate query JSON for the following ingredients:\n${JSON.stringify(llmInput)}`;
+    let userQuery = `Generate query JSON for the following ingredients.
+Use the "cleanName" field for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
+${JSON.stringify(llmInput)}`;
 
     const logPrefix = `GroceryOptimizerFullPlan`;
     log(`Grocery Optimizer AI Prompt`, 'INFO', 'LLM_PROMPT', {
@@ -990,6 +918,26 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log,
             if (requestedGrams && ing.totalGramsRequired !== requestedGrams) {
                 log(`Grocery Optimizer mismatch for "${ing.originalIngredient}". LLM returned ${ing.totalGramsRequired}g, but plan needs ${requestedGrams}g. Overwriting.`, 'DEBUG', 'LLM');
                 ing.totalGramsRequired = requestedGrams;
+            }
+
+            // ENHANCEMENT: Merge auto-negative keywords & attach preprocessed data (V13.0)
+            const preprocessedItem = preprocessedIngredients.find(
+                pi => pi.originalIngredient === ing.originalIngredient
+            );
+            if (preprocessedItem) {
+                 // Attach preprocessed data for later use in scoring
+                 ing._preprocessed = preprocessedItem._preprocessed;
+
+                 // Merge auto-negative keywords
+                 if (preprocessedItem._preprocessed?.autoNegativeKeywords?.length > 0) {
+                    const existingNeg = new Set((ing.negativeKeywords || []).map(k => k.toLowerCase()));
+                    const autoNeg = preprocessedItem._preprocessed.autoNegativeKeywords
+                        .filter(k => !existingNeg.has(k.toLowerCase()));
+                    if (autoNeg.length > 0) {
+                        ing.negativeKeywords = [...(ing.negativeKeywords || []), ...autoNeg];
+                        log(`Enhanced negativeKeywords for "${ing.originalIngredient}": added [${autoNeg.join(', ')}]`, 'DEBUG', 'PREPROCESS');
+                    }
+                }
             }
         });
         // --- End Sanity Check ---
@@ -1398,7 +1346,9 @@ module.exports = async (request, response) => {
                 dayRefs: aggItem.dayRefs,
                 stateHint: aggItem.stateHint, // MOD ZONE 1.3: Pass stateHint
                 store: store, // Pass store name explicitly
-                category: planDetails.category || 'Uncategorized' // FIX: Ensure category always exists for FE grouping
+                category: planDetails.category || 'Uncategorized', // FIX: Ensure category always exists for FE grouping
+                // Ensure preprocessed data is carried over (V13.0)
+                _preprocessed: planDetails._preprocessed || null
             };
         });
         
@@ -1493,14 +1443,28 @@ module.exports = async (request, response) => {
                     if (filteredProducts.length > 0) {
                         log(`[${ingredientKey}] Found ${filteredProducts.length} valid (${type}).`, 'INFO', 'DATA');
                         const currentUrls = new Set(result.allProducts.map(p => p.url));
+                        
+                        // [MODIFIED V13.0] Attach score to product before pushing to allProducts
                         filteredProducts.forEach(vp => { 
                             if (!currentUrls.has(vp.product.url)) { 
+                                vp.product._matchScore = vp.score;
                                 result.allProducts.push(vp.product); 
                             } 
                         });
 
                         if (result.allProducts.length > 0) {
-                            const foundProduct = result.allProducts.reduce((best, current) => (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best, result.allProducts[0]);
+                            // [MODIFIED V13.0] Sort by score first (prefer better matches), then by price
+                            const foundProduct = result.allProducts.reduce((best, current) => {
+                                const bestScore = best._matchScore ?? 0;
+                                const currentScore = current._matchScore ?? 0;
+                                // If scores differ significantly (>0.1), prefer higher score
+                                if (Math.abs(currentScore - bestScore) > 0.1) {
+                                    return currentScore > bestScore ? current : best;
+                                }
+                                // Otherwise, prefer cheaper
+                                return (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best;
+                            }, result.allProducts[0]);
+
                             result.currentSelectionURL = foundProduct.url;
                             result.source = 'discovery';
                             currentAttemptLog.status = 'success';
@@ -1528,7 +1492,82 @@ module.exports = async (request, response) => {
                 }
                 
                 if (result.source === 'failed') { 
-                    log(`[${ingredientKey}] Market Run failed after trying all queries.`, 'WARN', 'MARKET_RUN'); 
+                    // [MODIFIED V13.0] Progressive Fallback Logic
+                    log(`[${ingredientKey}] Market Run failed after trying all queries. Attempting fallbacks...`, 'WARN', 'MARKET_RUN');
+                    
+                    const fallbackQueries = generateFallbackQueries(ingredientKey, store);
+                    
+                    for (const fbQuery of fallbackQueries) {
+                        log(`[${ingredientKey}] Fallback query: "${fbQuery}"`, 'DEBUG', 'MARKET_RUN');
+                        result.searchAttempts.push({ queryType: 'fallback', query: fbQuery, status: 'pending', foundCount: 0 });
+                        const fbAttemptLog = result.searchAttempts.at(-1);
+                        
+                        try {
+                            const { data: searchData } = await fetchPriceData(store, fbQuery, 1, log);
+                            const products = searchData?.results || [];
+                            fbAttemptLog.foundCount = products.length;
+                            
+                            if (products.length > 0) {
+                                const validProducts = products.map(p => {
+                                    const enrichedProduct = {
+                                        name: p.product_name || p.name,
+                                        brand: p.product_brand,
+                                        price: p.current_price,
+                                        size: p.product_size || p.size || '',
+                                        url: p.url,
+                                        barcode: p.barcode,
+                                        product_name: p.product_name || p.name, // Ensure product_name is set for scorer
+                                        product_category: p.product_category || p.category || '',
+                                        product_size: p.product_size || p.size || '',
+                                        unit_price_per_100: calculateUnitPrice(p.current_price, p.product_size || p.size || ''),
+                                    };
+                                    const checkResult = runSmarterChecklist(enrichedProduct, ingredient, log);
+                                    return checkResult.pass ? { product: enrichedProduct, score: checkResult.score } : null;
+                                }).filter(Boolean);
+                                
+                                if (validProducts.length > 0) {
+                                    // Sort by score descending, then by unit price ascending
+                                    validProducts.sort((a, b) => {
+                                        if (Math.abs(a.score - b.score) > 0.05) return b.score - a.score;
+                                        return (a.product.unit_price_per_100 ?? Infinity) - (b.product.unit_price_per_100 ?? Infinity);
+                                    });
+                                    
+                                    const currentUrls = new Set(result.allProducts.map(p => p.url));
+                                    validProducts.forEach(vp => { 
+                                        if (!currentUrls.has(vp.product.url)) { 
+                                            vp.product._matchScore = vp.score;
+                                            result.allProducts.push(vp.product); 
+                                        }
+                                    });
+                                    
+                                    if (result.allProducts.length > 0) {
+                                        const foundProduct = result.allProducts.reduce((best, current) => {
+                                            const bestScore = best._matchScore ?? 0;
+                                            const currentScore = current._matchScore ?? 0;
+                                            if (Math.abs(currentScore - bestScore) > 0.1) return currentScore > bestScore ? current : best;
+                                            return (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best;
+                                        }, result.allProducts[0]);
+                                        
+                                        result.currentSelectionURL = foundProduct.url;
+                                        result.source = 'discovery';
+                                        fbAttemptLog.status = 'success';
+                                        acceptedQueryType = 'fallback';
+                                        bestScore = foundProduct._matchScore || 0;
+                                        log(`[${ingredientKey}] Fallback matched: "${foundProduct.product_name || foundProduct.name}"`, 'INFO', 'MARKET_RUN');
+                                        break; // Stop trying more fallbacks
+                                    }
+                                }
+                            }
+                            fbAttemptLog.status = fbAttemptLog.status === 'pending' ? 'no_match' : fbAttemptLog.status;
+                        } catch (fbErr) {
+                            log(`[${ingredientKey}] Fallback query error: ${fbErr.message}`, 'WARN', 'MARKET_RUN');
+                            fbAttemptLog.status = 'error';
+                        }
+                    }
+
+                    if (result.source === 'failed') { 
+                        log(`[${ingredientKey}] Market Run failed after trying all queries + fallbacks.`, 'WARN', 'MARKET_RUN'); 
+                    }
                 } else { 
                     log(`[${ingredientKey}] Market Run success via '${acceptedQueryType}' query.`, 'DEBUG', 'MARKET_RUN'); 
                 }
