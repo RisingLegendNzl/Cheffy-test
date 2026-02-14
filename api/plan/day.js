@@ -66,8 +66,8 @@ const LLM_REQUEST_TIMEOUT_MS = 45000; // Increased for GPT-5.1 JSON mode latency
 // --- [PERF] Add new performance constants ---
 const REQUIRED_WORD_SCORE_THRESHOLD = 0.60;
 const SKIP_STRONG_MATCH_THRESHOLD = 0.80;
-const MARKET_RUN_CONCURRENCY = 6;
-const NUTRITION_CONCURRENCY = 6;
+const MARKET_RUN_CONCURRENCY = 12; // [PERF V2] Increased from 6
+const NUTRITION_CONCURRENCY = 10;  // [PERF V2] Increased from 6
 const TOKEN_BUCKET_CAPACITY = 10;
 const TOKEN_BUCKET_REFILL_PER_SEC = 10;
 const TOKEN_BUCKET_MAX_WAIT_MS = 250;
