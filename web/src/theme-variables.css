@@ -332,3 +332,78 @@ html[data-theme] body,
 html[data-theme] #root {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
+
+
+/* ── 12. MEAL CARD MACRO PILLS — DARK MODE ───────────────────────────────── */
+/*
+ * The macro pills in MealPlanDisplay meal cards use Tailwind -100 backgrounds
+ * and -800 text colours. Without overrides these are unreadable in dark mode:
+ * light pastel bg + dark text on a dark card surface.
+ *
+ * Fix: -100 bgs → semi-transparent tints, -800 text → lighter readable shades.
+ */
+
+/* Macro pill backgrounds */
+[data-theme="dark"] .bg-indigo-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  background-color: rgba(99, 102, 241, 0.15) !important;
+}
+
+[data-theme="dark"] .bg-blue-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  background-color: rgba(59, 130, 246, 0.15) !important;
+}
+
+[data-theme="dark"] .bg-yellow-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  background-color: rgba(245, 158, 11, 0.15) !important;
+}
+
+[data-theme="dark"] .bg-green-100:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  background-color: rgba(16, 185, 129, 0.15) !important;
+}
+
+/* Macro pill text */
+[data-theme="dark"] .text-indigo-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: #a5b4fc !important;
+}
+
+[data-theme="dark"] .text-blue-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: #93c5fd !important;
+}
+
+[data-theme="dark"] .text-yellow-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: #fcd34d !important;
+}
+
+[data-theme="dark"] .text-green-800:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: #6ee7b7 !important;
+}
+
+
+/* ── 13. MEAL CARD BORDERS & STATES — DARK MODE ─────────────────────────── */
+
+/* Eaten card border */
+[data-theme="dark"] .border-green-300:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  border-color: rgba(16, 185, 129, 0.3) !important;
+}
+
+/* Hover border on uneaten card */
+[data-theme="dark"] .hover\:border-indigo-300:not(.keep-light):not(.keep-light *):hover {
+  border-color: rgba(99, 102, 241, 0.35) !important;
+}
+
+/* Eaten toggle button (uneaten state) */
+[data-theme="dark"] .bg-gray-200:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *) {
+  background-color: #252839 !important;
+}
+
+[data-theme="dark"] .text-gray-400:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude *) {
+  color: #6b7280 !important;
+}
+
+[data-theme="dark"] .hover\:bg-gray-300:not(.keep-light):not(.keep-light *):not(.wizard-form-exclude):not(.wizard-form-exclude *):hover {
+  background-color: #2d3148 !important;
+}
+
+/* Hover shadow in dark — subtler than the default white-glow */
+[data-theme="dark"] .hover\:shadow-lg:not(.keep-light):not(.keep-light *):hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.1) !important;
+}
