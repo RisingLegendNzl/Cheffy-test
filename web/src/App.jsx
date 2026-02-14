@@ -385,7 +385,10 @@ const App = () => {
                     handleFetchNutrition={logic.handleFetchNutrition}
                     handleSubstituteSelection={logic.handleSubstituteSelection}
                     handleQuantityChange={logic.handleQuantityChange}
-                    handleDownloadFailedLogs={logic.handleDownloadFailedLogs}
+handleDownloadMatchTraceReport={logic.handleDownloadMatchTraceReport || (() => {})}
+matchTraces={logic.matchTraces || []}
+showMatchTraceLogs={logic.showMatchTraceLogs ?? false}
+setShowMatchTraceLogs={logic.setShowMatchTraceLogs || (() => {})}
                     handleDownloadLogs={logic.handleDownloadLogs}
                     onToggleMealEaten={logic.onToggleMealEaten}
                     handleRefresh={logic.handleRefresh}
