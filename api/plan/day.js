@@ -31,6 +31,10 @@ const { cleanIngredientBatch } = require('../../utils/ingredient-query-cleaner')
 const { runEnhancedChecklist } = require('../../utils/product-checker');
 const { GROCERY_OPTIMIZER_SYSTEM_PROMPT: ENHANCED_GROCERY_PROMPT } = require('../../utils/grocery-prompts');
 
+// --- [NEW] Match Tracing Integrations (V13.2) ---
+const { createMatchTrace } = require('../../utils/product-match-logger');
+const { tracedScoring } = require('../../utils/traced-scoring');
+
 /// ===== IMPORTS-END ===== ////
 
 // --- CONFIGURATION ---
@@ -922,7 +926,7 @@ module.exports = async (request, response) => {
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); 
     
     // [MODIFIED] Destructure new logger functions
-    const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, addWarning, getWarnings } = createLogger(run_id, day || 'unknown', response);
+    const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, writeSseEvent, addWarning, getWarnings } = createLogger(run_id, day || 'unknown', response);
     // --- End SSE Setup ---
 
     if (request.method === 'OPTIONS') {
@@ -1030,6 +1034,10 @@ module.exports = async (request, response) => {
                          return { [ingredientKey]: { ...ingredient, source: 'error', error: 'Missing critical query/validation fields', allProducts:[], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url }};
                      }
                     const result = { ...ingredient, allProducts: [], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url, source: 'failed', searchAttempts: [] };
+                    
+                    // --- MATCH TRACE ---
+                    const trace = createMatchTrace(ingredientKey, ingredient);
+
                     const qn = ingredient.normalQuery;
                     const qt = (ingredient.tightQuery && ingredient.tightQuery.trim()) ? ingredient.tightQuery : synthTight(ingredient, store);
                     const qw = (ingredient.wideQuery && ingredient.wideQuery.trim()) ? ingredient.wideQuery : synthWide(ingredient, store);
@@ -1062,6 +1070,7 @@ module.exports = async (request, response) => {
                         // --- [END PERF] ---
 
                         log(`[${ingredientKey}] Attempting "${type}" query: "${query}"`, 'DEBUG', 'HTTP');
+                        const attemptRecorder = trace.startAttempt(type, query);
                         result.searchAttempts.push({ queryType: type, query: query, status: 'pending', foundCount: 0});
                         const currentAttemptLog = result.searchAttempts.at(-1);
 
@@ -1070,6 +1079,7 @@ module.exports = async (request, response) => {
 
                         if (priceData.error) {
                             log(`[${ingredientKey}] Fetch failed (${type}): ${priceData.error.message}`, 'WARN', 'HTTP', { status: priceData.error.status });
+                            attemptRecorder.finalize('fetch_error', 0);
                             currentAttemptLog.status = 'fetch_error'; continue;
                         }
                         
@@ -1079,8 +1089,9 @@ module.exports = async (request, response) => {
                         
                         for (const rawProduct of rawProducts) {
                             if (!rawProduct || !rawProduct.product_name) continue;
-                            // [MODIFIED V13.1] Use Enhanced Checklist
-                            const checklistResult = runEnhancedChecklist(rawProduct, ingredient, log);
+                            // [MODIFIED V13.1] Use Enhanced Checklist with Trace
+                            const checklistResult = tracedScoring(runEnhancedChecklist, rawProduct, ingredient, log, attemptRecorder);
+                            
                             if (checklistResult.pass) {
                                 validProductsOnPage.push({ 
                                     product: { 
@@ -1095,6 +1106,8 @@ module.exports = async (request, response) => {
                         
                         const filteredProducts = applyPriceOutlierGuard(validProductsOnPage, log, ingredientKey);
                         currentAttemptLog.foundCount = filteredProducts.length;
+                        attemptRecorder.finalize(filteredProducts.length > 0 ? 'success' : 'no_match_post_filter', filteredProducts.length);
+
                         const currentBestScore = filteredProducts.length > 0 ? filteredProducts.reduce((max, p) => Math.max(max, p.score), 0) : 0;
                         currentAttemptLog.bestScore = currentBestScore;
 
@@ -1132,6 +1145,8 @@ module.exports = async (request, response) => {
                                      acceptedQueryType = type;
                                      bestScore = currentBestScore;
                                  }
+                                 
+                                 trace.setSelection(foundProduct, 'discovery', acceptedQueryType);
 
                                  // --- [PERF] Ladder Logic Stop Conditions ---
                                  // 1. Strong tight match
@@ -1146,7 +1161,11 @@ module.exports = async (request, response) => {
                                  }
                                  // --- [END PERF] ---
                             } else { currentAttemptLog.status = 'no_match_post_filter'; }
-                        } else { log(`[${ingredientKey}] No valid products (${type}).`, 'WARN', 'DATA'); currentAttemptLog.status = 'no_match'; }
+                        } else { 
+                            log(`[${ingredientKey}] No valid products (${type}).`, 'WARN', 'DATA'); 
+                            currentAttemptLog.status = 'no_match';
+                            attemptRecorder.finalize('no_match', 0);
+                        }
                     } // end query loop
                     
                     if (result.source === 'failed') { 
@@ -1157,6 +1176,7 @@ module.exports = async (request, response) => {
                         
                         for (const fbQuery of fallbackQueries) {
                             log(`[${ingredientKey}] Fallback query: "${fbQuery}"`, 'DEBUG', 'MARKET_RUN');
+                            const fbAttemptRecorder = trace.startAttempt('fallback', fbQuery);
                             result.searchAttempts.push({ queryType: 'fallback', query: fbQuery, status: 'pending', foundCount: 0 });
                             const fbAttemptLog = result.searchAttempts.at(-1);
                             
@@ -1179,11 +1199,13 @@ module.exports = async (request, response) => {
                                             product_size: p.product_size || p.size || '',
                                             unit_price_per_100: calculateUnitPrice(p.current_price, p.product_size || p.size || ''),
                                         };
-                                        // [MODIFIED V13.1] Use Enhanced Checklist
-                                        const checkResult = runEnhancedChecklist(enrichedProduct, ingredient, log);
+                                        // [MODIFIED V13.1] Use Enhanced Checklist with Trace
+                                        const checkResult = tracedScoring(runEnhancedChecklist, enrichedProduct, ingredient, log, fbAttemptRecorder);
                                         return checkResult.pass ? { product: enrichedProduct, score: checkResult.score } : null;
                                     }).filter(Boolean);
                                     
+                                    fbAttemptRecorder.finalize(validProducts.length > 0 ? 'success' : 'no_match_post_filter', validProducts.length);
+
                                     if (validProducts.length > 0) {
                                         // Sort by score descending, then by unit price ascending
                                         validProducts.sort((a, b) => {
@@ -1213,20 +1235,26 @@ module.exports = async (request, response) => {
                                             acceptedQueryType = 'fallback';
                                             bestScore = foundProduct._matchScore || 0;
                                             log(`[${ingredientKey}] Fallback matched: "${foundProduct.product_name || foundProduct.name}"`, 'INFO', 'MARKET_RUN');
+                                            
+                                            trace.setSelection(foundProduct, 'fallback', 'fallback');
                                             break; // Stop trying more fallbacks
                                         }
                                     }
+                                } else {
+                                    fbAttemptRecorder.finalize('no_match', 0);
                                 }
                                 fbAttemptLog.status = fbAttemptLog.status === 'pending' ? 'no_match' : fbAttemptLog.status;
                             } catch (fbErr) {
                                 log(`[${ingredientKey}] Fallback query error: ${fbErr.message}`, 'WARN', 'MARKET_RUN');
                                 fbAttemptLog.status = 'error';
+                                fbAttemptRecorder.finalize('fetch_error', 0);
                             }
                         }
                     } 
                     
                     if (result.source === 'failed') { 
                         log(`[${ingredientKey}] Market Run failed after all queries + fallbacks.`, 'WARN', 'MARKET_RUN'); 
+                        trace.setFailed('All queries exhausted without a match');
                     } else { 
                         log(`[${ingredientKey}] Market Run success via '${acceptedQueryType}' query.`, 'DEBUG', 'MARKET_RUN'); 
                     }
@@ -1237,10 +1265,15 @@ module.exports = async (request, response) => {
                     log(`[${ingredientKey}] Market Run Telemetry`, 'INFO', 'MARKET_RUN', telemetry);
                     // --- [END PERF] ---
 
+                    // Attach match trace to result
+                    result._matchTrace = trace.build();
                     return { [ingredientKey]: result };
 
                 } catch(e) {
                     log(`CRITICAL Error in processSingleIngredient "${ingredient?.originalIngredient}": ${e.message}`, 'CRITICAL', 'MARKET_RUN', { stack: e.stack?.substring(0, 300) });
+                     // Use trace logic if available in scope? No, because trace const might not be init if error happens very early.
+                     // But if initialized, we can try.
+                     // Safe approach: just return error.
                      return { _error: true, itemKey: ingredient?.originalIngredient || 'unknown_error', message: `Internal Market Run Error: ${e.message}` };
                 }
             };
@@ -1272,6 +1305,14 @@ module.exports = async (request, response) => {
 
                  if (resultData && typeof resultData === 'object') {
                      dayResultsMap.set(normalizedKey, { ...planItem, ...resultData, normalizedKey: planItem.normalizedKey });
+                     
+                     // Emit Trace Event if available
+                     if (resultData._matchTrace) {
+                         writeSseEvent('ingredient:match_trace', {
+                             key: ingredientKey,
+                             trace: resultData._matchTrace
+                         });
+                     }
                  } else {
                       log(`Invalid market result structure for "${ingredientKey}"`, 'ERROR', 'SYSTEM', { resultData });
                       dayResultsMap.set(normalizedKey, { ...planItem, source: 'error', error: 'Invalid market result structure', allProducts:[], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url });
@@ -1349,7 +1390,7 @@ module.exports = async (request, response) => {
                  } else { log(`Invalid item in nutrition results loop (Day ${day})`, 'WARN', 'CALC', {item}); }
             });
         } else { 
-            nutrition_ms = Date.Now() - nutritionStartTime; // [PERF] Log time
+            nutrition_ms = Date.now() - nutritionStartTime; // [PERF] Log time
             log(`No items require nutrition fetching for Day ${day}.`, 'INFO', 'CALC'); 
         }
 
