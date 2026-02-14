@@ -923,7 +923,7 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
 /**
  * Generates grocery query details for the *entire* aggregated list.
  */
-async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gemini-2.5-flash-lite', fallbackModel = null) {
+async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gpt-5.1', fallbackModel = null) {
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
