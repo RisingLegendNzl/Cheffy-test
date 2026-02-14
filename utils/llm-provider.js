@@ -1,7 +1,10 @@
 // --- Cheffy: utils/llm-provider.js ---
-// [UPDATED] LLM Provider Abstraction Layer
-// Modified to use gemini-2.5-flash-lite as primary model for Grocery Optimiser
-// with performance optimizations for maximum speed and reliability.
+// [UPDATED V3.0] LLM Provider Abstraction Layer
+// - Added reasoning model detection (o-series, gpt-5.x)
+// - Reasoning models: temperature, top_p stripped; reasoning_effort injected
+// - Added gpt-4.1, gpt-4.1-mini, o4-mini to SUPPORTED_MODELS
+// - GPT-4.1 / GPT-4.1-mini: standard non-reasoning, temperature/top_p supported
+// - o4-mini / gpt-5.1: reasoning models, temperature/top_p NOT supported
 //
 // DESIGN DECISIONS:
 // - Callers continue to build payloads in Gemini format (the existing shape).
@@ -46,24 +49,24 @@ const DEFAULT_MAX_TOKENS = {
 
 // Supported models that the frontend is allowed to select.
 // Used by API handlers to validate the `preferredModel` field.
-// UPDATED: Added gemini-2.5-flash-lite to supported models
+// [V3.0] Added gpt-4.1, gpt-4.1-mini, o4-mini for full frontend coverage
 const SUPPORTED_MODELS = {
-    'gpt-5.1':              { provider: 'openai',  label: 'GPT-5.1 (Primary)' },
-    'gpt-4.1':              { provider: 'openai',  label: 'GPT-4.1' },
-    'gpt-4.1-mini':         { provider: 'openai',  label: 'GPT-4.1 Mini' },
-    'o4-mini':              { provider: 'openai',  label: 'o4-mini (Reasoning)' },
-    'gemini-2.0-flash':     { provider: 'gemini',  label: 'Gemini 2.0 Flash' },
-    'gemini-2.5-flash-lite': { provider: 'gemini',  label: 'Gemini 2.5 Flash Lite' },
+    'gpt-5.1':              { provider: 'openai',  label: 'GPT-5.1 (Primary)',        reasoning: true  },
+    'gpt-4.1':              { provider: 'openai',  label: 'GPT-4.1',                  reasoning: false },
+    'gpt-4.1-mini':         { provider: 'openai',  label: 'GPT-4.1 Mini',             reasoning: false },
+    'o4-mini':              { provider: 'openai',  label: 'o4-mini (Reasoning)',       reasoning: true  },
+    'gemini-2.0-flash':     { provider: 'gemini',  label: 'Gemini 2.0 Flash',         reasoning: false },
+    'gemini-2.5-flash-lite': { provider: 'gemini',  label: 'Gemini 2.5 Flash Lite',   reasoning: false },
 };
 
 // ============================================================
-// 2. PROVIDER DETECTION
+// 2. PROVIDER & MODEL TYPE DETECTION
 // ============================================================
 
 /**
  * Determines which provider a model belongs to.
  *
- * @param {string} modelName - e.g. 'gpt-5.1', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'
+ * @param {string} modelName - e.g. 'gpt-5.1', 'gemini-2.0-flash', 'o4-mini'
  * @returns {'openai' | 'gemini'}
  */
 function detectProvider(modelName) {
@@ -73,6 +76,47 @@ function detectProvider(modelName) {
         return 'openai';
     }
     return 'gemini';
+}
+
+/**
+ * [V3.0] Determines if a model is a "reasoning" model that does NOT support
+ * temperature, top_p, or other sampling parameters.
+ *
+ * Reasoning models (o-series, gpt-5.x) reject non-default temperature/top_p
+ * with a 400 error. They use `reasoning_effort` instead.
+ *
+ * Standard models (gpt-4.1, gpt-4.1-mini) fully support temperature/top_p.
+ *
+ * @param {string} modelName
+ * @returns {boolean}
+ */
+function isReasoningModel(modelName) {
+    if (!modelName || typeof modelName !== 'string') return false;
+
+    // Check the SUPPORTED_MODELS registry first (most reliable)
+    if (SUPPORTED_MODELS[modelName] && typeof SUPPORTED_MODELS[modelName].reasoning === 'boolean') {
+        return SUPPORTED_MODELS[modelName].reasoning;
+    }
+
+    // Fallback heuristic for models not in the registry
+    const lower = modelName.toLowerCase();
+
+    // o-series models are always reasoning models
+    if (lower.startsWith('o1') || lower.startsWith('o3') || lower.startsWith('o4')) {
+        return true;
+    }
+
+    // GPT-5.x family are reasoning models
+    if (lower.startsWith('gpt-5')) {
+        return true;
+    }
+
+    // GPT-4.x family are standard (non-reasoning) models
+    if (lower.startsWith('gpt-4')) {
+        return false;
+    }
+
+    return false;
 }
 
 // ============================================================
@@ -122,9 +166,11 @@ function _buildGeminiRequest(modelName, geminiPayload) {
 }
 
 // --- OpenAI (translated from Gemini format) --------------------------
+// [V3.0] Now handles reasoning vs standard models differently
 
 function _buildOpenAIRequest(modelName, geminiPayload, options = {}) {
     const { agentType = 'default', maxTokens } = options;
+    const reasoning = isReasoningModel(modelName);
 
     // 1. Extract system prompt
     const systemText = geminiPayload.systemInstruction?.parts?.[0]?.text || '';
@@ -136,6 +182,9 @@ function _buildOpenAIRequest(modelName, geminiPayload, options = {}) {
     const userText = userParts.join('\n');
 
     // 3. Build messages array
+    //    Reasoning models treat "system" as "developer" role internally,
+    //    but the Chat Completions API still accepts "system" for o-series
+    //    and gpt-5.x models. We keep using "system" for compatibility.
     const messages = [];
     if (systemText) {
         messages.push({ role: 'system', content: systemText });
@@ -146,9 +195,6 @@ function _buildOpenAIRequest(modelName, geminiPayload, options = {}) {
 
     // 4. Map generationConfig → OpenAI parameters
     const genConfig = geminiPayload.generationConfig || {};
-    const temperature = genConfig.temperature ?? 0.3;
-    const topP        = genConfig.topP ?? 0.9;
-    // Note: OpenAI does NOT support topK — silently dropped.
 
     // 5. JSON mode
     const wantsJson = genConfig.responseMimeType === 'application/json';
@@ -158,14 +204,43 @@ function _buildOpenAIRequest(modelName, geminiPayload, options = {}) {
         || DEFAULT_MAX_TOKENS[agentType]
         || DEFAULT_MAX_TOKENS.default;
 
-    // 7. Assemble body
+    // 7. Assemble body — diverges for reasoning vs standard models
     const body = {
-        model:       modelName,
+        model:    modelName,
         messages,
-        temperature,
-        top_p:       topP,
         max_completion_tokens: resolvedMaxTokens,
     };
+
+    if (reasoning) {
+        // ─── REASONING MODEL (o4-mini, gpt-5.1, etc.) ───
+        // These models reject temperature, top_p, and other sampling params.
+        // They only accept reasoning_effort (and temperature must be omitted
+        // or set to exactly 1).
+        //
+        // We add reasoning_effort based on agentType:
+        //   - mealPlan / chefRecipe → 'medium' (good creativity vs speed)
+        //   - groceryQuery          → 'low'    (structured output, speed)
+        //   - default               → 'medium'
+        const effortMap = {
+            mealPlan:     'medium',
+            chefRecipe:   'medium',
+            groceryQuery: 'low',
+            default:      'medium',
+        };
+        body.reasoning_effort = effortMap[agentType] || 'medium';
+
+        // DO NOT include temperature or top_p — they cause 400 errors
+    } else {
+        // ─── STANDARD MODEL (gpt-4.1, gpt-4.1-mini, etc.) ───
+        // These models fully support temperature and top_p.
+        const temperature = genConfig.temperature ?? 0.3;
+        const topP        = genConfig.topP ?? 0.9;
+        // Note: OpenAI does NOT support topK — silently dropped.
+
+        body.temperature = temperature;
+        body.top_p       = topP;
+    }
+
     if (wantsJson) {
         body.response_format = { type: 'json_object' };
     }
@@ -496,6 +571,9 @@ module.exports = {
     buildLLMRequest,
     parseLLMResponse,
     detectProvider,
+
+    // --- [V3.0] Model type detection ---
+    isReasoningModel,
 
     // --- High-level helpers (use for simpler call sites) ---
     callLLM,
