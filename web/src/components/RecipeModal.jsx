@@ -2,6 +2,8 @@
 // =============================================================================
 // RecipeModal — Full-screen recipe detail overlay
 //
+// DARK MODE: All colors are now theme-aware via useTheme().
+//
 // FIXES APPLIED:
 // 1. z-index raised to 9999 — above Header (1020), BottomNav (1030),
 //    SettingsPanel (1050), ProductDetailModal (1001), and log bar (100).
@@ -20,10 +22,12 @@
 
 import React, { useEffect, useRef } from 'react';
 import { X, ListChecks, ListOrdered } from 'lucide-react';
+import { useTheme } from '../contexts/ThemeContext';
 
 const MODAL_Z = 9999; // Above everything in the app
 
 const RecipeModal = ({ meal, onClose }) => {
+    const { isDark } = useTheme();
     const scrollRef = useRef(null);
 
     // ── Robust body scroll lock (iOS-safe) + inject dvh helper CSS ──
@@ -103,6 +107,29 @@ const RecipeModal = ({ meal, onClose }) => {
         if (e.target === e.currentTarget) onClose();
     };
 
+    // ── Theme tokens ──
+    const t = {
+        cardBg:          isDark ? '#1e2130' : '#ffffff',
+        headerBg:        isDark ? '#1e2130' : '#ffffff',
+        headerBorder:    isDark ? '#2d3148' : '#e5e7eb',
+        titleColor:      isDark ? '#f0f1f5' : '#111827',
+        closeBtnBg:      isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+        closeBtnColor:   isDark ? '#d1d5db' : '#6b7280',
+        bodyBg:          isDark ? '#181a24' : '#ffffff',
+        descColor:       isDark ? '#d1d5db' : '#374151',
+        sectionTitleClr: isDark ? '#f0f1f5' : '#111827',
+        ingredientIconBg:isDark ? 'rgba(99,102,241,0.15)' : '#e0e7ff',
+        stepsIconBg:     isDark ? 'rgba(16,185,129,0.15)' : '#d1fae5',
+        stepsIconColor:  isDark ? '#34d399' : '#059669',
+        ingredientBg:    isDark ? 'rgba(255,255,255,0.04)' : '#f9fafb',
+        ingredientBorder:isDark ? 'rgba(255,255,255,0.06)' : '#f1f5f9',
+        ingredientText:  isDark ? '#e5e7eb' : '#374151',
+        ingredientQty:   isDark ? '#a5b4fc' : '#6366f1',
+        stepNumBg:       isDark ? 'rgba(16,185,129,0.15)' : '#d1fae5',
+        stepNumColor:    isDark ? '#34d399' : '#047857',
+        stepText:        isDark ? '#d1d5db' : '#374151',
+    };
+
     return (
         /* ── BACKDROP ── */
         <div
@@ -115,7 +142,7 @@ const RecipeModal = ({ meal, onClose }) => {
                 right: 0,
                 bottom: 0,
                 zIndex: MODAL_Z,
-                backgroundColor: 'rgba(0, 0, 0, 0.55)',
+                backgroundColor: isDark ? 'rgba(0, 0, 0, 0.7)' : 'rgba(0, 0, 0, 0.55)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -127,16 +154,16 @@ const RecipeModal = ({ meal, onClose }) => {
                 className="rm-container"
                 onClick={(e) => e.stopPropagation()}
                 style={{
-                    backgroundColor: '#ffffff',
+                    backgroundColor: t.cardBg,
                     display: 'flex',
                     flexDirection: 'column',
                     overflow: 'hidden',
                     boxSizing: 'border-box',
                     // Visual containment: colored top accent + ring shadow
                     borderTop: '3.5px solid #6366f1',
-                    boxShadow:
-                        '0 0 0 1px rgba(99,102,241,0.12), ' +
-                        '0 24px 48px -12px rgba(0,0,0,0.3)',
+                    boxShadow: isDark
+                        ? '0 0 0 1px rgba(99,102,241,0.15), 0 24px 48px -12px rgba(0,0,0,0.6)'
+                        : '0 0 0 1px rgba(99,102,241,0.12), 0 24px 48px -12px rgba(0,0,0,0.3)',
                 }}
             >
                 {/* ── HEADER (pinned, never scrolls) ── */}
@@ -149,8 +176,8 @@ const RecipeModal = ({ meal, onClose }) => {
                         padding: '1rem 1.25rem',
                         paddingTop:
                             'max(1rem, calc(env(safe-area-inset-top) + 0.5rem))',
-                        borderBottom: '1px solid #e5e7eb',
-                        backgroundColor: '#ffffff',
+                        borderBottom: `1px solid ${t.headerBorder}`,
+                        backgroundColor: t.headerBg,
                         flexShrink: 0,
                         minHeight: '64px',
                         zIndex: 2,
@@ -159,50 +186,40 @@ const RecipeModal = ({ meal, onClose }) => {
                     {/* Title */}
                     <h3
                         style={{
-                            fontSize: '1.2rem',
+                            fontSize: '1.25rem',
                             fontWeight: 700,
-                            color: '#111827',
+                            color: t.titleColor,
                             margin: 0,
+                            lineHeight: 1.3,
+                            flex: 1,
+                            minWidth: 0,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
-                            flex: 1,
-                            minWidth: 0,
                         }}
                     >
-                        {meal.name}
+                        {meal.meal_name || meal.name || 'Recipe'}
                     </h3>
 
-                    {/* Close (X) Button — always visible, generous hit target */}
+                    {/* Close button */}
                     <button
                         onClick={onClose}
-                        aria-label="Close recipe"
                         style={{
-                            width: '40px',
-                            height: '40px',
-                            minWidth: '40px',
-                            minHeight: '40px',
-                            borderRadius: '50%',
-                            backgroundColor: '#f3f4f6',
-                            border: '2px solid #e5e7eb',
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '10px',
+                            border: 'none',
+                            cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            cursor: 'pointer',
+                            background: t.closeBtnBg,
+                            color: t.closeBtnColor,
                             flexShrink: 0,
-                            transition: 'background-color 0.15s, border-color 0.15s',
-                            WebkitTapHighlightColor: 'transparent',
-                        }}
-                        onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = '#e5e7eb';
-                            e.currentTarget.style.borderColor = '#d1d5db';
-                        }}
-                        onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = '#f3f4f6';
-                            e.currentTarget.style.borderColor = '#e5e7eb';
+                            transition: 'background 0.15s',
                         }}
                     >
-                        <X size={20} color="#374151" strokeWidth={2.5} />
+                        <X size={20} />
                     </button>
                 </div>
 
@@ -213,8 +230,9 @@ const RecipeModal = ({ meal, onClose }) => {
                         flex: 1,
                         minHeight: 0,
                         overflowY: 'auto',
-                        overflowX: 'hidden',
-                        padding: '1.5rem 1.25rem',
+                        padding: '1.25rem',
+                        background: t.bodyBg,
+                        overscrollBehavior: 'contain',
                         WebkitOverflowScrolling: 'touch',
                     }}
                 >
@@ -223,7 +241,7 @@ const RecipeModal = ({ meal, onClose }) => {
                         <div style={{ marginBottom: '2rem' }}>
                             <p
                                 style={{
-                                    color: '#374151',
+                                    color: t.descColor,
                                     fontSize: '1rem',
                                     lineHeight: '1.625',
                                     margin: 0,
@@ -250,7 +268,7 @@ const RecipeModal = ({ meal, onClose }) => {
                                         width: '32px',
                                         height: '32px',
                                         borderRadius: '8px',
-                                        backgroundColor: '#e0e7ff',
+                                        backgroundColor: t.ingredientIconBg,
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
@@ -262,13 +280,14 @@ const RecipeModal = ({ meal, onClose }) => {
                                     style={{
                                         fontSize: '1.25rem',
                                         fontWeight: 700,
-                                        color: '#111827',
+                                        color: t.sectionTitleClr,
                                         margin: 0,
                                     }}
                                 >
                                     Ingredients
                                 </h4>
                             </div>
+
                             <ul
                                 style={{
                                     listStyle: 'none',
@@ -276,47 +295,55 @@ const RecipeModal = ({ meal, onClose }) => {
                                     margin: 0,
                                 }}
                             >
-                                {meal.items.map((item, index) => (
-                                    <li
-                                        key={index}
-                                        style={{
-                                            display: 'flex',
-                                            alignItems: 'flex-start',
-                                            gap: '0.75rem',
-                                            marginBottom: '0.75rem',
-                                            color: '#374151',
-                                        }}
-                                    >
-                                        <span
+                                {meal.items.map((item, index) => {
+                                    const name =
+                                        typeof item === 'string'
+                                            ? item
+                                            : item.name || item.ingredient || '';
+                                    const qty =
+                                        typeof item === 'object'
+                                            ? item.quantity || item.amount || ''
+                                            : '';
+                                    return (
+                                        <li
+                                            key={index}
                                             style={{
-                                                width: '8px',
-                                                height: '8px',
-                                                borderRadius: '50%',
-                                                backgroundColor: '#818cf8',
-                                                marginTop: '0.5rem',
-                                                flexShrink: 0,
-                                            }}
-                                        />
-                                        <span
-                                            style={{
-                                                flex: 1,
-                                                fontSize: '1rem',
-                                                lineHeight: '1.625',
+                                                padding: '0.625rem 0.75rem',
+                                                borderRadius: '8px',
+                                                backgroundColor:
+                                                    index % 2 === 0
+                                                        ? t.ingredientBg
+                                                        : 'transparent',
+                                                borderBottom: `1px solid ${t.ingredientBorder}`,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '0.5rem',
                                             }}
                                         >
+                                            {qty && (
+                                                <span
+                                                    style={{
+                                                        fontWeight: 600,
+                                                        color: t.ingredientQty,
+                                                        fontSize: '0.875rem',
+                                                        minWidth: '60px',
+                                                    }}
+                                                >
+                                                    {qty}
+                                                </span>
+                                            )}
                                             <span
                                                 style={{
-                                                    fontWeight: 600,
-                                                    color: '#111827',
+                                                    color: t.ingredientText,
+                                                    fontSize: '0.95rem',
+                                                    lineHeight: 1.4,
                                                 }}
                                             >
-                                                {item.qty}
-                                                {item.unit}
-                                            </span>{' '}
-                                            {item.key}
-                                        </span>
-                                    </li>
-                                ))}
+                                                {name}
+                                            </span>
+                                        </li>
+                                    );
+                                })}
                             </ul>
                         </div>
                     )}
@@ -337,19 +364,19 @@ const RecipeModal = ({ meal, onClose }) => {
                                         width: '32px',
                                         height: '32px',
                                         borderRadius: '8px',
-                                        backgroundColor: '#d1fae5',
+                                        backgroundColor: t.stepsIconBg,
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'center',
                                     }}
                                 >
-                                    <ListOrdered size={20} color="#059669" />
+                                    <ListOrdered size={20} color={t.stepsIconColor} />
                                 </div>
                                 <h4
                                     style={{
                                         fontSize: '1.25rem',
                                         fontWeight: 700,
-                                        color: '#111827',
+                                        color: t.sectionTitleClr,
                                         margin: 0,
                                     }}
                                 >
@@ -370,7 +397,7 @@ const RecipeModal = ({ meal, onClose }) => {
                                             display: 'flex',
                                             gap: '1rem',
                                             marginBottom: '1rem',
-                                            color: '#374151',
+                                            color: t.stepText,
                                         }}
                                     >
                                         <span
@@ -378,8 +405,8 @@ const RecipeModal = ({ meal, onClose }) => {
                                                 width: '28px',
                                                 height: '28px',
                                                 borderRadius: '50%',
-                                                backgroundColor: '#d1fae5',
-                                                color: '#047857',
+                                                backgroundColor: t.stepNumBg,
+                                                color: t.stepNumColor,
                                                 fontWeight: 700,
                                                 fontSize: '0.875rem',
                                                 display: 'flex',
