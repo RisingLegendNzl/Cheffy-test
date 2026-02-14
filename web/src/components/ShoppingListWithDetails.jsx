@@ -797,3 +797,4 @@ const ShoppingListWithDetails = ({
 };
 
 export default ShoppingListWithDetails;
+
