@@ -1,6 +1,8 @@
 // web/src/components/wizard/StepProgressBar.jsx
+// UPDATED: Full dark mode support — circles, labels, progress track.
 import React from 'react';
 import { COLORS } from '../../constants';
+import { useTheme } from '../../contexts/ThemeContext';
 
 const STEP_COLORS = {
   complete: COLORS.success.main,
@@ -8,23 +10,14 @@ const STEP_COLORS = {
   upcoming: COLORS.gray[300],
 };
 
-/**
- * StepProgressBar
- *
- * Enhanced with fast-step navigation:
- * - Completed steps are always clickable (go back).
- * - Future steps are clickable only if every step before them is valid
- *   (determined by `canReachStep`).
- * - The active step is not clickable (you're already there).
- *
- * Props:
- *   currentStep  - zero-based active index
- *   steps        - WIZARD_STEPS array
- *   onStepClick  - (index: number) => void — called when a reachable step is clicked
- *   canReachStep - (index: number) => boolean — returns true if the user may jump to `index`
- */
 const StepProgressBar = ({ currentStep, steps, onStepClick, canReachStep }) => {
+  const { isDark } = useTheme();
   const progress = ((currentStep + 1) / steps.length) * 100;
+
+  const upcomingColor = isDark ? '#3d4158' : COLORS.gray[300];
+  const upcomingBg = isDark ? '#252839' : COLORS.gray[50];
+  const upcomingTextColor = isDark ? '#6b7280' : COLORS.gray[400];
+  const trackBg = isDark ? '#2d3148' : COLORS.gray[200];
 
   return (
     <div className="pb-6">
@@ -41,7 +34,7 @@ const StepProgressBar = ({ currentStep, steps, onStepClick, canReachStep }) => {
             ? STEP_COLORS.complete
             : isActive
             ? STEP_COLORS.active
-            : STEP_COLORS.upcoming;
+            : upcomingColor;
 
           return (
             <div key={step.id} className="flex flex-col items-center flex-1">
@@ -57,8 +50,8 @@ const StepProgressBar = ({ currentStep, steps, onStepClick, canReachStep }) => {
                   height: '36px',
                   fontSize: isComplete ? '16px' : '14px',
                   fontWeight: '700',
-                  background: isComplete || isActive ? color : COLORS.gray[50],
-                  color: isComplete || isActive ? '#fff' : COLORS.gray[400],
+                  background: isComplete || isActive ? color : upcomingBg,
+                  color: isComplete || isActive ? '#fff' : upcomingTextColor,
                   border: `2px solid ${color}`,
                   boxShadow: isActive
                     ? `0 0 0 4px ${COLORS.primary[500]}20`
@@ -70,10 +63,6 @@ const StepProgressBar = ({ currentStep, steps, onStepClick, canReachStep }) => {
                   opacity: isFuture && !reachable ? 0.55 : 1,
                   outline: 'none',
                   padding: 0,
-                  // Hover ring for reachable steps
-                  ...(reachable
-                    ? {}
-                    : {}),
                 }}
                 onMouseEnter={(e) => {
                   if (reachable) {
@@ -102,10 +91,10 @@ const StepProgressBar = ({ currentStep, steps, onStepClick, canReachStep }) => {
                   fontSize: '11px',
                   fontWeight: isActive ? '700' : '500',
                   color: isActive
-                    ? COLORS.primary[600]
+                    ? (isDark ? '#a5b4fc' : COLORS.primary[600])
                     : isComplete
                     ? STEP_COLORS.complete
-                    : COLORS.gray[400],
+                    : upcomingTextColor,
                   letterSpacing: '0.01em',
                   transition: 'all 0.3s ease',
                   cursor: reachable ? 'pointer' : 'default',
@@ -122,7 +111,7 @@ const StepProgressBar = ({ currentStep, steps, onStepClick, canReachStep }) => {
       {/* Progress track */}
       <div
         className="overflow-hidden rounded-full"
-        style={{ height: '4px', background: COLORS.gray[200] }}
+        style={{ height: '4px', background: trackBg }}
       >
         <div
           className="h-full rounded-full"
