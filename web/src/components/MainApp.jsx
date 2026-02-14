@@ -107,9 +107,9 @@ const MainApp = ({
     diagnosticLogs,
     showOrchestratorLogs,
     setShowOrchestratorLogs,
-    showFailedIngredientsLogs,
-    setShowFailedIngredientsLogs,
-    failedIngredientsHistory,
+    showMatchTraceLogs,
+    setShowMatchTraceLogs,
+    matchTraces,
     logHeight,
     setLogHeight,
     isLogOpen,
@@ -154,7 +154,7 @@ const MainApp = ({
     handleFetchNutrition,
     handleSubstituteSelection,
     handleQuantityChange,
-    handleDownloadFailedLogs,
+    handleDownloadMatchTraceReport,,
     handleDownloadLogs,
     onToggleMealEaten,
     handleRefresh,
@@ -344,7 +344,7 @@ const handleEditProfileClean = useCallback(() => {
         </div>
     );
 
-    const totalLogHeight = (failedIngredientsHistory?.length > 0 ? 60 : 0) + (isLogOpen ? Math.max(50, logHeight) : 50);
+    const totalLogHeight = (matchTraces?.length > 0 ? 60 : 0) + ...
 
     return (
         <>
@@ -590,9 +590,12 @@ const handleEditProfileClean = useCallback(() => {
                 {showOrchestratorLogs && (
                     <DiagnosticLogViewer logs={diagnosticLogs} height={logHeight} setHeight={setLogHeight} isOpen={isLogOpen} setIsOpen={setIsLogOpen} onDownloadLogs={handleDownloadLogs} />
                 )}
-                {showFailedIngredientsLogs && (
-                    <FailedIngredientLogViewer failedHistory={failedIngredientsHistory} onDownload={handleDownloadFailedLogs} />
-                )}
+                {showMatchTraceLogs && (
+    <ProductMatchLogViewer 
+        matchTraces={matchTraces} 
+        onDownload={handleDownloadMatchTraceReport} 
+    />
+)}
                 {showMacroDebugLog && (
                     <MacroDebugLogViewer macroDebug={macroDebug} onDownload={handleDownloadMacroDebugLogs} />
                 )}
@@ -603,7 +606,7 @@ const handleEditProfileClean = useCallback(() => {
                             backgroundColor: isDark ? '#181a24' : '#1f2937',
                             color: '#ffffff',
                         }}
-                        onClick={() => { setShowOrchestratorLogs(true); setShowFailedIngredientsLogs(true); setShowMacroDebugLog(true); }}
+                        onClick={() => { setShowOrchestratorLogs(true);  setShowMatchTraceLogs(true); setShowMacroDebugLog(true); }}
                     >
                         📋 Show Logs
                     </div>
