@@ -16,8 +16,12 @@
 //           .sld-cat-label          ← mirrors .mpd-cal-dow
 //   Product list (outside card)
 //
-// FIXES PRESERVED: key lookup, price filter removal, price=0, isOpen prop.
-// NO LOGIC CHANGES.
+// FIXES:
+//   - handleSelectSubstitute NO LONGER closes the modal so users can
+//     swap products inline.
+//   - Both `products` and `modalProductData` memos now honour
+//     `currentSelectionURL` (set by useAppLogic.handleSubstituteSelection)
+//     falling back to `selectedIndex → 0` when not set.
 // =============================================================================
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
@@ -29,6 +33,24 @@ import {
 } from 'lucide-react';
 import IngredientCard from './IngredientCard';
 import ProductDetailModal from './ProductDetailModal';
+
+// ── Helper: resolve the "selected" product from a result object ──────────
+// Priority: currentSelectionURL match → selectedIndex → first product
+const resolveSelectedProduct = (result) => {
+  const allProducts = result?.allProducts || result?.products || [];
+  if (allProducts.length === 0) return { allProducts, selectedProduct: null };
+
+  // 1. Match by currentSelectionURL (set after a substitute swap)
+  if (result?.currentSelectionURL) {
+    const match = allProducts.find(p => p?.url === result.currentSelectionURL);
+    if (match) return { allProducts, selectedProduct: match };
+  }
+
+  // 2. Fall back to selectedIndex (initial backend selection)
+  const idx = result?.selectedIndex ?? 0;
+  return { allProducts, selectedProduct: allProducts[idx] || allProducts[0] };
+};
+
 
 const ShoppingListWithDetails = ({ 
   ingredients = [],
@@ -74,13 +96,12 @@ const ShoppingListWithDetails = ({
   }, [results, storeName]);
 
   // Transform ingredients into product cards
+  // FIX: Uses resolveSelectedProduct which honours currentSelectionURL
   const products = useMemo(() => {
     return ingredients.map((item, idx) => {
       const normalizedKey = item.normalizedKey || item.originalIngredient?.toLowerCase().trim();
       const result = results[normalizedKey] || {};
-      const allProducts = result.allProducts || result.products || [];
-      const selectedIndex = result.selectedIndex ?? 0;
-      const selectedProduct = allProducts[selectedIndex];
+      const { allProducts, selectedProduct } = resolveSelectedProduct(result);
 
       let price = null;
       if (selectedProduct) {
@@ -144,6 +165,7 @@ const ShoppingListWithDetails = ({
   }, [activeCategory, products, categorizedProducts]);
 
   // Modal data computation
+  // FIX: Uses resolveSelectedProduct which honours currentSelectionURL
   const modalProductData = useMemo(() => {
     if (!selectedProductModal) return null;
 
@@ -160,9 +182,7 @@ const ShoppingListWithDetails = ({
       };
     }
 
-    const allProducts = freshResult.allProducts || freshResult.products || [];
-    const selectedIndex = freshResult.selectedIndex ?? 0;
-    const currentSelection = allProducts[selectedIndex];
+    const { allProducts, selectedProduct: currentSelection } = resolveSelectedProduct(freshResult);
 
     const cheapest = allProducts.reduce((best, current) => {
       if (!current) return best;
@@ -232,11 +252,16 @@ const ShoppingListWithDetails = ({
     setSelectedProductModal(null);
   };
 
+  // FIX: No longer closes the modal after a substitute swap.
+  // The modal stays open so users can see the updated selection in-place.
+  // The `results` prop update (from useAppLogic.handleSubstituteSelection)
+  // triggers a re-compute of `modalProductData` via the useMemo above,
+  // which will now reflect the new currentSelectionURL.
   const handleSelectSubstitute = (normalizedKey, substitute) => {
     if (onSelectSubstitute) {
       onSelectSubstitute(normalizedKey, substitute);
     }
-    setSelectedProductModal(null);
+    // Modal stays open — removed: setSelectedProductModal(null);
   };
 
   return (
@@ -287,7 +312,8 @@ const ShoppingListWithDetails = ({
 
         {/* ── Category Strip — mirrors .mpd-cal-strip-wrapper / .mpd-cal-strip ──
              Uses the same negative-margin bleed trick so the strip sits
-             edge-to-edge within the section card's 22px padding. ── */}
+             edge-to-edge within the section card's 22px padding.
+        ── */}
         <div className="sld-cat-strip-wrapper">
           <div ref={stripRef} className="sld-cat-strip">
             {categories.map(({ id, label, count }) => {
@@ -589,53 +615,32 @@ const ShoppingListWithDetails = ({
           border: 1px solid transparent;
           background: transparent;
           font-family: inherit;
-          -webkit-tap-highlight-color: transparent;
         }
 
-        /* Source: .mpd-cal-day:hover:not(.mpd-cal-day--active) */
         .sld-cat-cell:hover:not(.sld-cat-cell--active) {
-          background: rgba(255, 255, 255, 0.06);
-          border-color: rgba(255, 255, 255, 0.08);
+          background: rgba(255, 255, 255, 0.04);
+          border-color: rgba(255, 255, 255, 0.06);
         }
 
-        /* Source: mpd-theme-override.css light mode cal-day */
-        [data-theme="light"] .sld-cat-cell {
-          background: transparent;
-          border-color: transparent;
-        }
-
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-day:hover */
         [data-theme="light"] .sld-cat-cell:hover:not(.sld-cat-cell--active) {
           background: rgba(99, 102, 241, 0.06);
           border-color: rgba(99, 102, 241, 0.12);
         }
 
-        .sld-cat-cell:active {
-          transform: scale(0.95);
-        }
-
-
-        /* ── Active state ──
-           Source: .mpd-cal-day--active { background: linear-gradient(135deg, #6366f1, #a855f7);
-             border-color: rgba(99,102,241,0.4); box-shadow: 0 4px 20px rgba(99,102,241,0.35); }
-        */
-
+        /* Source: .mpd-cal-day--active { background: linear-gradient(135deg, #6366f1, #a855f7);
+             border-color: transparent; box-shadow: 0 3px 12px rgba(99,102,241,0.35); } */
         .sld-cat-cell--active {
-          background: linear-gradient(135deg, #6366f1, #a855f7);
-          border-color: rgba(99, 102, 241, 0.4);
-          box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
-        }
-
-        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-day--active */
-        [data-theme="light"] .sld-cat-cell--active {
           background: linear-gradient(135deg, #6366f1, #a855f7);
           border-color: transparent;
           box-shadow: 0 3px 12px rgba(99, 102, 241, 0.35);
         }
 
 
-        /* ── Count number ──
-           Source: .mpd-cal-num { font-size: 1.15rem; font-weight: 700; color: #e8eaf0; }
-           Source: .mpd-cal-day--active .mpd-cal-num { color: white; }
+        /* ── Category count ──
+           Source: .mpd-cal-num { font-family: 'DM Sans'; font-size: 1.15rem;
+             font-weight: 700; color: #e8eaf0; line-height: 1; }
+           Source: .mpd-cal-day--active .mpd-cal-num { color: #ffffff; }
         */
 
         .sld-cat-count {
