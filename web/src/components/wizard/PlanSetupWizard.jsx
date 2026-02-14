@@ -1,6 +1,6 @@
 // web/src/components/wizard/PlanSetupWizard.jsx
-// UPDATED: Removed Load/Save buttons from header (#3).
-// UPDATED: "Plan Setup" title is WHITE in dark mode (#4).
+// UPDATED: Full dark mode support across the entire Plan Setup flow.
+// Removed .wizard-form-exclude and .keep-light — wizard now respects dark theme.
 import React, { useState, useCallback, useMemo } from 'react';
 import { RefreshCw, Zap, X, ChevronRight, Check } from 'lucide-react';
 import { COLORS, SHADOWS } from '../../constants';
@@ -19,15 +19,6 @@ import MealPreferencesStep from './MealPreferencesStep';
 import MealInspirationStep from './MealInspirationStep';
 import ReviewStep from './ReviewStep';
 
-/**
- * PlanSetupWizard
- *
- * Multi-step form wizard that replaces the old inline <form> in MainApp.
- * Owns step navigation and validation state; all form data lives in the parent.
- *
- * The .wizard-form-exclude class on the outer form tells theme-variables.css
- * to skip dark-mode overrides on inputs inside this wizard (issue #6).
- */
 const PlanSetupWizard = ({
   formData,
   onChange,
@@ -183,6 +174,19 @@ const PlanSetupWizard = ({
     }
   };
 
+  // ── Dark theme palette ──
+  const cardBg = isDark ? '#1e2130' : '#fff';
+  const cardBorder = isDark ? '#2d3148' : COLORS.gray[200];
+  const cardShadow = isDark
+    ? '0 2px 10px rgba(0,0,0,0.35), 0 0 0 1px rgba(99,102,241,0.06)'
+    : SHADOWS.lg;
+  const footerBorderTop = isDark ? '1px solid #2d3148' : 'none';
+  const backBtnColor = isDark ? '#9ca3b0' : COLORS.gray[600];
+  const backBtnBorder = isDark ? '#3d4158' : COLORS.gray[300];
+  const disabledBtnBg = isDark ? '#252839' : COLORS.gray[200];
+  const disabledBtnColor = isDark ? '#6b7280' : COLORS.gray[400];
+  const stepCounterColor = isDark ? '#6b7280' : COLORS.gray[400];
+
   return (
     <div>
       {/* ===== WIZARD HEADER ===== */}
@@ -199,6 +203,7 @@ const PlanSetupWizard = ({
               type="button"
               className="md:hidden p-1.5"
               onClick={onClose}
+              style={{ color: isDark ? '#9ca3b0' : undefined }}
             >
               <X size={20} />
             </button>
@@ -214,17 +219,14 @@ const PlanSetupWizard = ({
         canReachStep={canReachStep}
       />
 
-      {/* ===== CARD CONTAINER =====
-           .wizard-form-exclude prevents dark mode from darkening
-           inputs/selects inside the wizard (issue #6).
-           .keep-light prevents bg-white override on the card itself. */}
+      {/* ===== CARD CONTAINER ===== */}
       <form
         onSubmit={handleFormSubmit}
-        className="wizard-form-exclude keep-light rounded-2xl overflow-hidden"
+        className="rounded-2xl overflow-hidden"
         style={{
-          background: '#fff',
-          border: `1px solid ${COLORS.gray[200]}`,
-          boxShadow: SHADOWS.lg,
+          background: cardBg,
+          border: `1px solid ${cardBorder}`,
+          boxShadow: cardShadow,
         }}
       >
         {/* Step header */}
@@ -245,7 +247,10 @@ const PlanSetupWizard = ({
         {/* ===== FOOTER ===== */}
         <div
           className="flex justify-between items-center gap-3"
-          style={{ padding: '16px 24px 24px' }}
+          style={{
+            padding: '16px 24px 24px',
+            borderTop: footerBorderTop,
+          }}
         >
           {!isFirstStep ? (
             <button
@@ -253,8 +258,9 @@ const PlanSetupWizard = ({
               onClick={goBack}
               className="flex items-center px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors"
               style={{
-                color: COLORS.gray[600],
-                border: `1px solid ${COLORS.gray[300]}`,
+                color: backBtnColor,
+                border: `1px solid ${backBtnBorder}`,
+                backgroundColor: 'transparent',
               }}
             >
               Back
@@ -292,8 +298,8 @@ const PlanSetupWizard = ({
               disabled={!canProceed}
               className="flex items-center gap-1.5 px-6 py-2.5 rounded-lg text-sm font-bold transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
-                backgroundColor: canProceed ? COLORS.primary[500] : COLORS.gray[200],
-                color: canProceed ? '#fff' : COLORS.gray[400],
+                backgroundColor: canProceed ? COLORS.primary[500] : disabledBtnBg,
+                color: canProceed ? '#fff' : disabledBtnColor,
                 cursor: canProceed ? 'pointer' : 'default',
                 boxShadow: canProceed
                   ? `0 4px 16px ${COLORS.primary[500]}30`
@@ -319,7 +325,7 @@ const PlanSetupWizard = ({
       {/* Step counter */}
       <div
         className="text-center mt-4"
-        style={{ fontSize: '12px', color: COLORS.gray[400], opacity: 0.6 }}
+        style={{ fontSize: '12px', color: stepCounterColor, opacity: 0.6 }}
       >
         Step {currentStep + 1} of {WIZARD_STEPS.length}
       </div>
