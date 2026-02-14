@@ -29,8 +29,8 @@ const OPENAI_API_KEY  = process.env.OPENAI_API_KEY  || '';
 const GEMINI_API_KEY  = process.env.GEMINI_API_KEY   || '';
 
 // Allow runtime model switching without redeploy
-// UPDATED: Default primary model is now gemini-2.5-flash-lite for Grocery Optimiser
-const PRIMARY_MODEL   = process.env.CHEFFY_PRIMARY_MODEL  || 'gemini-2.5-flash-lite';
+
+const PRIMARY_MODEL   = process.env.CHEFFY_PRIMARY_MODEL  || 'gpt-5.1';
 const FALLBACK_MODEL  = process.env.CHEFFY_FALLBACK_MODEL || 'gemini-2.0-flash';
 
 const OPENAI_BASE_URL = 'https://api.openai.com/v1/chat/completions';
