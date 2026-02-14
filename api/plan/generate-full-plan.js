@@ -898,17 +898,22 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
     };
     const expectedShape = { "meals": [] };
     
-    // 3. Execute LLM Call (Change 2.6: Added Fallback)
+    // 3. Execute LLM Call (V3.1: GPT-5.1 primary with fallback)
     let parsedResult;
     try {
         parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
     } catch (primaryError) {
-        log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
-        try {
-            parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Meal Plan generation failed for Day ${day}: All models failed. Last error: ${fallbackError.message}`);
+        if (fallbackModel) {
+            log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
+            try {
+                parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
+            } catch (fallbackError) {
+                log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+                throw new Error(`Grocery Query generation failed: All models failed. Last error: ${fallbackError.message}`);
+            }
+        } else {
+            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. No fallback configured.`, 'CRITICAL', 'LLM');
+            throw new Error(`Grocery Query generation failed: ${primaryModel} failed. ${primaryError.message}`);
         }
     }
     
@@ -923,7 +928,7 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
 /**
  * Generates grocery query details for the *entire* aggregated list.
  */
-async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gpt-5.1', fallbackModel = null) {
+async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gpt-5.1', fallbackModel = 'gemini-2.0-flash') {
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
