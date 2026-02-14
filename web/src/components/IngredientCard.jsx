@@ -1,10 +1,19 @@
 // web/src/components/IngredientCard.jsx
-// Enhanced ingredient card with "Shadow Depth Breathing" visual concept
-// Features: two-layer shadow system, ambient breathing animation, green price,
-// purple "View Product" button, spring tap-back, cheapest variant, a11y motion support
+// =============================================================================
+// Glass Morphism Product Card — Concept C Implementation
 //
-// FIX: Graceful null price handling — shows "Price N/A" in muted gray
-// instead of a bare "$" when no price data is available.
+// REDESIGN: Replaces "Shadow Depth Breathing" with frosted glass aesthetic.
+// Features:
+//   - Translucent background with backdrop-filter blur
+//   - Radial glow accent on hover
+//   - Gradient CTA button matching Cheffy brand (indigo → purple)
+//   - Size displayed as a floating pill
+//   - Full dark mode + light mode via CSS custom properties
+//   - Maintained: entry animation, press states, cheapest variant,
+//     null price handling, reduced-motion support, a11y focus styles
+//
+// NO LOGIC CHANGES — identical props interface and behavior.
+// =============================================================================
 
 import React, { useRef, useCallback } from 'react';
 
@@ -22,107 +31,98 @@ const IngredientCard = ({
   const handleCardPointerDown = useCallback(() => {
     const el = cardRef.current;
     if (!el) return;
-    el.classList.add('ingredient-card--pressed');
+    el.classList.add('glass-card--pressed');
   }, []);
 
   const handleCardPointerUp = useCallback(() => {
     const el = cardRef.current;
     if (!el) return;
-    el.classList.remove('ingredient-card--pressed');
+    el.classList.remove('glass-card--pressed');
   }, []);
 
   const handleButtonPointerDown = useCallback((e) => {
     e.stopPropagation();
     const el = buttonRef.current;
     if (!el) return;
-    el.classList.add('ingredient-btn--pressed');
+    el.classList.add('glass-btn--pressed');
   }, []);
 
   const handleButtonPointerUp = useCallback((e) => {
     e.stopPropagation();
     const el = buttonRef.current;
     if (!el) return;
-    el.classList.remove('ingredient-btn--pressed');
-    el.classList.add('ingredient-btn--confirm');
+    el.classList.remove('glass-btn--pressed');
+    el.classList.add('glass-btn--confirm');
     setTimeout(() => {
-      if (el) el.classList.remove('ingredient-btn--confirm');
+      if (el) el.classList.remove('glass-btn--confirm');
     }, 350);
   }, []);
 
-  // FIX: Null-safe price formatting
+  // Null-safe price formatting
   const hasPrice = typeof price === 'number' && !isNaN(price);
   const formattedPrice = hasPrice ? price.toFixed(2) : null;
 
-  const breathingDelay = `${(index * 0.6).toFixed(1)}s`;
-
-  const ambientTintClass = isCheapest
-    ? 'ingredient-card--cheapest'
-    : '';
+  const ambientTintClass = isCheapest ? 'glass-card--cheapest' : '';
 
   return (
     <div
       ref={cardRef}
-      className={`ingredient-card-compact ingredient-card--breathing ${ambientTintClass}`}
+      className={`glass-card glass-card--animate ${ambientTintClass}`}
       style={{
-        '--breathing-delay': breathingDelay,
         '--entry-delay': `${(index * 0.04).toFixed(2)}s`,
       }}
       onPointerDown={handleCardPointerDown}
       onPointerUp={handleCardPointerUp}
       onPointerLeave={handleCardPointerUp}
     >
+      {/* Radial glow accent — visible on hover */}
+      <div className="glass-card__glow" />
+
       {/* Top Row: Product Name + Cheapest Badge */}
-      <div className="ingredient-card__header">
-        <div className="ingredient-card__name">
+      <div className="glass-card__header">
+        <div className="glass-card__name">
           {ingredientName}
         </div>
 
         {isCheapest && (
-          <div className="ingredient-card__badge">
+          <div className="glass-card__badge">
             Cheapest
           </div>
         )}
       </div>
 
-      {/* Second Row: Price (green) + Size */}
-      <div className="ingredient-card__meta">
-        {/* FIX: Show "$X.XX" in green when price exists, "Price N/A" in gray when null */}
+      {/* Price + Size Row */}
+      <div className="glass-card__row">
         {formattedPrice !== null ? (
-          <span className="ingredient-card__price">
+          <span className="glass-card__price">
             ${formattedPrice}
           </span>
         ) : (
-          <span className="ingredient-card__price ingredient-card__price--na">
+          <span className="glass-card__price glass-card__price--na">
             Price N/A
           </span>
         )}
         {size && (
-          <>
-            <span className="ingredient-card__dot">•</span>
-            <span className="ingredient-card__size">{size}</span>
-          </>
+          <span className="glass-card__size-pill">{size}</span>
         )}
       </div>
 
-      {/* Divider */}
-      <div className="ingredient-card__divider" />
-
-      {/* View Product Button (purple) */}
+      {/* View Product Button — gradient CTA */}
       <button
         ref={buttonRef}
         onClick={onViewProduct}
-        className="ingredient-card__button"
+        className="glass-card__btn"
         onPointerDown={handleButtonPointerDown}
         onPointerUp={handleButtonPointerUp}
         onPointerLeave={(e) => {
           e.stopPropagation();
           const el = buttonRef.current;
-          if (el) el.classList.remove('ingredient-btn--pressed');
+          if (el) el.classList.remove('glass-btn--pressed');
         }}
       >
-        <span className="ingredient-card__button-label">View Product</span>
+        <span className="glass-card__btn-label">View Product</span>
         <svg
-          className="ingredient-card__chevron"
+          className="glass-card__chevron"
           width="14"
           height="14"
           viewBox="0 0 24 24"
@@ -136,13 +136,13 @@ const IngredientCard = ({
         </svg>
       </button>
 
-      {/* Scoped styles */}
+      {/* ── Scoped styles ── */}
       <style>{`
         /* ==============================================
-           KEYFRAMES — Shadow Depth Breathing
+           KEYFRAMES
            ============================================== */
 
-        @keyframes sdb-cardEntry {
+        @keyframes glass-cardEntry {
           from {
             opacity: 0;
             transform: translateY(12px) scale(0.97);
@@ -153,128 +153,189 @@ const IngredientCard = ({
           }
         }
 
-        @keyframes sdb-breathe {
-          0%, 100% {
-            transform: translateY(0px);
-          }
-          50% {
-            transform: translateY(-1.5px);
-          }
+        @keyframes glass-confirmRing {
+          0%   { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+          50%  { box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15); }
+          100% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
         }
 
-        @keyframes sdb-chevronNudge {
+        @keyframes glass-chevronNudge {
           0%   { transform: translateX(0); }
           40%  { transform: translateX(5px); }
           70%  { transform: translateX(3px); }
           100% { transform: translateX(4px); }
         }
 
-        @keyframes sdb-confirmRing {
-          0% {
-            box-shadow: 0 0 0 0 rgba(192, 132, 252, 0.4);
-          }
-          50% {
-            box-shadow: 0 0 0 4px rgba(192, 132, 252, 0.15);
-          }
-          100% {
-            box-shadow: 0 0 0 6px rgba(192, 132, 252, 0);
-          }
-        }
-
 
         /* ==============================================
-           CARD BASE
+           CARD BASE — Glass Morphism
            ============================================== */
 
-        .ingredient-card-compact {
+        .glass-card {
           position: relative;
-          background: #ffffff;
-          border-radius: 12px;
-          padding: 16px;
-          border: 1px solid #f3e8ff;
+          border-radius: 18px;
+          padding: 20px;
+          overflow: hidden;
           cursor: default;
-
+          /* Dark mode defaults (overridden by [data-theme="light"]) */
+          background: linear-gradient(
+            135deg,
+            rgba(30, 33, 48, 0.85),
+            rgba(37, 40, 57, 0.65)
+          );
+          backdrop-filter: blur(20px) saturate(150%);
+          -webkit-backdrop-filter: blur(20px) saturate(150%);
+          border: 1px solid rgba(99, 102, 241, 0.12);
           box-shadow:
-            0 1px 3px rgba(0, 0, 0, 0.06),
-            0 4px 12px rgba(99, 102, 241, 0.04);
+            0 2px 10px rgba(0, 0, 0, 0.35),
+            0 0 0 1px rgba(99, 102, 241, 0.06);
+          transition:
+            border-color 0.3s ease,
+            box-shadow 0.3s ease,
+            transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55),
+            background 0.3s ease;
+        }
 
+        .glass-card--animate {
           opacity: 0;
           animation:
-            sdb-cardEntry 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards var(--entry-delay, 0s);
-
-          transition:
-            box-shadow 0.2s ease,
-            transform 0.2s ease,
-            border-color 0.2s ease;
-        }
-
-        .ingredient-card--breathing {
-          animation:
-            sdb-cardEntry 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards var(--entry-delay, 0s),
-            sdb-breathe 4s cubic-bezier(0.4, 0, 0.6, 1) infinite var(--breathing-delay, 0s);
+            glass-cardEntry 0.35s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards var(--entry-delay, 0s);
         }
 
 
         /* ==============================================
-           HOVER STATE (desktop)
+           LIGHT MODE OVERRIDES
            ============================================== */
 
-        .ingredient-card-compact:hover {
-          transform: translateY(-3px);
-          border-color: #e9d5ff;
-
+        [data-theme="light"] .glass-card {
+          background: linear-gradient(
+            135deg,
+            rgba(255, 255, 255, 0.80),
+            rgba(245, 243, 255, 0.60)
+          );
+          backdrop-filter: blur(16px) saturate(120%);
+          -webkit-backdrop-filter: blur(16px) saturate(120%);
+          border: 1px solid rgba(99, 102, 241, 0.10);
           box-shadow:
-            0 2px 6px rgba(0, 0, 0, 0.08),
-            0 8px 24px rgba(99, 102, 241, 0.10);
-
-          animation-play-state: paused, paused;
+            0 2px 8px rgba(0, 0, 0, 0.04),
+            0 0 0 1px rgba(99, 102, 241, 0.04);
         }
 
 
         /* ==============================================
-           TAP / PRESS STATE
+           RADIAL GLOW (hover accent)
            ============================================== */
 
-        .ingredient-card--pressed {
+        .glass-card__glow {
+          position: absolute;
+          top: -50%;
+          right: -50%;
+          width: 100%;
+          height: 100%;
+          background: radial-gradient(
+            circle,
+            rgba(99, 102, 241, 0.06) 0%,
+            transparent 60%
+          );
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.3s ease;
+        }
+
+        .glass-card:hover .glass-card__glow {
+          opacity: 1;
+        }
+
+        [data-theme="light"] .glass-card__glow {
+          background: radial-gradient(
+            circle,
+            rgba(99, 102, 241, 0.04) 0%,
+            transparent 60%
+          );
+        }
+
+
+        /* ==============================================
+           HOVER STATE
+           ============================================== */
+
+        .glass-card:hover {
+          border-color: rgba(99, 102, 241, 0.3);
+          box-shadow:
+            0 8px 32px rgba(0, 0, 0, 0.4),
+            0 0 0 1px rgba(99, 102, 241, 0.12),
+            inset 0 1px 0 rgba(255, 255, 255, 0.04);
+          transform: translateY(-2px);
+        }
+
+        [data-theme="light"] .glass-card:hover {
+          border-color: rgba(99, 102, 241, 0.20);
+          box-shadow:
+            0 8px 32px rgba(99, 102, 241, 0.08),
+            0 0 0 1px rgba(99, 102, 241, 0.08),
+            inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        }
+
+
+        /* ==============================================
+           PRESS STATE
+           ============================================== */
+
+        .glass-card--pressed {
           transform: translateY(1px) !important;
-
           box-shadow:
-            0 1px 2px rgba(0, 0, 0, 0.04),
-            0 1px 4px rgba(99, 102, 241, 0.02) !important;
-
+            0 1px 4px rgba(0, 0, 0, 0.2),
+            0 0 0 1px rgba(99, 102, 241, 0.06) !important;
           transition:
             box-shadow 0.08s ease-out,
             transform 0.08s ease-out !important;
         }
 
-        .ingredient-card-compact:not(.ingredient-card--pressed) {
+        .glass-card:not(.glass-card--pressed) {
           transition:
             box-shadow 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55),
             transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55),
-            border-color 0.2s ease;
+            border-color 0.2s ease,
+            background 0.3s ease;
         }
 
 
         /* ==============================================
-           CHEAPEST VARIANT — green ambient shadow
+           CHEAPEST VARIANT — green tinted border
            ============================================== */
 
-        .ingredient-card--cheapest {
+        .glass-card--cheapest {
+          border-color: rgba(16, 185, 129, 0.2);
           box-shadow:
-            0 1px 3px rgba(0, 0, 0, 0.06),
-            0 4px 12px rgba(16, 185, 129, 0.05);
+            0 2px 10px rgba(0, 0, 0, 0.35),
+            0 4px 12px rgba(16, 185, 129, 0.08);
         }
 
-        .ingredient-card--cheapest:hover {
+        .glass-card--cheapest:hover {
+          border-color: rgba(16, 185, 129, 0.35);
           box-shadow:
-            0 2px 6px rgba(0, 0, 0, 0.08),
+            0 8px 32px rgba(0, 0, 0, 0.4),
             0 8px 24px rgba(16, 185, 129, 0.12) !important;
         }
 
-        .ingredient-card--cheapest.ingredient-card--pressed {
+        [data-theme="light"] .glass-card--cheapest {
+          border-color: rgba(16, 185, 129, 0.15);
           box-shadow:
-            0 1px 2px rgba(0, 0, 0, 0.04),
-            0 1px 4px rgba(16, 185, 129, 0.02) !important;
+            0 2px 8px rgba(0, 0, 0, 0.04),
+            0 4px 12px rgba(16, 185, 129, 0.06);
+        }
+
+        [data-theme="light"] .glass-card--cheapest:hover {
+          border-color: rgba(16, 185, 129, 0.30);
+          box-shadow:
+            0 8px 32px rgba(16, 185, 129, 0.08),
+            0 8px 24px rgba(16, 185, 129, 0.10) !important;
+        }
+
+        .glass-card--cheapest.glass-card--pressed {
+          box-shadow:
+            0 1px 4px rgba(0, 0, 0, 0.2),
+            0 1px 4px rgba(16, 185, 129, 0.04) !important;
         }
 
 
@@ -282,24 +343,26 @@ const IngredientCard = ({
            HEADER — product name + badge
            ============================================== */
 
-        .ingredient-card__header {
+        .glass-card__header {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          margin-bottom: 4px;
+          margin-bottom: 10px;
           gap: 12px;
+          position: relative;
+          z-index: 1;
         }
 
-        .ingredient-card__name {
+        .glass-card__name {
           font-size: 16px;
           font-weight: 600;
-          color: #1a1a1a;
+          color: var(--color-text-primary, #f0f1f5);
           line-height: 1.4;
           flex: 1;
         }
 
-        .ingredient-card__badge {
-          background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+        .glass-card__badge {
+          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
           color: #ffffff;
           padding: 4px 10px;
           border-radius: 12px;
@@ -307,121 +370,125 @@ const IngredientCard = ({
           font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 0.5px;
-          box-shadow: 0 2px 8px rgba(72, 187, 120, 0.3);
+          box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
           white-space: nowrap;
           flex-shrink: 0;
         }
 
 
         /* ==============================================
-           META ROW — price (green) + dot + size
+           PRICE + SIZE ROW
            ============================================== */
 
-        .ingredient-card__meta {
-          font-size: 14px;
-          color: #718096;
+        .glass-card__row {
           display: flex;
           align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-          margin-bottom: 12px;
+          justify-content: space-between;
+          margin-bottom: 16px;
+          position: relative;
+          z-index: 1;
         }
 
-        .ingredient-card__price {
+        .glass-card__price {
+          font-size: 22px;
           font-weight: 700;
           color: #10b981;
-          font-size: 16px;
           font-variant-numeric: tabular-nums;
-          letter-spacing: -0.01em;
+          letter-spacing: -0.02em;
         }
 
-        /* FIX: Muted style for missing price */
-        .ingredient-card__price--na {
-          color: #a0aec0;
+        /* Muted style for missing price */
+        .glass-card__price--na {
+          color: var(--color-text-tertiary, #6b7280);
           font-weight: 600;
-          font-size: 14px;
+          font-size: 16px;
           font-style: italic;
         }
 
-        .ingredient-card__dot {
-          color: #cbd5e0;
+        .glass-card__size-pill {
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          color: var(--color-text-secondary, #9ca3b0);
+          font-size: 12px;
+          font-weight: 600;
+          padding: 5px 12px;
+          border-radius: 20px;
         }
 
-        .ingredient-card__size {
-          color: #718096;
-          font-weight: 500;
-        }
-
-
-        /* ==============================================
-           DIVIDER
-           ============================================== */
-
-        .ingredient-card__divider {
-          border-top: 1px solid #f0f0f0;
-          margin-bottom: 12px;
+        [data-theme="light"] .glass-card__size-pill {
+          background: rgba(99, 102, 241, 0.06);
+          border: 1px solid rgba(99, 102, 241, 0.12);
+          color: var(--color-text-secondary, #4b5563);
         }
 
 
         /* ==============================================
-           VIEW PRODUCT BUTTON — purple / amethyst
+           VIEW PRODUCT BUTTON — Gradient CTA
            ============================================== */
 
-        .ingredient-card__button {
+        .glass-card__btn {
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: 6px;
+          gap: 8px;
           width: 100%;
-          padding: 10px;
-          background: #faf5ff;
-          border: 1px solid #e9d5ff;
-          border-radius: 10px;
-          font-size: 14px;
+          padding: 12px 16px;
+          border-radius: 12px;
+          border: none;
+          background: linear-gradient(135deg, #6366f1, #a855f7);
+          color: #ffffff;
+          font-size: 13px;
           font-weight: 600;
-          color: #a855f7;
           cursor: pointer;
           position: relative;
+          z-index: 1;
           overflow: hidden;
+          font-family: inherit;
+          box-shadow: 0 4px 16px rgba(99, 102, 241, 0.3);
           transition:
-            background 0.15s ease,
-            border-color 0.15s ease,
-            color 0.15s ease,
-            transform 0.15s ease,
-            box-shadow 0.15s ease;
+            box-shadow 0.2s ease,
+            transform 0.2s ease;
         }
 
-        .ingredient-card__button-label {
+        .glass-card__btn:hover {
+          box-shadow: 0 6px 24px rgba(99, 102, 241, 0.45);
+          transform: translateY(-1px);
+        }
+
+        .glass-card__btn:active {
+          transform: scale(0.97);
+        }
+
+        [data-theme="light"] .glass-card__btn {
+          box-shadow: 0 4px 16px rgba(99, 102, 241, 0.25);
+        }
+
+        [data-theme="light"] .glass-card__btn:hover {
+          box-shadow: 0 6px 24px rgba(99, 102, 241, 0.35);
+        }
+
+        .glass-card__btn-label {
           position: relative;
           z-index: 1;
         }
 
-        .ingredient-card__chevron {
+        .glass-card__chevron {
           position: relative;
           z-index: 1;
-          color: #d8b4fe;
+          color: rgba(255, 255, 255, 0.85);
           transition:
             transform 0.25s cubic-bezier(0.68, -0.55, 0.265, 1.55),
             color 0.15s ease;
           flex-shrink: 0;
         }
 
-
-        /* Button hover (desktop) */
-
-        .ingredient-card__button:hover {
-          background: #f3e8ff;
-          border-color: #d8b4fe;
-          color: #9333ea;
-        }
-
-        .ingredient-card__button:hover .ingredient-card__chevron {
-          animation: sdb-chevronNudge 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
-          color: #a855f7;
+        .glass-card__btn:hover .glass-card__chevron {
+          animation: glass-chevronNudge 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55) forwards;
+          color: #ffffff;
         }
 
         /* Shimmer pass on hover */
-        .ingredient-card__button::after {
+        .glass-card__btn::after {
           content: '';
           position: absolute;
           top: 0;
@@ -431,18 +498,18 @@ const IngredientCard = ({
           background: linear-gradient(
             105deg,
             transparent 40%,
-            rgba(255, 255, 255, 0.35) 50%,
+            rgba(255, 255, 255, 0.2) 50%,
             transparent 60%
           );
           transition: none;
           z-index: 0;
         }
 
-        .ingredient-card__button:hover::after {
-          animation: sdb-shimmerPass 0.6s ease-in-out forwards;
+        .glass-card__btn:hover::after {
+          animation: glass-shimmerPass 0.6s ease-in-out forwards;
         }
 
-        @keyframes sdb-shimmerPass {
+        @keyframes glass-shimmerPass {
           from { left: -100%; }
           to   { left: 100%; }
         }
@@ -450,80 +517,66 @@ const IngredientCard = ({
 
         /* Button press state */
 
-        .ingredient-btn--pressed {
+        .glass-btn--pressed {
           transform: scale(0.97) !important;
-          background: #e9d5ff !important;
+          box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2) !important;
           transition:
             transform 0.08s ease-out,
-            background 0s !important;
+            box-shadow 0s !important;
         }
 
-        .ingredient-card__button:not(.ingredient-btn--pressed) {
+        .glass-card__btn:not(.glass-btn--pressed) {
           transition:
             transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55),
-            background 0.2s ease,
-            border-color 0.15s ease,
-            color 0.15s ease,
             box-shadow 0.35s ease;
         }
 
-
-        /* Button confirmation ring-flash (mobile) */
-
-        .ingredient-btn--confirm {
-          animation: sdb-confirmRing 0.35s ease-out forwards;
+        /* Button confirmation ring-flash */
+        .glass-btn--confirm {
+          animation: glass-confirmRing 0.35s ease-out forwards;
         }
 
-
         /* Button keyboard focus */
-
-        .ingredient-card__button:focus-visible {
-          outline: 2px solid #c084fc;
+        .glass-card__btn:focus-visible {
+          outline: 2px solid #a5b4fc;
           outline-offset: 3px;
         }
 
 
-        /* Button active (fallback) */
-
-        .ingredient-card__button:active {
-          transform: scale(0.97);
-        }
-
-
         /* ==============================================
-           REDUCED MOTION — disable all animations
+           REDUCED MOTION
            ============================================== */
 
         @media (prefers-reduced-motion: reduce) {
-          .ingredient-card-compact,
-          .ingredient-card--breathing {
+          .glass-card,
+          .glass-card--animate {
             animation: none !important;
             opacity: 1;
             transform: none;
           }
 
-          .ingredient-card-compact:hover {
+          .glass-card:hover {
             transform: none;
           }
 
-          .ingredient-card--pressed {
+          .glass-card--pressed {
             transform: none !important;
           }
 
-          .ingredient-card__button::after {
+          .glass-card__btn::after {
             display: none;
           }
 
-          .ingredient-card__button:hover .ingredient-card__chevron {
+          .glass-card__btn:hover .glass-card__chevron {
             animation: none;
             transform: translateX(3px);
           }
 
-          .ingredient-btn--pressed {
+          .glass-btn--pressed {
             transform: none !important;
           }
 
-          .ingredient-btn--confirm {
+          .glass-btn--confirm {
             animation: none;
           }
         }
