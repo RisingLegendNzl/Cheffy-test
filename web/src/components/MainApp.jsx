@@ -154,7 +154,7 @@ const MainApp = ({
     handleFetchNutrition,
     handleSubstituteSelection,
     handleQuantityChange,
-    handleDownloadMatchTraceReport,,
+    handleDownloadMatchTraceReport,
     handleDownloadLogs,
     onToggleMealEaten,
     handleRefresh,
