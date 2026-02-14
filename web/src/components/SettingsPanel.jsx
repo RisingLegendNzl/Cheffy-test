@@ -1,5 +1,6 @@
 // web/src/components/SettingsPanel.jsx
-// UPDATED: Removed "System" option from Appearance (#5).
+// UPDATED: Added model descriptions to AI selector. Fixed model IDs to match backend SUPPORTED_MODELS.
+// Removed "System" option from Appearance (#5).
 // "Default Store" was already removed in a prior update.
 import React from 'react';
 import {
@@ -19,6 +20,34 @@ import {
 } from 'lucide-react';
 import { COLORS, Z_INDEX } from '../constants';
 import { useTheme } from '../contexts/ThemeContext';
+
+// --- AI Model definitions (single source of truth for the selector) ---
+const AI_MODELS = [
+  {
+    value: 'gpt-5.1',
+    label: 'GPT-5.1',
+    badge: 'Recommended',
+    description: 'Best for full meal plan creativity and detailed recipes',
+  },
+  {
+    value: 'gpt-4.1',
+    label: 'GPT-4.1',
+    badge: null,
+    description: 'Good balance of speed and creativity',
+  },
+  {
+    value: 'gpt-4.1-mini',
+    label: 'GPT-4.1 Mini',
+    badge: null,
+    description: 'Faster generation with moderate detail',
+  },
+  {
+    value: 'o4-mini',
+    label: 'o4-mini',
+    badge: 'Reasoning',
+    description: 'Lightweight, quick responses for testing or small tasks',
+  },
+];
 
 /**
  * Settings panel/modal for app preferences.
@@ -153,7 +182,7 @@ const SettingsPanel = ({
             </select>
           </div>
 
-          {/* ─── AI Model Section ─── */}
+          {/* ─── AI Model Section (UPDATED: card-style selector with descriptions) ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Cpu size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
@@ -162,28 +191,61 @@ const SettingsPanel = ({
               </h3>
             </div>
 
-            <div className="mb-4">
-              <label
-                className="block text-sm font-semibold mb-2"
-                style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
-              >
-                Select Model
-              </label>
-              <select
-                value={selectedModel}
-                onChange={(e) => onModelChange(e.target.value)}
-                className="w-full p-3 border rounded-lg"
-                style={{
-                  borderColor: isDark ? '#2d3148' : COLORS.gray[300],
-                  color: isDark ? '#f0f1f5' : COLORS.gray[900],
-                  backgroundColor: isDark ? '#1e2130' : '#ffffff',
-                }}
-              >
-                <option value="gpt-5.1">GPT-5.1 (Recommended)</option>
-                <option value="gpt-4.1">GPT-4.1</option>
-                <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
-                <option value="o4-mini">o4-mini (Reasoning)</option>
-              </select>
+            <div className="space-y-2">
+              {AI_MODELS.map((model) => {
+                const isActive = selectedModel === model.value;
+                return (
+                  <button
+                    key={model.value}
+                    onClick={() => onModelChange(model.value)}
+                    className="w-full text-left p-3 rounded-lg transition-all"
+                    style={{
+                      backgroundColor: isActive
+                        ? isDark ? 'rgba(99,102,241,0.15)' : COLORS.primary[50]
+                        : isDark ? '#1e2130' : COLORS.gray[50],
+                      border: isActive
+                        ? `2px solid ${COLORS.primary[500]}`
+                        : `1px solid ${isDark ? '#2d3148' : COLORS.gray[200]}`,
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span
+                        className="text-sm font-semibold"
+                        style={{
+                          color: isActive
+                            ? COLORS.primary[600]
+                            : isDark ? '#f0f1f5' : COLORS.gray[900],
+                        }}
+                      >
+                        {model.label}
+                      </span>
+                      {model.badge && (
+                        <span
+                          className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{
+                            backgroundColor: isActive
+                              ? isDark ? 'rgba(99,102,241,0.25)' : COLORS.primary[100]
+                              : isDark ? '#2d3148' : COLORS.gray[200],
+                            color: isActive
+                              ? COLORS.primary[600]
+                              : isDark ? '#9ca3b0' : COLORS.gray[600],
+                          }}
+                        >
+                          {model.badge}
+                        </span>
+                      )}
+                    </div>
+                    <p
+                      className="text-xs"
+                      style={{
+                        color: isDark ? '#9ca3b0' : COLORS.gray[500],
+                      }}
+                    >
+                      {model.description}
+                    </p>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -295,9 +357,10 @@ const SettingsPanel = ({
             style={{ borderTop: `1px solid ${isDark ? '#2d3148' : COLORS.gray[200]}` }}
           >
             <p className="text-xs" style={{ color: isDark ? '#6b7280' : COLORS.gray[400] }}>
-              Cheffy v1.0.0
+              Cheffy v14 · Powered by AI
             </p>
           </div>
+
         </div>
       </div>
     </>
