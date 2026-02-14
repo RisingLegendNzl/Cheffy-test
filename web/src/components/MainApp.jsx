@@ -344,7 +344,7 @@ const handleEditProfileClean = useCallback(() => {
         </div>
     );
 
-    const totalLogHeight = (matchTraces?.length > 0 ? 60 : 0) + ...
+    const totalLogHeight = (matchTraces?.length > 0 ? 60 : 0) + (isLogOpen ? Math.max(50, logHeight) : 50);
 
     return (
         <>
