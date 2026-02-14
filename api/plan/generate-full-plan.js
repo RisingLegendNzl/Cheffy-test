@@ -84,8 +84,8 @@ const MAX_LLM_RETRIES = 2; // Change 2.3
 const LLM_REQUEST_TIMEOUT_MS = 45000; // Change 2.3: Increased for GPT-5.1 JSON mode latency
 const REQUIRED_WORD_SCORE_THRESHOLD = 0.60;
 const SKIP_STRONG_MATCH_THRESHOLD = 0.80;
-const MARKET_RUN_CONCURRENCY = 6;
-const NUTRITION_CONCURRENCY = 6;
+const MARKET_RUN_CONCURRENCY = 12; // [PERF V2] Increased from 6 — no 429s observed in logs
+const NUTRITION_CONCURRENCY = 10;  // [PERF V2] Increased from 6
 const TOKEN_BUCKET_CAPACITY = 10;
 const TOKEN_BUCKET_REFILL_PER_SEC = 10;
 const TOKEN_BUCKET_MAX_WAIT_MS = 250;
@@ -1304,6 +1304,20 @@ module.exports = async (request, response) => {
             throw new Error(`Meal Planner AI failed: Expected ${numDays} days, but processed ${fullMealPlan.length}.`);
         }
 
+        // --- [PERF V2] Phase 1.5: Launch Chef AI early (parallel with market run) ---
+        // Chef AI only needs meal names + ingredient lists, NOT solved quantities.
+        // By starting it here, it runs in parallel with aggregation + market run + nutrition + solver.
+        // We await the promise later in Phase 6.
+        log('Phase 1.5: Launching Chef AI early (parallel with market run)...', 'INFO', 'PHASE');
+        const earlyChefStartTime = Date.now();
+        const allMealsForChef = fullMealPlan.flatMap(day => 
+            day.meals.map(meal => ({ ...meal, _dayNumber: day.dayNumber }))
+        );
+        const earlyChefPromise = concurrentlyMap(allMealsForChef, 6, (meal) => 
+            generateChefInstructions(meal, store, log, requestPrimary, requestFallback)
+                .then(result => ({ ...result, _dayNumber: meal._dayNumber, _originalName: meal.name }))
+        );
+
         // --- Phase 2: Aggregate Ingredients ---
         sendEvent('phase:start', { name: 'aggregate', description: 'Aggregating ingredient list...' });
         // CHANGE 4: Persist `lastPhase` to KV
@@ -2014,28 +2028,23 @@ module.exports = async (request, response) => {
         sendEvent('phase:end', { name: 'solver', duration_ms: solver_ms, using_solver_v1: USE_SOLVER_V1 });
 
 
-        // --- Phase 6: Chef AI (Writer) ---
-        // This phase runs *after* the solver, so it has the *final* scaled quantities
-        sendEvent('phase:start', { name: 'writer', description: 'Writing recipes...' });
-        // CHANGE 4: Persist `lastPhase` to KV
+        // --- Phase 6: Chef AI (Writer) — [PERF V2] Await early promise ---
+        // Chef AI was launched in Phase 1.5, running in parallel with market run + nutrition + solver.
+        // Here we just await the already-running promise and assemble results.
+        sendEvent('phase:start', { name: 'writer', description: 'Finalizing recipes...' });
         await setRunStatus(run_id, 'running', null, log, 'writer');
 
-        sendEvent('plan:progress', { pct: 95, message: `Writing final recipes...` });
+        sendEvent('plan:progress', { pct: 95, message: `Finalizing recipes...` });
         const writerStartTime = Date.now();
         
-        const allMeals = finalMealPlan.flatMap(day => day.meals);
-        // Run recipe generation in parallel for all meals across all days
-        // Change 2.9: Concurrency 6 -> 4
-        const recipeResults = await concurrentlyMap(allMeals, 4, (meal) => generateChefInstructions(meal, store, log, requestPrimary, requestFallback));
+        // Await the promise that was started in Phase 1.5
+        const recipeResults = await earlyChefPromise;
         
         // Create a map to re-assemble the plan
         const recipeMap = new Map();
-        recipeResults.forEach((result, index) => {
-            if (result && !result._error) {
-                const originalMeal = allMeals[index];
-                // Find which day this meal belonged to
-                const dayNumber = finalMealPlan.find(d => d.meals.includes(originalMeal))?.dayNumber;
-                recipeMap.set(`${dayNumber}:${originalMeal.name}`, result);
+        recipeResults.forEach((result) => {
+            if (result && !result._error && result._dayNumber != null && result._originalName) {
+                recipeMap.set(`${result._dayNumber}:${result._originalName}`, result);
             }
         });
 
@@ -2043,11 +2052,20 @@ module.exports = async (request, response) => {
         for (const day of finalMealPlan) {
             day.meals = day.meals.map(meal => {
                 const recipe = recipeMap.get(`${day.dayNumber}:${meal.name}`);
-                return recipe || { ...meal, ...MOCK_RECIPE_FALLBACK }; // Fallback if chef failed
+                if (recipe) {
+                    // Merge recipe data (description, instructions) onto the solver-adjusted meal
+                    // Keep the solver's adjusted quantities but use chef's description + instructions
+                    const { _dayNumber, _originalName, _error, ...recipeData } = recipe;
+                    return { ...meal, description: recipeData.description, instructions: recipeData.instructions };
+                }
+                return { ...meal, ...MOCK_RECIPE_FALLBACK };
             });
         }
         writer_ms = Date.now() - writerStartTime;
-        sendEvent('phase:end', { name: 'writer', duration_ms: writer_ms, recipesGenerated: recipeMap.size });
+        // Log total chef time including parallel execution
+        const totalChefMs = Date.now() - earlyChefStartTime;
+        log(`Chef AI total elapsed: ${totalChefMs}ms (${writerStartTime - earlyChefStartTime}ms hidden behind other phases)`, 'INFO', 'PERF');
+        sendEvent('phase:end', { name: 'writer', duration_ms: writer_ms, recipesGenerated: recipeMap.size, total_chef_ms: totalChefMs });
 
         // --- Phase 7: Finalize ---
         sendEvent('phase:start', { name: 'finalize', description: 'Assembling final plan...' });
