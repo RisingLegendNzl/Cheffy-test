@@ -25,6 +25,7 @@ import ProfileTab from './ProfileTab';
 import SavedPlansModal from './SavedPlansModal';
 import PlanSetupWizard from './wizard/PlanSetupWizard';
 import NewUserProfileGate from './NewUserProfileGate';
+import EmptyTabState from './EmptyTabState';
 
 import Header from './Header';
 import StickyTabs from './StickyTabs';
