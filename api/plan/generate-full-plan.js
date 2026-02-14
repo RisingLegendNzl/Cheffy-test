@@ -1,10 +1,10 @@
 // --- Cheffy API: /api/plan/generate-full-plan.js ---
-// [NEW] Hybrid Batched Orchestrator (V14.0 - Ingredient-Centric Architecture)
+// [NEW] Hybrid Batched Orchestrator (V14.1 - Enhanced Grocery Matching)
 // Implements the "full plan" architecture:
 // 1. Compute Targets (passed in)
 // 2. Generate ALL meals
 // 3. Aggregate/Dedupe ALL ingredients
-// 4. Run ONE Market Run (Enhanced with V13.0 Grocery Matching)
+// 4. Run ONE Market Run (Enhanced with V13.1 Grocery Matching)
 // 5. [NEW] Separate Price Extraction (Mod Zone 3)
 // 6. [NEW] Run ONE Ingredient-Centric Nutrition Fetch (Mod Zone 1 & 2)
 // 7. Run Solver (V1) in SHADOW mode / Reconciler (V0) as LIVE path
@@ -42,9 +42,11 @@ try {
 // --- [NEW] Import validation helper (Task 1) ---
 const { validateDayPlan } = require('../../utils/validation');
 
-// --- [NEW] Grocery Matching Integrations (V13.0) ---
-const { preprocessIngredientBatch, generateFallbackQueries } = require('../../utils/ingredient-preprocessor');
-const { scoreProduct, BANNED_KEYWORDS: SCORER_BANNED_KEYWORDS } = require('../../utils/product-scorer');
+// --- [NEW] Grocery Matching Integrations (V13.1) ---
+// Preserved generateFallbackQueries from old preprocessor
+const { generateFallbackQueries } = require('../../utils/ingredient-preprocessor');
+const { cleanIngredientBatch } = require('../../utils/ingredient-query-cleaner');
+const { runEnhancedChecklist } = require('../../utils/product-checker');
 const { GROCERY_OPTIMIZER_SYSTEM_PROMPT: ENHANCED_GROCERY_PROMPT } = require('../../utils/grocery-prompts');
 
 /// ===== IMPORTS-END ===== ////
@@ -536,18 +538,6 @@ function sizeOk(productSizeParsed, targetSize, allowedCategories = [], log, ingr
     return false;
 }
 
-/**
- * Runs a comprehensive checklist against a single product.
- */
-// --- [MODIFIED V13.0] Enhanced Scorer Wrapper ---
-function runSmarterChecklist(product, ingredientData, log) {
-    // Delegate to the enhanced scorer
-    const result = scoreProduct(product, ingredientData, log, {
-        preprocessed: ingredientData._preprocessed || null,
-    });
-    return result; // Returns { pass, score, reason } — compatible with existing code
-}
-
 // --- State Hint Normalizer (New function for step 4) ---
 function normalizeStateHintForItem(item, log) {
   const key = (item.key || '').toLowerCase();
@@ -849,7 +839,7 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
 /**
  * Generates grocery query details for the *entire* aggregated list.
  */
-// --- [MODIFIED V13.0] Added Preprocessing & Enhanced Prompt ---
+// --- [MODIFIED V13.1] Added Preprocessing & Enhanced Prompt ---
 async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gpt-5.1', fallbackModel = 'gemini-2.0-flash') {
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
@@ -864,12 +854,13 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log,
     if (cached) return cached;
     log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
     
-    // PREPROCESSING (V13.0)
-    const preprocessedIngredients = preprocessIngredientBatch(aggregatedIngredients);
+    // PREPROCESSING (V13.1)
+    const preprocessedIngredients = cleanIngredientBatch(aggregatedIngredients);
     const llmInput = preprocessedIngredients.map(item => ({
         originalIngredient: item.originalIngredient,
-        cleanName: item._cleanIngredientForLLM,
-        requested_total_g: item.requested_total_g
+        cleanName: item._cleanName,
+        requested_total_g: item.requested_total_g,
+        _autoNegatives: item._autoNegatives
     }));
 
     // 2. Prepare Prompt
@@ -880,7 +871,7 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log,
     const systemPrompt = ENHANCED_GROCERY_PROMPT(store, australianTermNote);
     
     let userQuery = `Generate query JSON for the following ingredients.
-Use the "cleanName" field for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
+Use "cleanName" for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
 ${JSON.stringify(llmInput)}`;
 
     const logPrefix = `GroceryOptimizerFullPlan`;
@@ -900,12 +891,21 @@ ${JSON.stringify(llmInput)}`;
 
     // 3. Execute LLM Call (Change 2.7: Added Fallback)
     let parsedResult;
-   try {
-       parsedResult = await tryGenerateLLMPlan('gemini-2.5-flash-lite', payload, log, logPrefix, expectedShape);
-   } catch (error) {
-       log(`${logPrefix}: gemini-2.5-flash-lite failed: ${error.message}. NO FALLBACK for Grocery Optimiser.`, 'CRITICAL', 'LLM');
-       throw new Error(`Grocery Query generation failed: gemini-2.5-flash-lite failed. ${error.message}`);
-   }
+    try {
+        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
+    } catch (primaryError) {
+        if (fallbackModel) {
+            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
+            try {
+                parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
+            } catch (fallbackError) {
+                log(`${logPrefix}: Fallback ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+                throw new Error(`Grocery Query generation failed. Last error: ${fallbackError.message}`);
+            }
+        } else {
+            throw new Error(`Grocery Query generation failed: ${primaryError.message}`);
+        }
+    }
     
     // 4. Post-process and Cache
     if (parsedResult && parsedResult.ingredients && parsedResult.ingredients.length > 0) {
@@ -920,18 +920,19 @@ ${JSON.stringify(llmInput)}`;
                 ing.totalGramsRequired = requestedGrams;
             }
 
-            // ENHANCEMENT: Merge auto-negative keywords & attach preprocessed data (V13.0)
+            // ENHANCEMENT: Merge auto-negative keywords & attach preprocessed data (V13.1)
             const preprocessedItem = preprocessedIngredients.find(
                 pi => pi.originalIngredient === ing.originalIngredient
             );
             if (preprocessedItem) {
-                 // Attach preprocessed data for later use in scoring
-                 ing._preprocessed = preprocessedItem._preprocessed;
+                 // Attach preprocessed data for later use in scoring (Checker needs cleanName and isWholeFood)
+                 ing._cleanName = preprocessedItem._cleanName;
+                 ing._isWholeFood = preprocessedItem._isWholeFood;
 
                  // Merge auto-negative keywords
-                 if (preprocessedItem._preprocessed?.autoNegativeKeywords?.length > 0) {
+                 if (preprocessedItem._autoNegatives && preprocessedItem._autoNegatives.length > 0) {
                     const existingNeg = new Set((ing.negativeKeywords || []).map(k => k.toLowerCase()));
-                    const autoNeg = preprocessedItem._preprocessed.autoNegativeKeywords
+                    const autoNeg = preprocessedItem._autoNegatives
                         .filter(k => !existingNeg.has(k.toLowerCase()));
                     if (autoNeg.length > 0) {
                         ing.negativeKeywords = [...(ing.negativeKeywords || []), ...autoNeg];
@@ -1416,7 +1417,8 @@ module.exports = async (request, response) => {
                     for (const rawProduct of rawProducts) {
                         if (!rawProduct || !rawProduct.product_name) continue;
                         // log is correctly scoped here
-                        const checklistResult = runSmarterChecklist(rawProduct, ingredient, log); 
+                        // [MODIFIED V13.1] Use Enhanced Checklist
+                        const checklistResult = runEnhancedChecklist(rawProduct, ingredient, log); 
                         if (checklistResult.pass) {
                             validProductsOnPage.push({ 
                                 product: { 
@@ -1521,7 +1523,8 @@ module.exports = async (request, response) => {
                                         product_size: p.product_size || p.size || '',
                                         unit_price_per_100: calculateUnitPrice(p.current_price, p.product_size || p.size || ''),
                                     };
-                                    const checkResult = runSmarterChecklist(enrichedProduct, ingredient, log);
+                                    // [MODIFIED V13.1] Use Enhanced Checklist
+                                    const checkResult = runEnhancedChecklist(enrichedProduct, ingredient, log);
                                     return checkResult.pass ? { product: enrichedProduct, score: checkResult.score } : null;
                                 }).filter(Boolean);
                                 
