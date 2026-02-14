@@ -1,102 +1,70 @@
 /**
  * utils/grocery-prompts.js
  * =========================
- * Shared, enhanced Grocery Optimizer system prompt.
- * 
- * Import this in BOTH day.js and generate-full-plan.js to replace the
- * inline GROCERY_OPTIMIZER_SYSTEM_PROMPT definitions, ensuring both
- * code paths use the same improved prompt.
- * 
- * Key improvements over the original prompt:
- * 1. Explicit instructions to NEVER include descriptors in normalQuery
- * 2. Better negativeKeywords guidance (especially for produce vs derivatives)
- * 3. Stronger requiredWords guidance (nouns only, max 2)
- * 4. Examples for common mismatch cases
- * 
- * Version: 1.0.0
+ * Shared Grocery Optimizer system prompt.
+ * Import in BOTH day.js and generate-full-plan.js to replace the inline definitions.
+ *
+ * Version: 2.0.0 — GPT-5.1 optimised
  */
+
+'use strict';
 
 /**
- * Enhanced Grocery Optimizer System Prompt.
- * 
- * @param {string} store - Store name (e.g., "Woolworths", "Coles")
- * @param {string} australianTermNote - Note about Australian terminology
- * @returns {string} The system prompt
+ * @param {string} store - "Woolworths" or "Coles"
+ * @param {string} australianTermNote - Australian terminology note or ""
+ * @returns {string}
  */
 function GROCERY_OPTIMIZER_SYSTEM_PROMPT(store, australianTermNote) {
-  return `
-You are an expert grocery query optimizer for store: ${store}.
-Your SOLE task is to take a JSON array of ingredient names and generate the full query/validation JSON for each.
+  return `You are an expert grocery query optimizer for ${store}.
+Your SOLE task: take a JSON array of ingredients and generate query/validation JSON for each.
+
+CRITICAL RULE — CLEAN QUERIES ONLY:
+Each input has an "originalIngredient" (the raw key) and a "cleanName" (a human-readable version).
+- ALWAYS use "cleanName" to build your queries. NEVER copy snake_case or taxonomy-style tokens.
+- "originalIngredient" goes into the output as-is (for tracking), but do NOT base queries on it.
+- If cleanName is missing or empty, derive a sensible grocery search term yourself.${australianTermNote}
 
 RULES:
-1.  'originalIngredient' MUST match the input ingredient name exactly.
+1. 'originalIngredient' MUST match the input "originalIngredient" field exactly.
+2. 'normalQuery' (REQUIRED): 2–4 generic words, STORE-PREFIXED.
+   Use the most common product name a shopper would type in ${store}'s search bar.
+   DO NOT include: brands, sizes, fat%, texture (smooth/crunchy), dietary tags (organic/low fat).
+   EXAMPLES:
+   - cleanName "eggs" → "${store} eggs"
+   - cleanName "full cream milk" → "${store} full cream milk"
+   - cleanName "cheddar cheese" → "${store} cheddar cheese"
+   - cleanName "fresh garlic" → "${store} garlic"
+   - cleanName "chicken breast" → "${store} chicken breast"
+   - cleanName "peanut butter" → "${store} peanut butter"
+   - cleanName "lime juice" → "${store} lime juice"
+3. 'tightQuery' (OPTIONAL, string | null): Hyper-specific, STORE-PREFIXED. null if normalQuery is enough.
+4. 'wideQuery' (OPTIONAL, string | null): 1–2 broad words, STORE-PREFIXED. null if normalQuery is enough.
+5. 'requiredWords' (REQUIRED): Array[1–2] CORE NOUNS ONLY, lowercase singular.
+   These must appear in any valid product name. NO adjectives, NO plurals.
+   EXAMPLES:
+   - "eggs" → ["egg"]
+   - "cheddar cheese" → ["cheddar"]
+   - "chicken breast" → ["chicken"]
+   - "fresh garlic" → ["garlic"]
+   - "peanut butter" → ["peanut", "butter"]
+6. 'negativeKeywords' (REQUIRED): Array[1–5] lowercase words to EXCLUDE wrong products.
+   CRITICAL FOR SIMPLE WHOLE FOODS: If the ingredient is a single base item (garlic, cheddar,
+   banana, egg, etc.), you MUST add negative keywords that exclude prepared meals and flavoured
+   products that merely contain that ingredient.
+   - "garlic" → ["prawn", "bread", "sauce", "marinated", "seasoned"]
+   - "cheddar" → ["burger", "cracker", "wrap", "sauce", "dip"]
+   - "banana" → ["yoghurt", "pouch", "smoothie", "chip", "custard"]
+   - "eggs" → ["noodle", "custard", "mayo", "sandwich"]
+   - "chicken breast" → ["nugget", "schnitzel", "kiev", "burger"]
+   Any input with "_autoNegatives" in the JSON: merge those into your negativeKeywords array.
+7. 'targetSize': Object {value, unit:"g"|"ml"} | null.
+8. 'totalGramsRequired': Best estimate total g/ml needed. Use the input "requested_total_g" if provided.
+9. 'quantityUnits': Common purchase unit string (e.g. "1kg Bag", "6 Pack").
+10. 'allowedCategories' (REQUIRED): Array[1–2] from:
+    ["produce","fruit","veg","dairy","bakery","meat","seafood","pantry","frozen","drinks","canned","grains","spreads","condiments","snacks"]
+    Pick the MOST SPECIFIC category. Fresh fruit → "fruit". Cheese → "dairy".
 
-2.  'normalQuery' (REQUIRED): 2-4 generic words, STORE-PREFIXED.
-    CRITICAL: Use the MOST COMMON GENERIC product name that a shopper would search for.
-    DO NOT include: brands, sizes, fat content, texture (smooth/crunchy), dietary qualifiers
-    (low fat, no added sugar, sugar free, organic, free range), specific forms (sliced/grated),
-    or preparation state (cooked/raw/dried) — UNLESS the word is ESSENTIAL to identify the
-    correct product category.${australianTermNote}
-    
-    EXAMPLES:
-    - "Greek yogurt, plain, low fat" → "${store} greek yogurt" (NOT "${store} greek yogurt plain low fat")
-    - "peanut butter, smooth, no added sugar" → "${store} peanut butter" (NOT "${store} smooth peanut butter no sugar")
-    - "banana" → "${store} banana" (NOT "${store} fresh banana")
-    - "lime juice" → "${store} lime juice"
-    - "chicken breast, skinless" → "${store} chicken breast"
-
-3.  'tightQuery' (OPTIONAL, string | null): Hyper-specific, STORE-PREFIXED. Return null if 'normalQuery' is sufficient.
-
-4.  'wideQuery' (OPTIONAL, string | null): 1-2 broad words, STORE-PREFIXED. Return null if 'normalQuery' is sufficient.
-
-5.  'requiredWords' (REQUIRED): Array[1-2] ESSENTIAL CORE NOUNS ONLY, lowercase singular.
-    These are the absolute minimum words that MUST appear in a matching product name.
-    NO adjectives, NO forms, NO plurals, NO qualifiers.
-    
-    EXAMPLES:
-    - "Greek yogurt, plain, low fat" → ["yogurt"] (NOT ["greek", "yogurt", "plain"])
-    - "peanut butter" → ["peanut", "butter"]
-    - "banana" → ["banana"]
-    - "lime juice" → ["lime", "juice"]
-    - "chicken breast" → ["chicken"]
-    - "rolled oats" → ["oat"]
-    - "sweet potato" → ["sweet", "potato"]
-
-6.  'negativeKeywords' (REQUIRED): Array[1-5] lowercase words for INCORRECT products.
-    CRITICAL FOR PRODUCE ITEMS: When the ingredient is a simple fresh produce item
-    (banana, apple, strawberry, mango, etc.), you MUST include derivative/flavored
-    product markers as negative keywords to prevent matching yoghurt, ice cream,
-    flavored drinks, snack bars, baby food pouches, etc.
-    
-    PRODUCE NEGATIVE KEYWORD PATTERNS:
-    - Single fruit items (banana, apple, strawberry, etc.) MUST include:
-      ["yoghurt", "yogurt", "pouch", "flavoured", "ice cream", "smoothie", "bar", "cereal"]
-      (select the 3-5 most relevant ones for the specific fruit)
-    - Single vegetable items MUST include markers for chips, snacks, soups
-    
-    EXAMPLES:
-    - "banana" → ["yoghurt", "pouch", "smoothie", "chip", "custard"]
-    - "apple" → ["juice", "cider", "sauce", "pie", "vinegar"]
-    - "peanut butter" → ["biscuit", "bar", "cereal", "chocolate"]
-    - "Greek yogurt" → ["drink", "pouch", "frozen", "bar"]
-    - "chicken breast" → ["nugget", "schnitzel", "kiev", "tender"]
-
-7.  'targetSize' (REQUIRED): Object {value: NUM, unit: "g"|"ml"} | null. Null if N/A. Prefer common package sizes.
-
-8.  'totalGramsRequired' (REQUIRED): BEST ESTIMATE total g/ml needed.
-    Since you only have the ingredient list, estimate a common portion
-    (e.g., 200g for a meal protein, 100g for carbs, 150g for yogurt).
-
-9.  'quantityUnits' (REQUIRED): A string describing the common purchase unit (e.g., "1kg Bag", "250g Punnet", "500ml Bottle").
-
-10. 'allowedCategories' (REQUIRED): Array[1-2] precise, lowercase categories from this exact set:
-    ["produce","fruit","veg","dairy","bakery","meat","seafood","pantry","frozen","drinks","canned","grains","spreads","condiments","snacks"].
-    
-    CRITICAL: Choose the MOST SPECIFIC category. Fresh whole fruits → "fruit".
-    Fresh vegetables → "veg". This prevents matching a banana to banana-flavored yogurt
-    (which would be in "dairy", not "fruit").
-
-Output ONLY the valid JSON object described below. ABSOLUTELY NO PROSE OR MARKDOWN.
+Output ONLY valid JSON. NO prose, NO markdown.
 
 JSON Structure:
 {
@@ -109,16 +77,13 @@ JSON Structure:
       "wideQuery": "string|null",
       "requiredWords": ["string"],
       "negativeKeywords": ["string"],
-      "targetSize": { "value": number, "unit": "g"|"ml" }|null,
+      "targetSize": {"value":number,"unit":"g"|"ml"}|null,
       "totalGramsRequired": number,
       "quantityUnits": "string",
       "allowedCategories": ["string"]
     }
   ]
-}
-`;
+}`;
 }
 
-module.exports = {
-  GROCERY_OPTIMIZER_SYSTEM_PROMPT,
-};
+module.exports = { GROCERY_OPTIMIZER_SYSTEM_PROMPT };
