@@ -8,6 +8,8 @@
 // - Meal preview skeleton grid that fills in when plan:complete fires
 // - Smooth progress bar, rotating tips, confetti celebration
 //
+// DARK MODE: All text colors and backgrounds are theme-aware via useTheme().
+//
 // Props contract (same activeStepKey values as GenerationProgressDisplay):
 //   activeStepKey: 'targets' | 'planning' | 'market' | 'finalizing' | 'complete' | 'error'
 //   errorMsg, latestLog, formData, nutritionalTargets, results, mealPlan
@@ -25,6 +27,7 @@ import {
     Wheat,
 } from 'lucide-react';
 import { COLORS } from '../constants';
+import { useTheme } from '../contexts/ThemeContext';
 
 // ============================================
 // SCENE DEFINITIONS
@@ -120,47 +123,29 @@ const TIPS = [
 ];
 
 // ============================================
-// SCENE ICON (animated large emoji with glow)
+// SCENE ICON
 // ============================================
 const SceneIcon = ({ emoji, gradient }) => (
-    <div className="relative flex items-center justify-center">
-        {/* Outer glow */}
-        <div
-            className={`absolute w-28 h-28 md:w-32 md:h-32 rounded-full bg-gradient-to-br ${gradient} opacity-[0.12]`}
-            style={{ animation: 'pulse 2.5s cubic-bezier(0.4,0,0.6,1) infinite' }}
-        />
-        {/* Ping ring */}
-        <div
-            className={`absolute w-24 h-24 md:w-28 md:h-28 rounded-full bg-gradient-to-br ${gradient}`}
-            style={{ opacity: 0.08, animation: 'ping 2.5s cubic-bezier(0,0,0.2,1) infinite' }}
-        />
-        {/* Icon circle */}
-        <div
-            className="relative w-20 h-20 md:w-24 md:h-24 rounded-full flex items-center justify-center"
-            style={{
-                background: `linear-gradient(135deg, ${COLORS.primary[50]}, ${COLORS.secondary[50]})`,
-                boxShadow: '0 8px 32px rgba(99, 102, 241, 0.18)',
-            }}
-        >
-            <span className="text-4xl md:text-5xl select-none" role="img">
-                {emoji}
-            </span>
-        </div>
+    <div
+        className={`w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-gradient-to-br ${gradient} flex items-center justify-center shadow-lg`}
+        style={{ fontSize: '2rem' }}
+    >
+        {emoji}
     </div>
 );
 
 // ============================================
-// PROGRESS DOTS (bottom indicator)
+// PROGRESS DOTS
 // ============================================
 const ProgressDots = ({ total, activeIdx }) => (
-    <div className="flex items-center justify-center space-x-2">
+    <div className="flex items-center space-x-2">
         {Array.from({ length: total }).map((_, i) => {
             const done = i < activeIdx;
             const active = i === activeIdx;
             return (
                 <div
                     key={i}
-                    className="transition-all duration-500 rounded-full"
+                    className="rounded-full transition-all duration-300"
                     style={{
                         width: active ? '24px' : '8px',
                         height: '8px',
@@ -219,7 +204,7 @@ const IngredientPills = ({ results }) => {
 // MEAL PREVIEW GRID (Concept A — Kitchen Counter)
 // Skeletons that fill when mealPlan arrives
 // ============================================
-const MealPreviewGrid = ({ formData, activeStepKey, mealPlan }) => {
+const MealPreviewGrid = ({ formData, activeStepKey, mealPlan, isDark }) => {
     const count = parseInt(formData?.eatingOccasions, 10) || 3;
     const labels = ['Breakfast', 'Lunch', 'Dinner', 'Snack 1', 'Snack 2'].slice(0, count);
     const day1 = mealPlan?.[0]?.meals || [];
@@ -229,65 +214,53 @@ const MealPreviewGrid = ({ formData, activeStepKey, mealPlan }) => {
         <div className="mt-5 w-full max-w-sm mx-auto">
             <p
                 className="text-[11px] font-semibold uppercase tracking-widest text-center mb-3"
-                style={{ color: COLORS.gray[400] }}
+                style={{ color: isDark ? '#6b7280' : COLORS.gray[400] }}
             >
                 Day 1 Preview
             </p>
             <div className="grid grid-cols-2 gap-2.5">
                 {labels.map((label, i) => {
                     const meal = hasData ? day1[i] : null;
-
                     return (
                         <div
                             key={label}
-                            className="rounded-xl border overflow-hidden transition-all duration-700"
+                            className="rounded-xl p-3"
                             style={{
-                                minHeight: '82px',
-                                padding: '12px',
-                                background: meal ? '#ffffff' : 'rgba(249,250,251,0.7)',
-                                borderColor: meal ? COLORS.primary[200] : COLORS.gray[150] || COLORS.gray[200],
-                                boxShadow: meal ? '0 2px 12px rgba(99,102,241,0.08)' : 'none',
-                                animation: meal ? `fadeInUp 0.5s ease-out ${i * 120}ms backwards` : 'none',
+                                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                                border: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(0,0,0,0.05)',
+                                animation: `fadeInUp 0.3s ease-out ${i * 60}ms backwards`,
                             }}
                         >
                             {meal ? (
                                 <>
                                     <p
                                         className="text-[10px] uppercase tracking-wider font-bold mb-1"
-                                        style={{ color: COLORS.primary[400] }}
+                                        style={{ color: isDark ? '#9ca3b0' : COLORS.gray[400] }}
                                     >
                                         {label}
                                     </p>
                                     <p
-                                        className="text-sm font-semibold leading-tight"
-                                        style={{ color: COLORS.gray[800] }}
+                                        className="text-xs font-semibold truncate"
+                                        style={{ color: isDark ? '#f0f1f5' : COLORS.gray[800] }}
                                     >
-                                        {meal.name}
+                                        {meal.meal_name || meal.name || label}
                                     </p>
-                                    {meal.totalCalories && (
-                                        <div className="flex items-center mt-1.5 space-x-1">
-                                            <Flame size={11} style={{ color: COLORS.macros.calories.main }} />
-                                            <span className="text-xs font-medium" style={{ color: COLORS.gray[500] }}>
-                                                {Math.round(meal.totalCalories)} cal
-                                            </span>
-                                        </div>
-                                    )}
                                 </>
                             ) : (
                                 <>
                                     <p
                                         className="text-[10px] uppercase tracking-wider font-bold mb-1.5"
-                                        style={{ color: COLORS.gray[300] }}
+                                        style={{ color: isDark ? '#6b7280' : COLORS.gray[300] }}
                                     >
                                         {label}
                                     </p>
                                     <div
                                         className="h-3 rounded animate-skeleton mb-1.5"
-                                        style={{ width: '80%', backgroundColor: COLORS.gray[200] }}
+                                        style={{ width: '80%', backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : COLORS.gray[200] }}
                                     />
                                     <div
                                         className="h-3 rounded animate-skeleton"
-                                        style={{ width: '55%', backgroundColor: COLORS.gray[200] }}
+                                        style={{ width: '55%', backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : COLORS.gray[200] }}
                                     />
                                 </>
                             )}
@@ -302,7 +275,7 @@ const MealPreviewGrid = ({ formData, activeStepKey, mealPlan }) => {
 // ============================================
 // MACRO MINI DISPLAY (shows after targets)
 // ============================================
-const MacroMini = ({ nutritionalTargets }) => {
+const MacroMini = ({ nutritionalTargets, isDark }) => {
     const cal = nutritionalTargets?.calories;
     if (!cal || cal === 0) return null;
 
@@ -317,7 +290,7 @@ const MacroMini = ({ nutritionalTargets }) => {
             {items.map((m) => (
                 <div key={m.label} className="flex items-center space-x-1.5">
                     <div className="w-2 h-2 rounded-full" style={{ backgroundColor: m.color }} />
-                    <span className="text-xs font-medium" style={{ color: COLORS.gray[500] }}>
+                    <span className="text-xs font-medium" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[500] }}>
                         {m.value}
                     </span>
                 </div>
@@ -329,7 +302,7 @@ const MacroMini = ({ nutritionalTargets }) => {
 // ============================================
 // COMPLETION CELEBRATION
 // ============================================
-const CompletionScene = () => (
+const CompletionScene = ({ isDark }) => (
     <div className="flex flex-col items-center text-center animate-fadeIn">
         <div
             className="w-20 h-20 md:w-24 md:h-24 rounded-full flex items-center justify-center animate-bounceIn"
@@ -340,10 +313,13 @@ const CompletionScene = () => (
         >
             <CheckCircle size={40} style={{ color: COLORS.success.main }} />
         </div>
-        <h3 className="text-2xl md:text-3xl font-bold mt-6 mb-2" style={{ color: COLORS.gray[900] }}>
+        <h3
+            className="text-2xl md:text-3xl font-bold mt-6 mb-2"
+            style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}
+        >
             Your plan is ready!
         </h3>
-        <p className="text-sm" style={{ color: COLORS.gray[500] }}>
+        <p className="text-sm" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[500] }}>
             Scroll down to explore your personalized meals.
         </p>
     </div>
@@ -352,7 +328,7 @@ const CompletionScene = () => (
 // ============================================
 // ERROR STATE
 // ============================================
-const ErrorScene = ({ errorMsg }) => (
+const ErrorScene = ({ errorMsg, isDark }) => (
     <div className="flex flex-col items-center text-center animate-fadeIn p-4">
         <div
             className="w-20 h-20 rounded-full flex items-center justify-center mb-4"
@@ -360,10 +336,16 @@ const ErrorScene = ({ errorMsg }) => (
         >
             <AlertTriangle size={36} style={{ color: COLORS.error.main }} />
         </div>
-        <h3 className="text-xl font-bold mb-2" style={{ color: COLORS.gray[900] }}>
+        <h3
+            className="text-xl font-bold mb-2"
+            style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}
+        >
             Something went wrong
         </h3>
-        <p className="text-sm max-w-sm break-words" style={{ color: COLORS.gray[600] }}>
+        <p
+            className="text-sm max-w-sm break-words"
+            style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}
+        >
             {errorMsg || 'An error occurred during plan generation. Please try again.'}
         </p>
     </div>
@@ -381,6 +363,7 @@ const StoryModeGeneration = ({
     results,
     mealPlan,
 }) => {
+    const { isDark } = useTheme();
     const [tipIdx, setTipIdx] = useState(0);
     const [progress, setProgress] = useState(0);
     const tipTimer = useRef(null);
@@ -391,68 +374,71 @@ const StoryModeGeneration = ({
     const sceneIdx = SCENES.findIndex((s) => s.key === activeStepKey);
     const scene = SCENES[sceneIdx >= 0 ? sceneIdx : 0];
 
-    const ctx = useMemo(
-        () => ({ formData, nutritionalTargets, results }),
-        [formData, nutritionalTargets, results]
-    );
+    // Context object for scene descriptions
+    const ctx = { formData, nutritionalTargets, results };
 
-    // --- Smooth progress bar ---
+    // Rotate tips
+    useEffect(() => {
+        if (isError || isComplete) return;
+        tipTimer.current = setInterval(() => {
+            setTipIdx((prev) => (prev + 1) % TIPS.length);
+        }, 5000);
+        return () => clearInterval(tipTimer.current);
+    }, [isError, isComplete]);
+
+    // Animate progress
     useEffect(() => {
         if (isError) return;
         if (isComplete) {
             setProgress(100);
             return;
         }
-
         const [min, max] = scene.progressRange;
-        const start = Date.now();
-        const dur = 10000; // 10s per scene
-
+        let frame;
         const tick = () => {
-            const t = Math.min((Date.now() - start) / dur, 1);
-            const eased = 1 - Math.pow(1 - t, 3);
-            setProgress((prev) => Math.max(prev, Math.round(min + (max - min) * eased)));
-            if (t < 1) animFrame.current = requestAnimationFrame(tick);
+            setProgress((prev) => {
+                if (prev >= max) return prev;
+                const step = Math.random() * 0.4 + 0.1;
+                return Math.min(prev + step, max);
+            });
+            frame = requestAnimationFrame(tick);
         };
+        if (progress < min) setProgress(min);
+        frame = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(frame);
+    }, [scene, isError, isComplete]);
 
-        animFrame.current = requestAnimationFrame(tick);
-        return () => {
-            if (animFrame.current) cancelAnimationFrame(animFrame.current);
-        };
-    }, [sceneIdx, isComplete, isError, scene.progressRange]);
+    const showIngredients = sceneIdx >= 2; // market + finalizing
+    const showMealPreview = sceneIdx >= 1; // planning onwards
 
-    // --- Rotating tips ---
-    useEffect(() => {
-        if (isComplete || isError) {
-            clearInterval(tipTimer.current);
-            return;
-        }
-        tipTimer.current = setInterval(() => {
-            setTipIdx((p) => (p + 1) % TIPS.length);
-        }, 5000);
-        return () => clearInterval(tipTimer.current);
-    }, [isComplete, isError]);
+    // ── Theme-aware card background ──
+    const cardBg = isDark
+        ? isError
+            ? 'rgba(239,68,68,0.08)'
+            : 'rgba(30, 33, 48, 0.85)'
+        : isError
+            ? 'rgba(239,68,68,0.15)'
+            : 'rgba(99,102,241,0.1)';
 
-    // Determine content visibility
-    const showIngredients = activeStepKey === 'market' && Object.keys(results || {}).length > 0;
-    const showMealPreview = ['market', 'finalizing', 'complete'].includes(activeStepKey);
+    const cardBorder = isDark ? '1px solid rgba(99,102,241,0.15)' : '1px solid rgba(99,102,241,0.12)';
+    const cardShadow = isDark
+        ? '0 2px 10px rgba(0,0,0,0.35), 0 0 0 1px rgba(99,102,241,0.06)'
+        : '0 2px 8px rgba(0,0,0,0.04)';
 
     return (
         <div
-            className="w-full rounded-2xl overflow-hidden transition-all duration-500"
+            className="rounded-2xl overflow-hidden"
             style={{
-                background: isComplete
-                    ? `linear-gradient(135deg, ${COLORS.success.light}, #f0fdf4, #ffffff)`
-                    : isError
-                    ? `linear-gradient(135deg, ${COLORS.error.light}, #fff5f5, #ffffff)`
-                    : 'linear-gradient(135deg, #f5f3ff, #eef2ff, #ffffff)',
-                boxShadow: '0 8px 40px rgba(99,102,241,0.08), 0 1px 3px rgba(0,0,0,0.06)',
-                border: `1px solid ${isError ? 'rgba(239,68,68,0.15)' : 'rgba(99,102,241,0.1)'}`,
+                backgroundColor: cardBg,
+                border: cardBorder,
+                boxShadow: cardShadow,
+                backdropFilter: isDark ? 'blur(20px) saturate(150%)' : undefined,
+                WebkitBackdropFilter: isDark ? 'blur(20px) saturate(150%)' : undefined,
             }}
         >
             {/* --- Top Progress Bar --- */}
             {!isError && (
-                <div className="relative w-full h-1.5 overflow-hidden" style={{ backgroundColor: 'rgba(99,102,241,0.06)' }}>
+                <div className="relative w-full h-1.5 overflow-hidden" style={{ backgroundColor: isDark ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.06)' }}>
                     <div
                         className="absolute top-0 left-0 h-full rounded-r-full transition-all duration-700 ease-out"
                         style={{
@@ -477,10 +463,10 @@ const StoryModeGeneration = ({
 
             <div className="px-5 py-6 md:px-8 md:py-8">
                 {/* ERROR */}
-                {isError && <ErrorScene errorMsg={errorMsg} />}
+                {isError && <ErrorScene errorMsg={errorMsg} isDark={isDark} />}
 
                 {/* COMPLETE */}
-                {isComplete && <CompletionScene />}
+                {isComplete && <CompletionScene isDark={isDark} />}
 
                 {/* RUNNING — Story Mode */}
                 {!isError && !isComplete && (
@@ -492,7 +478,7 @@ const StoryModeGeneration = ({
                         <h3
                             key={scene.key + '-h'}
                             className="text-xl md:text-2xl font-bold mt-5 mb-2 animate-fadeIn"
-                            style={{ color: COLORS.gray[900] }}
+                            style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}
                         >
                             {scene.headline}
                         </h3>
@@ -501,13 +487,13 @@ const StoryModeGeneration = ({
                         <p
                             key={scene.key + '-d'}
                             className="text-sm md:text-base max-w-md animate-fadeIn"
-                            style={{ color: COLORS.gray[600] }}
+                            style={{ color: isDark ? '#9ca3b0' : COLORS.gray[600] }}
                         >
                             {scene.getDescription(ctx)}
                         </p>
 
                         {/* Macro targets (visible after first scene) */}
-                        {sceneIdx >= 1 && <MacroMini nutritionalTargets={nutritionalTargets} />}
+                        {sceneIdx >= 1 && <MacroMini nutritionalTargets={nutritionalTargets} isDark={isDark} />}
 
                         {/* Progressive ingredient pills */}
                         {showIngredients && <IngredientPills results={results} />}
@@ -518,6 +504,7 @@ const StoryModeGeneration = ({
                                 formData={formData}
                                 activeStepKey={activeStepKey}
                                 mealPlan={mealPlan}
+                                isDark={isDark}
                             />
                         )}
 
@@ -531,7 +518,7 @@ const StoryModeGeneration = ({
                             <p
                                 key={`tip-${tipIdx}`}
                                 className="text-xs italic animate-fadeIn"
-                                style={{ color: COLORS.gray[400] }}
+                                style={{ color: isDark ? '#6b7280' : COLORS.gray[400] }}
                             >
                                 💡 {TIPS[tipIdx]}
                             </p>
