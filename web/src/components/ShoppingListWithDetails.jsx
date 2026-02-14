@@ -2,7 +2,10 @@
 // =============================================================================
 // ShoppingListWithDetails — Shopping list with product cards and detail modal
 //
-// FIXES APPLIED:
+// REDESIGN: Category selector now uses Calendar-Strip style (Concept D)
+// matching the "Your Nutrition" day selector. Full dark/light mode support.
+//
+// FIXES PRESERVED:
 // 1. KEY LOOKUP: Use item.normalizedKey (from backend normalizeKey()) instead
 //    of item.originalIngredient.toLowerCase().trim() — the results object is
 //    keyed by snake_case normalizedKey, not by lowercase original ingredient.
@@ -61,28 +64,30 @@ const ShoppingListWithDetails = ({
   const products = useMemo(() => {
     return ingredients.map((item, idx) => {
       // FIX 1: Use item.normalizedKey (backend snake_case key) for the results lookup.
-      // The old code did item.originalIngredient?.toLowerCase().trim() which produced
-      // "chicken breast" but results is keyed by "chicken_breast". This mismatch
-      // caused most items to silently fail the lookup and get filtered out.
       const normalizedKey = item.normalizedKey || item.originalIngredient?.toLowerCase().trim();
       const result = results[normalizedKey] || {};
       const allProducts = result.allProducts || result.products || [];
       const selectedIndex = result.selectedIndex ?? 0;
       const selectedProduct = allProducts[selectedIndex];
 
-      const rawPrice = selectedProduct?.price ?? selectedProduct?.current_price ?? selectedProduct?.product_price;
-      const size = selectedProduct?.size || selectedProduct?.product_size || selectedProduct?.package_size;
-      
-      // FIX 3: parseFloat properly — treat 0 as a valid price, only null/undefined/NaN → null
-      const parsedPrice = rawPrice != null ? parseFloat(rawPrice) : null;
-      const price = (parsedPrice !== null && !isNaN(parsedPrice)) ? parsedPrice : null;
+      // FIX 3: parseFloat guard treats 0 as valid
+      let price = null;
+      if (selectedProduct) {
+        const rawPrice = selectedProduct.product_price ?? selectedProduct.price;
+        if (rawPrice !== null && rawPrice !== undefined) {
+          const parsed = parseFloat(rawPrice);
+          if (!isNaN(parsed)) {
+            price = parsed;
+          }
+        }
+      }
 
-      // Find absolute cheapest
+      const size = selectedProduct?.product_size || selectedProduct?.size || null;
+
       const cheapest = allProducts.reduce((best, current) => {
         if (!current) return best;
-        const currentPrice = current.unit_price_per_100 ?? Infinity;
-        const bestPrice = best?.unit_price_per_100 ?? Infinity;
-        return currentPrice < bestPrice ? current : best;
+        return (current.unit_price_per_100 ?? Infinity) < (best?.unit_price_per_100 ?? Infinity)
+          ? current : best;
       }, allProducts[0]);
 
       const isCheapest = selectedProduct && cheapest && selectedProduct?.url === cheapest?.url;
@@ -97,8 +102,7 @@ const ShoppingListWithDetails = ({
         category: item.category || 'uncategorized',
       };
     });
-    // FIX 2: No .filter(p => p.price !== null) — show ALL ingredients,
-    // even those without a resolved price. IngredientCard handles null price gracefully.
+    // FIX 2: No .filter(p => p.price !== null)
   }, [ingredients, results]);
 
   // Categorize products
@@ -158,39 +162,31 @@ const ShoppingListWithDetails = ({
     
     const substitutes = allProducts
       .filter(p => p && p.url !== currentSelection?.url)
-      .sort((a, b) => (a.unit_price_per_100 ?? Infinity) - (b.unit_price_per_100 ?? Infinity))
-      .slice(0, 5);
+      .sort((a, b) => (a.unit_price_per_100 ?? Infinity) - (b.unit_price_per_100 ?? Infinity));
 
     return {
-      ingredientKey: freshResult.originalIngredient || selectedProductModal,
+      ingredientKey: selectedProductModal,
       normalizedKey: selectedProductModal,
       result: freshResult,
       currentSelection,
       absoluteCheapestProduct: cheapest,
       substitutes,
-      currentQuantity: freshResult.userQuantity || 1
+      currentQuantity: freshResult.userQuantity || 1,
     };
   }, [selectedProductModal, results]);
 
-  // Event handlers
   const handleCopyList = async () => {
-    let text = `Shopping List - ${actualStoreName}\n`;
-    text += `Total Cost: $${totalCost.toFixed(2)}\n`;
-    text += `Items: ${products.length}\n`;
-    text += '='.repeat(40) + '\n\n';
-
-    Object.entries(categorizedResults).forEach(([category, items]) => {
-      text += `${category.toUpperCase()}\n`;
-      text += '-'.repeat(40) + '\n';
-      items.forEach(({ ingredient }) => {
-        text += `☐ ${ingredient}\n`;
-      });
-      text += '\n';
-    });
-
     try {
-      await navigator.clipboard.writeText(text);
-      if (onShowToast) onShowToast('Shopping list copied to clipboard!');
+      const text = products.map(p => {
+        const priceStr = p.price !== null ? `$${p.price.toFixed(2)}` : 'N/A';
+        const sizeStr = p.size ? ` (${p.size})` : '';
+        return `${p.name} - ${priceStr}${sizeStr}`;
+      }).join('\n');
+
+      await navigator.clipboard.writeText(
+        `${actualStoreName} Shopping List\nTotal: $${totalCost.toFixed(2)}\n${'─'.repeat(30)}\n${text}`
+      );
+      if (onShowToast) onShowToast('Shopping list copied to clipboard!', 'success');
     } catch (err) {
       console.error('Copy failed:', err);
       if (onShowToast) onShowToast('Failed to copy list');
@@ -251,55 +247,64 @@ const ShoppingListWithDetails = ({
         <div style={{
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center',
+          alignItems: 'flex-start',
           marginBottom: '16px',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <ShoppingBag size={28} color="#ffffff" />
-            <h2 style={{
-              fontSize: '24px',
-              fontWeight: '700',
-              color: '#ffffff',
-              margin: 0,
-            }}>
-              Shopping List
-            </h2>
-          </div>
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.2)',
-            borderRadius: '12px',
-            padding: '8px 16px',
-            backdropFilter: 'blur(10px)',
-          }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
             <div style={{
-              fontSize: '12px',
-              color: 'rgba(255, 255, 255, 0.9)',
-              fontWeight: '500',
-              marginBottom: '2px',
+              background: 'rgba(255, 255, 255, 0.2)',
+              borderRadius: '14px',
+              padding: '12px',
+              marginRight: '16px',
+              backdropFilter: 'blur(10px)',
             }}>
-              {actualStoreName}
+              <ShoppingBag size={28} color="#ffffff" />
             </div>
-            <div style={{
-              fontSize: '20px',
+            <div>
+              <h2 style={{
+                fontSize: '22px',
+                fontWeight: '700',
+                color: '#ffffff',
+                margin: '0 0 4px 0',
+              }}>
+                Shopping List
+              </h2>
+              <p style={{
+                fontSize: '14px',
+                color: 'rgba(255, 255, 255, 0.75)',
+                margin: 0,
+              }}>
+                {products.length} items from {actualStoreName}
+              </p>
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <p style={{
+              fontSize: '28px',
               fontWeight: '700',
               color: '#ffffff',
+              margin: '0 0 2px 0',
+              lineHeight: 1,
             }}>
               ${totalCost.toFixed(2)}
-            </div>
+            </p>
+            <p style={{
+              fontSize: '12px',
+              color: 'rgba(255, 255, 255, 0.65)',
+              margin: 0,
+            }}>
+              Total Cost
+            </p>
           </div>
         </div>
 
-        {/* Action buttons */}
-        <div style={{
-          display: 'flex',
-          gap: '8px',
-          flexWrap: 'wrap',
-        }}>
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           {[
-            { icon: Copy, label: 'Copy', onClick: handleCopyList },
-            { icon: Printer, label: 'Print', onClick: handlePrint },
-            { icon: Share2, label: 'Share', onClick: handleShare },
-          ].map(({ icon: Icon, label, onClick }) => (
+            { Icon: Copy, label: 'Copy', onClick: handleCopyList },
+            { Icon: Printer, label: 'Print', onClick: handlePrint },
+            { Icon: Share2, label: 'Share', onClick: handleShare },
+          ].map(({ Icon, label, onClick }) => (
             <button
               key={label}
               onClick={onClick}
@@ -327,46 +332,24 @@ const ShoppingListWithDetails = ({
         </div>
       </div>
 
-      {/* Category filters */}
+      {/* ════════ Category Selector — Calendar Strip Style (Concept D) ════════ */}
       <div style={{ marginBottom: '20px' }}>
-        <div
-          className="shopping-category-pills"
-          style={{
-            display: 'flex',
-            gap: '8px',
-            overflowX: 'auto',
-            paddingBottom: '8px',
-            scrollbarWidth: 'none',
-            msOverflowStyle: 'none',
-          }}
-        >
-          {categories.map(({ id, label, count }) => {
-            const isActive = activeCategory === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setActiveCategory(id)}
-                className={`shopping-pill ${isActive ? 'active' : ''}`}
-                style={{
-                  flexShrink: 0,
-                  padding: '8px 16px',
-                  borderRadius: '20px',
-                  border: isActive ? '1.5px solid #667eea' : '1.5px solid #e2e8f0',
-                  background: isActive ? 'linear-gradient(135deg, #667eea, #764ba2)' : '#ffffff',
-                  color: isActive ? '#ffffff' : '#4a5568',
-                  fontSize: '13px',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                  boxShadow: isActive 
-                    ? '0 4px 12px rgba(102, 126, 234, 0.3)'
-                    : '0 1px 3px rgba(0, 0, 0, 0.05)',
-                }}
-              >
-                {label} ({count})
-              </button>
-            );
-          })}
+        <div className="cat-strip-wrapper">
+          <div className="cat-strip">
+            {categories.map(({ id, label, count }) => {
+              const isActive = activeCategory === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveCategory(id)}
+                  className={`cat-strip__item ${isActive ? 'cat-strip__item--active' : ''}`}
+                >
+                  <span className="cat-strip__count">{count}</span>
+                  <span className="cat-strip__label">{label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -377,33 +360,15 @@ const ShoppingListWithDetails = ({
         gap: '12px',
       }}>
         {filteredProducts.length === 0 ? (
-          <div style={{
-            textAlign: 'center',
-            padding: '60px 20px',
-            background: '#ffffff',
-            borderRadius: '16px',
-            border: '2px dashed #e2e8f0',
-          }}>
+          <div className="shopping-empty-state">
             <ShoppingBag 
               size={48} 
-              style={{ 
-                color: '#cbd5e0',
-                margin: '0 auto 16px',
-                display: 'block',
-              }} 
+              className="shopping-empty-state__icon"
             />
-            <div style={{
-              fontSize: '18px',
-              fontWeight: '600',
-              color: '#4a5568',
-              marginBottom: '8px',
-            }}>
+            <div className="shopping-empty-state__title">
               No {activeCategory !== 'all' ? activeCategory : ''} items yet
             </div>
-            <div style={{
-              fontSize: '14px',
-              color: '#718096',
-            }}>
+            <div className="shopping-empty-state__text">
               Add items to your list to get started
             </div>
           </div>
@@ -445,20 +410,186 @@ const ShoppingListWithDetails = ({
         
         * { box-sizing: border-box; }
 
-        .shopping-category-pills::-webkit-scrollbar { display: none; }
-        
+
+        /* ==============================================
+           CATEGORY SELECTOR — Calendar Strip (Concept D)
+           Mirrors the MealPlanDisplay .mpd-cal-strip
+           ============================================== */
+
+        .cat-strip-wrapper {
+          /* Negative margin trick to bleed into container edges, matching mpd-cal-strip-wrapper */
+        }
+
+        .cat-strip {
+          display: flex;
+          gap: 8px;
+          padding: 8px;
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 14px;
+          border: 1px solid var(--color-border, #2d3148);
+          overflow-x: auto;
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+
+        .cat-strip::-webkit-scrollbar { display: none; }
+
+        /* Light mode strip */
+        [data-theme="light"] .cat-strip {
+          background: rgba(99, 102, 241, 0.04);
+          border-color: #e0e7ff;
+        }
+
+
+        /* ── Individual category cell ── */
+
+        .cat-strip__item {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 10px 14px;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 0.25s ease;
+          flex-shrink: 0;
+          min-width: 56px;
+          border: 1px solid transparent;
+          background: transparent;
+          font-family: inherit;
+          -webkit-tap-highlight-color: transparent;
+        }
+
+        .cat-strip__item:hover:not(.cat-strip__item--active) {
+          background: rgba(255, 255, 255, 0.06);
+          border-color: rgba(255, 255, 255, 0.08);
+        }
+
+        [data-theme="light"] .cat-strip__item:hover:not(.cat-strip__item--active) {
+          background: rgba(99, 102, 241, 0.06);
+          border-color: rgba(99, 102, 241, 0.12);
+        }
+
+        .cat-strip__item:active {
+          transform: scale(0.95);
+        }
+
+
+        /* ── Active state — gradient background matching Cheffy brand ── */
+
+        .cat-strip__item--active {
+          background: linear-gradient(135deg, #6366f1, #a855f7);
+          border-color: rgba(99, 102, 241, 0.4);
+          box-shadow: 0 4px 20px rgba(99, 102, 241, 0.35);
+        }
+
+        [data-theme="light"] .cat-strip__item--active {
+          background: linear-gradient(135deg, #6366f1, #a855f7);
+          border-color: transparent;
+          box-shadow: 0 3px 12px rgba(99, 102, 241, 0.35);
+        }
+
+
+        /* ── Count number ── */
+
+        .cat-strip__count {
+          font-size: 16px;
+          font-weight: 700;
+          color: #e8eaf0;
+          line-height: 1;
+          margin-bottom: 3px;
+          font-family: 'DM Sans', -apple-system, sans-serif;
+        }
+
+        .cat-strip__item--active .cat-strip__count {
+          color: #ffffff;
+        }
+
+        [data-theme="light"] .cat-strip__count {
+          color: #374151;
+        }
+
+        [data-theme="light"] .cat-strip__item--active .cat-strip__count {
+          color: #ffffff;
+        }
+
+
+        /* ── Category label ── */
+
+        .cat-strip__label {
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          color: #7b809a;
+          font-weight: 600;
+          line-height: 1;
+        }
+
+        .cat-strip__item--active .cat-strip__label {
+          color: rgba(255, 255, 255, 0.85);
+        }
+
+        [data-theme="light"] .cat-strip__label {
+          color: #9ca3af;
+        }
+
+        [data-theme="light"] .cat-strip__item--active .cat-strip__label {
+          color: rgba(255, 255, 255, 0.85);
+        }
+
+
+        /* ==============================================
+           EMPTY STATE — Dark/Light mode aware
+           ============================================== */
+
+        .shopping-empty-state {
+          text-align: center;
+          padding: 60px 20px;
+          background: var(--color-bg-card, #1e2130);
+          border-radius: 16px;
+          border: 2px dashed var(--color-border, #2d3148);
+        }
+
+        [data-theme="light"] .shopping-empty-state {
+          background: #ffffff;
+          border-color: #e2e8f0;
+        }
+
+        .shopping-empty-state__icon {
+          color: var(--color-text-tertiary, #6b7280);
+          margin: 0 auto 16px;
+          display: block;
+        }
+
+        .shopping-empty-state__title {
+          font-size: 18px;
+          font-weight: 600;
+          color: var(--color-text-primary, #f0f1f5);
+          margin-bottom: 8px;
+        }
+
+        [data-theme="light"] .shopping-empty-state__title {
+          color: #4a5568;
+        }
+
+        .shopping-empty-state__text {
+          font-size: 14px;
+          color: var(--color-text-secondary, #9ca3b0);
+        }
+
+        [data-theme="light"] .shopping-empty-state__text {
+          color: #718096;
+        }
+
+
+        /* ==============================================
+           EXISTING STYLES (preserved)
+           ============================================== */
+
         .shopping-action-button:hover {
           background: rgba(255, 255, 255, 0.3) !important;
           transform: translateY(-1px);
         }
         .shopping-action-button:active { transform: translateY(0); }
-        
-        .shopping-pill:not(.active):hover {
-          background: #f7fafc !important;
-          border-color: #cbd5e0 !important;
-          transform: scale(1.02);
-        }
-        .shopping-pill:active { transform: scale(0.98); }
 
         @media (max-width: 768px) {
           .shopping-action-button span { display: none; }
@@ -471,8 +602,8 @@ const ShoppingListWithDetails = ({
         @media print {
           body { background: white !important; }
           .shopping-action-button,
-          .shopping-category-pills { display: none !important; }
-          .ingredient-card-compact {
+          .cat-strip-wrapper { display: none !important; }
+          .glass-card {
             break-inside: avoid;
             page-break-inside: avoid;
           }
