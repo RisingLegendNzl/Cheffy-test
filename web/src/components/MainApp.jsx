@@ -494,8 +494,8 @@ const handleEditProfileClean = useCallback(() => {
                 onEditProfile={handleEditProfileClean}
                 showOrchestratorLogs={showOrchestratorLogs}
                 onToggleOrchestratorLogs={setShowOrchestratorLogs}
-                showFailedIngredientsLogs={showFailedIngredientsLogs}
-                onToggleFailedIngredientsLogs={setShowFailedIngredientsLogs}
+                setShowMatchTraceLogs={setShowMatchTraceLogs}
+                onToggleFailedIngredientsLogs={setShowMatchTraceLogs}
                 showMacroDebugLog={showMacroDebugLog}
                 onToggleMacroDebugLog={setShowMacroDebugLog}
                 selectedModel={selectedModel}
@@ -599,7 +599,7 @@ const handleEditProfileClean = useCallback(() => {
                 {showMacroDebugLog && (
                     <MacroDebugLogViewer macroDebug={macroDebug} onDownload={handleDownloadMacroDebugLogs} />
                 )}
-                {!showOrchestratorLogs && !showFailedIngredientsLogs && !showMacroDebugLog && (
+                {!showOrchestratorLogs && !setShowMatchTraceLogs && !showMacroDebugLog && (
                     <div 
                         className="p-2 text-xs text-center cursor-pointer"
                         style={{
