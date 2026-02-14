@@ -763,7 +763,7 @@ async function generateMealPlan(day, formData, nutritionalTargets, log, primaryM
 }
 
 // --- generateGroceryQueries (MODIFIED V4: Added Fallback) ---
-async function generateGroceryQueries(uniqueIngredientKeys, store, log, primaryModel = 'gemini-2.5-flash-lite', fallbackModel = null) {
+async function generateGroceryQueries(uniqueIngredientKeys, store, log, primaryModel = 'gpt-5.1', fallbackModel = 'gemini-2.0-flash') {
     if (!uniqueIngredientKeys || uniqueIngredientKeys.length === 0) {
         log("generateGroceryQueries called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
@@ -797,12 +797,22 @@ async function generateGroceryQueries(uniqueIngredientKeys, store, log, primaryM
     };
     const expectedShape = { "ingredients": [] };
     let parsedResult;
-   try {
-       parsedResult = await tryGenerateLLMPlan('gemini-2.5-flash-lite', payload, log, logPrefix, expectedShape);
-   } catch (error) {
-       log(`${logPrefix}: gemini-2.5-flash-lite failed: ${error.message}. NO FALLBACK for Grocery Optimiser.`, 'CRITICAL', 'LLM');
-       throw new Error(`Grocery Query generation failed: gemini-2.5-flash-lite failed. ${error.message}`);
-   }
+    try {
+        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
+    } catch (primaryError) {
+        if (fallbackModel) {
+            log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
+            try {
+                parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
+            } catch (fallbackError) {
+                log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+                throw new Error(`Grocery Query generation failed: All models failed. Last error: ${fallbackError.message}`);
+            }
+        } else {
+            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. No fallback configured.`, 'CRITICAL', 'LLM');
+            throw new Error(`Grocery Query generation failed: ${primaryModel} failed. ${primaryError.message}`);
+        }
+    }
     if (parsedResult && parsedResult.ingredients && parsedResult.ingredients.length > 0) {
         await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
     }
