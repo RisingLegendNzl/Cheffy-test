@@ -1,5 +1,5 @@
 // --- Cheffy API: /api/plan/day.js ---
-// [MODIFIED V13.0] Integration of Enhanced Grocery Matching (Preprocessor, Scorer, Prompts)
+// [MODIFIED V13.1] Integration of Enhanced Grocery Matching (Query Cleaner, Checker, Prompts)
 // Implements a "Four-Agent" AI system + Deterministic Calorie Calculation
 
 /// ===== IMPORTS-START ===== \\\\
@@ -24,9 +24,11 @@ const { validateDayPlan } = require('../../utils/validation');
 // --- [NEW] Import LLM provider abstraction ---
 const { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../../utils/llm-provider.js');
 
-// --- [NEW] Grocery Matching Integrations (V13.0) ---
-const { preprocessIngredientBatch, generateFallbackQueries } = require('../../utils/ingredient-preprocessor');
-const { scoreProduct, BANNED_KEYWORDS: SCORER_BANNED_KEYWORDS } = require('../../utils/product-scorer');
+// --- [NEW] Grocery Matching Integrations (V13.1) ---
+// Preserved generateFallbackQueries from old preprocessor as it is still used in market run
+const { generateFallbackQueries } = require('../../utils/ingredient-preprocessor');
+const { cleanIngredientBatch } = require('../../utils/ingredient-query-cleaner');
+const { runEnhancedChecklist } = require('../../utils/product-checker');
 const { GROCERY_OPTIMIZER_SYSTEM_PROMPT: ENHANCED_GROCERY_PROMPT } = require('../../utils/grocery-prompts');
 
 /// ===== IMPORTS-END ===== ////
@@ -82,9 +84,6 @@ const TOKEN_BUCKET_MAX_WAIT_MS = 250;
 const MAX_NUTRITION_CONCURRENCY = NUTRITION_CONCURRENCY;
 const MAX_MARKET_RUN_CONCURRENCY = MARKET_RUN_CONCURRENCY;
 // --- [END PERF] ---
-
-// [REMOVED] Local BANNED_KEYWORDS array replaced by SCORER_BANNED_KEYWORDS in utils/product-scorer
-// const BANNED_KEYWORDS = [ ... ];
 
 // --- [PERF] Use new constant for score threshold ---
 const SKIP_HEURISTIC_SCORE_THRESHOLD = SKIP_STRONG_MATCH_THRESHOLD;
@@ -426,16 +425,6 @@ function sizeOk(productSizeParsed, targetSize, allowedCategories = [], log, ingr
     return false;
 }
 
-// --- [MODIFIED V13.0] Enhanced Scorer Wrapper ---
-// Delegates to the sophisticated `scoreProduct` utility but maintains interface compatibility.
-function runSmarterChecklist(product, ingredientData, log) {
-    // Delegate to the enhanced scorer
-    const result = scoreProduct(product, ingredientData, log, {
-        preprocessed: ingredientData._preprocessed || null,
-    });
-    return result; // Returns { pass, score, reason } — compatible with existing code
-}
-
 // --- Synthesis functions (Unchanged) ---
 function synthTight(ing, store) {
   if (!ing || !store) return null;
@@ -633,7 +622,7 @@ async function generateMealPlan(day, formData, nutritionalTargets, log, primaryM
     if (!day || isNaN(parseInt(day)) || parseInt(day) < 1 || parseInt(day) > 7) {
         throw new Error("Invalid 'day' parameter provided.");
     }
-    if (!nutritionalTargets || typeof nutritionalTargets !== 'object' || !calories || !protein || !fat || !carbs) {
+    if (!nutritionalTargets || typeof nutritionalTargets !== 'object' || !nutritionalTargets.calories) {
         throw new Error("Invalid or missing 'nutritionalTargets' provided.");
     }
 
@@ -706,12 +695,15 @@ async function generateGroceryQueries(uniqueIngredientKeys, store, log, primaryM
     if (cached) return cached;
     log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
     
-    // PREPROCESSING: Clean ingredient names before LLM sees them (V13.0)
-    const inputObjects = uniqueIngredientKeys.map(k => ({ originalIngredient: k }));
-    const preprocessedIngredients = preprocessIngredientBatch(inputObjects);
+    // PREPROCESSING: Clean ingredient names before LLM sees them (V13.1)
+    // Convert strings to objects for the cleaner
+    const ingredientObjects = uniqueIngredientKeys.map(k => ({ originalIngredient: k }));
+    const preprocessedIngredients = cleanIngredientBatch(ingredientObjects);
+    
     const llmInput = preprocessedIngredients.map(item => ({
-        originalIngredient: item.originalIngredient, // Keep original for tracking
-        cleanName: item._cleanIngredientForLLM       // LLM uses this for query generation
+        originalIngredient: item.originalIngredient,
+        cleanName: item._cleanName,
+        _autoNegatives: item._autoNegatives
     }));
 
     const isAustralianStore = (store === 'Coles' || store === 'Woolworths');
@@ -722,7 +714,7 @@ async function generateGroceryQueries(uniqueIngredientKeys, store, log, primaryM
     
     // Update userQuery to tell LLM to use cleanName
     let userQuery = `Generate query JSON for the following ingredients.
-Use the "cleanName" field for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
+Use "cleanName" for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
 ${JSON.stringify(llmInput)}`;
 
     const logPrefix = `GroceryOptimizerDay`;
@@ -757,20 +749,21 @@ ${JSON.stringify(llmInput)}`;
         }
     }
     
-    // ENHANCEMENT: Merge auto-negative-keywords & attach preprocessed data (V13.0)
+    // ENHANCEMENT: Merge auto-negative-keywords & attach preprocessed data (V13.1)
     if (parsedResult && parsedResult.ingredients && parsedResult.ingredients.length > 0) {
         parsedResult.ingredients.forEach(ing => {
             const preprocessedItem = preprocessedIngredients.find(
                 pi => pi.originalIngredient === ing.originalIngredient
             );
             if (preprocessedItem) {
-                 // Attach preprocessed data for later use in scoring
-                 ing._preprocessed = preprocessedItem._preprocessed;
+                 // Attach preprocessed data for later use in scoring (Checker needs cleanName and isWholeFood)
+                 ing._cleanName = preprocessedItem._cleanName;
+                 ing._isWholeFood = preprocessedItem._isWholeFood;
 
                  // Merge auto-negative keywords
-                 if (preprocessedItem._preprocessed?.autoNegativeKeywords?.length > 0) {
+                 if (preprocessedItem._autoNegatives && preprocessedItem._autoNegatives.length > 0) {
                     const existingNeg = new Set((ing.negativeKeywords || []).map(k => k.toLowerCase()));
-                    const autoNeg = preprocessedItem._preprocessed.autoNegativeKeywords
+                    const autoNeg = preprocessedItem._autoNegatives
                         .filter(k => !existingNeg.has(k.toLowerCase()));
                     if (autoNeg.length > 0) {
                         ing.negativeKeywords = [...(ing.negativeKeywords || []), ...autoNeg];
@@ -1086,7 +1079,8 @@ module.exports = async (request, response) => {
                         
                         for (const rawProduct of rawProducts) {
                             if (!rawProduct || !rawProduct.product_name) continue;
-                            const checklistResult = runSmarterChecklist(rawProduct, ingredient, log);
+                            // [MODIFIED V13.1] Use Enhanced Checklist
+                            const checklistResult = runEnhancedChecklist(rawProduct, ingredient, log);
                             if (checklistResult.pass) {
                                 validProductsOnPage.push({ 
                                     product: { 
@@ -1185,7 +1179,8 @@ module.exports = async (request, response) => {
                                             product_size: p.product_size || p.size || '',
                                             unit_price_per_100: calculateUnitPrice(p.current_price, p.product_size || p.size || ''),
                                         };
-                                        const checkResult = runSmarterChecklist(enrichedProduct, ingredient, log);
+                                        // [MODIFIED V13.1] Use Enhanced Checklist
+                                        const checkResult = runEnhancedChecklist(enrichedProduct, ingredient, log);
                                         return checkResult.pass ? { product: enrichedProduct, score: checkResult.score } : null;
                                     }).filter(Boolean);
                                     
@@ -1423,7 +1418,7 @@ module.exports = async (request, response) => {
                  // Use real data
                  const proteinPer100 = Number(nutritionData.protein || nutritionData.protein_g_per_100g) || 0;
                  const fatPer100 = Number(nutritionData.fat || nutritionData.fat_g_per_100g) || 0;
-                 const carbsPer100 = Number(nutritionData.carbs || nutritionData.carb_g_per_100g) || 0;
+                 const carbsPer100 = Number(nutritionData.carbs || nutritionData.carbs_g_per_100g || nutritionData.carb_g_per_100g) || 0;
                  p = (proteinPer100 / 100) * grams;
                  f = (fatPer100 / 100) * grams;
                  c = (carbsPer100 / 100) * grams;
