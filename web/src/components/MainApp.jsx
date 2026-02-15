@@ -599,7 +599,7 @@ const handleEditProfileClean = useCallback(() => {
                 {showMacroDebugLog && (
                     <MacroDebugLogViewer macroDebug={macroDebug} onDownload={handleDownloadMacroDebugLogs} />
                 )}
-                {!showOrchestratorLogs && !setShowMatchTraceLogs && !showMacroDebugLog && (
+                {!showOrchestratorLogs && !ShowMatchTraceLogs && !showMacroDebugLog && (
                     <div 
                         className="p-2 text-xs text-center cursor-pointer"
                         style={{
