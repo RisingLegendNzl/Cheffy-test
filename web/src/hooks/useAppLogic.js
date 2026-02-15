@@ -124,18 +124,25 @@ const useAppLogic = ({
       () => JSON.parse(localStorage.getItem('cheffy_show_macro_debug_log') ?? 'false')
     );
     
+    // Product Match Trace State (NEW FIX)
+    const [showProductMatchTrace, setShowProductMatchTrace] = useState(
+      () => JSON.parse(localStorage.getItem('cheffy_show_product_match_trace') ?? 'false')
+    );
+
     const [showOrchestratorLogs, setShowOrchestratorLogs] = useState(
       () => JSON.parse(localStorage.getItem('cheffy_show_orchestrator_logs') ?? 'true')
     );
     
-    // REPLACED: showFailedIngredientsLogs -> showMatchTraceLogs
+    // Legacy: Keeping for compatibility but superseding with showProductMatchTrace logic
     const [showMatchTraceLogs, setShowMatchTraceLogs] = useState(
-  () => JSON.parse(localStorage.getItem('cheffy_show_match_trace_logs') ?? 'false')
-);
+      () => JSON.parse(localStorage.getItem('cheffy_show_match_trace_logs') ?? 'false')
+    );
 
-    // [FIX] Ref for SSE closure to read current toggle value
-    const showMatchTraceLogsRef = useRef(showMatchTraceLogs);
-    useEffect(() => { showMatchTraceLogsRef.current = showMatchTraceLogs; }, [showMatchTraceLogs]);
+    // [FIX] Ref for SSE closure to read current toggle value (Updated to use Product Match Trace)
+    const showProductMatchTraceRef = useRef(showProductMatchTrace);
+    useEffect(() => { 
+        showProductMatchTraceRef.current = showProductMatchTrace; 
+    }, [showProductMatchTrace]);
     
     const [generationStepKey, setGenerationStepKey] = useState(null);
     const [generationStatus, setGenerationStatus] = useState("Ready to generate plan."); 
@@ -173,16 +180,15 @@ const useAppLogic = ({
             return;
         }
         
-        
         // ONE-TIME MIGRATION: Reset match trace logs default to FALSE
-useEffect(() => {
-    const currentValue = localStorage.getItem('cheffy_show_match_trace_logs');
-    if (currentValue === 'true' || currentValue === null) {
-        localStorage.setItem('cheffy_show_match_trace_logs', 'false');
-        setShowMatchTraceLogs(false);
-        console.log('[MIGRATION] Reset Product Match Trace toggle to OFF by default');
-    }
-}, []); // Run once on mount
+        useEffect(() => {
+            const currentValue = localStorage.getItem('cheffy_show_match_trace_logs');
+            if (currentValue === 'true' || currentValue === null) {
+                localStorage.setItem('cheffy_show_match_trace_logs', 'false');
+                setShowMatchTraceLogs(false);
+                console.log('[MIGRATION] Reset Product Match Trace toggle to OFF by default');
+            }
+        }, []); // Run once on mount
         
         
         console.log(`[MOUNT] Found in-flight run ${runId} (state: ${state}). Resuming polling…`);
@@ -221,7 +227,7 @@ useEffect(() => {
                         }).catch(err => console.warn('[AUTO_SAVE] Post-refresh recovery save failed:', err.message));
                     }
 
-                    showToast('Plan recovered after page refresh!', 'success');
+                    showToast('Plan recovered after refresh!', 'success');
                 } else {
                     setGenerationStatus('Previous generation could not be recovered. You can start a new one.');
                     setGenerationStepKey(null);
@@ -314,14 +320,18 @@ useEffect(() => {
       localStorage.setItem('cheffy_show_orchestrator_logs', JSON.stringify(showOrchestratorLogs));
     }, [showOrchestratorLogs]);
 
-    // UPDATED: Persist showMatchTraceLogs instead of showFailedIngredientsLogs
+    // Persistence for Product Match Trace (NEW)
+    useEffect(() => {
+        localStorage.setItem('cheffy_show_product_match_trace', JSON.stringify(showProductMatchTrace));
+        // Clear traces when disabled to clean up state immediately
+        if (!showProductMatchTrace) {
+            setMatchTraces([]);
+        }
+    }, [showProductMatchTrace]);
+
+    // Legacy: Persist showMatchTraceLogs instead of showFailedIngredientsLogs
     useEffect(() => {
       localStorage.setItem('cheffy_show_match_trace_logs', JSON.stringify(showMatchTraceLogs));
-      // [FIX] Clear accumulated traces when user disables the toggle
-      if (!showMatchTraceLogs) {
-        setMatchTraces([]);
-        console.debug('[SETTINGS] Match trace logging disabled — cleared accumulated traces');
-      }
     }, [showMatchTraceLogs]);
     
     // Macro Debug Log Persistence
@@ -455,8 +465,9 @@ useEffect(() => {
         try {
             const settingsData = {
                 showOrchestratorLogs: showOrchestratorLogs,
-                showMatchTraceLogs: showMatchTraceLogs, // UPDATED: changed from showFailedIngredientsLogs
+                showMatchTraceLogs: showMatchTraceLogs, // Legacy
                 showMacroDebugLog: showMacroDebugLog,
+                showProductMatchTrace: showProductMatchTrace, // ADDED
                 selectedModel: selectedModel,
                 theme: localStorage.getItem('cheffy-theme') || 'dark',
                 measurementUnits: formData.measurementUnits || 'metric', // Persist units in settings
@@ -469,7 +480,7 @@ useEffect(() => {
         } catch (error) {
             console.error("[SETTINGS] Error saving settings:", error);
         }
-    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, selectedModel, userId, db, isAuthReady, formData.measurementUnits]);
+    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, showProductMatchTrace, selectedModel, userId, db, isAuthReady, formData.measurementUnits]);
 
     const handleLoadSettings = useCallback(async () => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
@@ -484,11 +495,12 @@ useEffect(() => {
                 const data = settingsSnap.data();
                 setShowOrchestratorLogs(data.showOrchestratorLogs ?? true);
                 
-                // UPDATED: Load showMatchTraceLogs, fallback to old key if missing
                 // UPDATED: Load showMatchTraceLogs, fallback to old key if missing, default to FALSE
-setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs ?? false);
+                setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs ?? false);
                 
                 setShowMacroDebugLog(data.showMacroDebugLog ?? false);
+                setShowProductMatchTrace(data.showProductMatchTrace ?? false); // ADDED
+                
                 if (data.selectedModel) setSelectedModel(data.selectedModel);
                 
                 // Load measurement units from settings if available
@@ -577,7 +589,7 @@ setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs 
         if (userId && !userId.startsWith('local_') && isAuthReady) {
             handleSaveSettings();
         }
-    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, userId, isAuthReady, handleSaveSettings, formData.measurementUnits]);
+    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, showProductMatchTrace, userId, isAuthReady, handleSaveSettings, formData.measurementUnits]);
 
     useEffect(() => {
         if (userId && !userId.startsWith('local_') && isAuthReady && db) {
@@ -798,9 +810,10 @@ setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs 
                                 }));
                                 break;
                                 
-                            // UPDATED: Handle new match_trace event
+                            // UPDATED: Handle new match_trace event with NEW toggle check
                             case 'ingredient:match_trace':
-                                if (eventData.trace && showMatchTraceLogsRef.current) {
+                                // Check the new toggle ref to control collection
+                                if (eventData.trace && showProductMatchTraceRef.current) {
                                     setMatchTraces(prev => [...prev, eventData.trace]);
                                 }
                                 break;
@@ -1279,6 +1292,8 @@ setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs 
         showOrchestratorLogs,
         // REPLACED: showFailedIngredientsLogs -> showMatchTraceLogs
         showMatchTraceLogs,
+        // NEW: showProductMatchTrace
+        showProductMatchTrace,
         generationStepKey,
         generationStatus,
         selectedMeal,
@@ -1299,6 +1314,8 @@ setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs 
         setShowOrchestratorLogs,
         // REPLACED: setShowFailedIngredientsLogs -> setShowMatchTraceLogs
         setShowMatchTraceLogs,
+        // NEW: setShowProductMatchTrace
+        setShowProductMatchTrace,
         setShowMacroDebugLog,
         setSelectedMeal,
         setSelectedModel,
