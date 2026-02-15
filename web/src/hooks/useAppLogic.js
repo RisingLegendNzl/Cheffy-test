@@ -172,7 +172,19 @@ const useAppLogic = ({
             clearRunState();
             return;
         }
-
+        
+        
+        // ONE-TIME MIGRATION: Reset match trace logs default to FALSE
+useEffect(() => {
+    const currentValue = localStorage.getItem('cheffy_show_match_trace_logs');
+    if (currentValue === 'true' || currentValue === null) {
+        localStorage.setItem('cheffy_show_match_trace_logs', 'false');
+        setShowMatchTraceLogs(false);
+        console.log('[MIGRATION] Reset Product Match Trace toggle to OFF by default');
+    }
+}, []); // Run once on mount
+        
+        
         console.log(`[MOUNT] Found in-flight run ${runId} (state: ${state}). Resuming polling…`);
         currentRunIdRef.current = runId;
 
