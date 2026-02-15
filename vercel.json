@@ -10,6 +10,10 @@
     {
       "source": "/assets/:path*",
       "destination": "/web/dist/assets/:path*"
+      
+    {
+      "routes": [
+    { "src": "/api/voice/tts", "dest": "/api/voice/tts.js" }
     },
     {
       "source": "/vite.svg",
