@@ -1,4 +1,5 @@
 // web/src/components/SettingsPanel.jsx
+// [V3.2] Removed "Failed Ingredients" toggle and "Edit Profile" button per user request
 // [V3.1] Added Product Match Trace toggle following exact pattern of Macro Debug Log
 // Updated AI model selector with usage descriptions and correct model IDs.
 // Removed "System" option from Appearance (#5).
@@ -7,18 +8,15 @@ import React from 'react';
 import {
   X,
   User,
-  Info,
-  Shield,
   Trash2,
   Eye,
   EyeOff,
   Terminal,
-  ListX,
   Target,
   Cpu,
   Palette,
   Ruler,
-  Search,  // NEW: For Product Match Trace icon
+  Search,
 } from 'lucide-react';
 import { COLORS, Z_INDEX } from '../constants';
 import { useTheme } from '../contexts/ThemeContext';
@@ -58,19 +56,16 @@ const SettingsPanel = ({
   isOpen,
   onClose,
   onClearData,
-  onEditProfile,
   // Measurement units
   measurementUnits = 'metric',
   onMeasurementUnitsChange,
   // Logs
   showOrchestratorLogs = true,
   onToggleOrchestratorLogs,
-  showFailedIngredientsLogs = true,
-  onToggleFailedIngredientsLogs,
   showMacroDebugLog = false,
   onToggleMacroDebugLog = () => {},
-  showProductMatchTrace = false,  // NEW: Product Match Trace toggle
-  onToggleProductMatchTrace = () => {},  // NEW: Product Match Trace handler
+  showProductMatchTrace = false,
+  onToggleProductMatchTrace = () => {},
   // AI Model
   selectedModel = 'gpt-5.1',
   onModelChange = () => {},
@@ -78,10 +73,6 @@ const SettingsPanel = ({
   const { theme, setTheme, isDark } = useTheme();
 
   if (!isOpen) return null;
-
-  const handleEditProfileClick = () => {
-    if (onEditProfile) onEditProfile();
-  };
 
   const handleClearAllData = () => {
     console.log('Attempting to clear all data.');
@@ -270,19 +261,13 @@ const SettingsPanel = ({
                 toggle: onToggleOrchestratorLogs,
               },
               {
-                label: 'Failed Ingredients',
-                icon: <ListX size={14} />,
-                value: showFailedIngredientsLogs,
-                toggle: onToggleFailedIngredientsLogs,
-              },
-              {
                 label: 'Macro Debug Log',
                 icon: <Target size={14} />,
                 value: showMacroDebugLog,
                 toggle: onToggleMacroDebugLog,
               },
               {
-                label: 'Product Match Trace',  // NEW: Product Match Trace toggle
+                label: 'Product Match Trace',
                 icon: <Search size={14} />,
                 value: showProductMatchTrace,
                 toggle: onToggleProductMatchTrace,
@@ -326,26 +311,14 @@ const SettingsPanel = ({
             ))}
           </div>
 
-          {/* ─── Profile & Data Section ─── */}
+          {/* ─── Data Management Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <User size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
               <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
-                Profile & Data
+                Data Management
               </h3>
             </div>
-
-            <button
-              onClick={handleEditProfileClick}
-              className="w-full p-3 rounded-lg text-left font-medium transition-all mb-3"
-              style={{
-                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
-                color: isDark ? '#d1d5db' : COLORS.gray[700],
-                border: `1px solid ${isDark ? '#2d3148' : COLORS.gray[200]}`,
-              }}
-            >
-              Edit Profile
-            </button>
 
             <button
               onClick={handleClearAllData}
