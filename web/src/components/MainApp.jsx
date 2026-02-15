@@ -601,17 +601,20 @@ const handleEditProfileClean = useCallback(() => {
                 )}
                 {/* Fixed condition below: changed !ShowMatchTraceLogs to !showMatchTraceLogs */}
                 {!showOrchestratorLogs && !showMatchTraceLogs && !showMacroDebugLog && (
-                    <div 
-                        className="p-2 text-xs text-center cursor-pointer"
-                        style={{
-                            backgroundColor: isDark ? '#181a24' : '#1f2937',
-                            color: '#ffffff',
-                        }}
-                        onClick={() => { setShowOrchestratorLogs(true);  setShowMatchTraceLogs(true); setShowMacroDebugLog(true); }}
-                    >
-                        📋 Show Logs
-                    </div>
-                )}
+    <div 
+        className="p-2 text-xs text-center cursor-pointer"
+        style={{
+            backgroundColor: isDark ? '#181a24' : '#1f2937',
+            color: '#ffffff',
+        }}
+        onClick={() => { 
+            // Only enable Orchestrator logs by default, respect user's other toggle states
+            setShowOrchestratorLogs(true);
+        }}
+    >
+        📋 Show Logs
+    </div>
+)}
             </div>
     
             {selectedMeal && (
