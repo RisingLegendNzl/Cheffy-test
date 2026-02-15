@@ -1,8 +1,8 @@
 // web/src/components/SettingsPanel.jsx
-// [V3.0] Updated AI model selector with usage descriptions and correct model IDs.
-// Fixed model IDs to match backend SUPPORTED_MODELS.
-// Removed "System" option from Appearance (#5).
-// "Default Store" was already removed in a prior update.
+// [V4.0] Renamed "Failed Ingredients" log toggle → "Product Match Trace"
+// to reflect its actual purpose (tracking search queries + selected products).
+// Props updated: showMatchTraceLogs / onToggleMatchTraceLogs.
+// Icon changed from ListX to Search.
 import React from 'react';
 import {
   X,
@@ -13,7 +13,7 @@ import {
   Eye,
   EyeOff,
   Terminal,
-  ListX,
+  Search,
   Target,
   Cpu,
   Palette,
@@ -64,8 +64,8 @@ const SettingsPanel = ({
   // Logs
   showOrchestratorLogs = true,
   onToggleOrchestratorLogs,
-  showFailedIngredientsLogs = true,
-  onToggleFailedIngredientsLogs,
+  showMatchTraceLogs = true,
+  onToggleMatchTraceLogs,
   showMacroDebugLog = false,
   onToggleMacroDebugLog = () => {},
   // AI Model
@@ -215,21 +215,21 @@ const SettingsPanel = ({
                         style={{
                           color: isActive
                             ? COLORS.primary[600]
-                            : isDark ? '#f0f1f5' : COLORS.gray[900],
+                            : isDark ? '#d1d5db' : COLORS.gray[800],
                         }}
                       >
                         {model.label}
                       </span>
                       {model.badge && (
                         <span
-                          className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide"
                           style={{
                             backgroundColor: isActive
                               ? isDark ? 'rgba(99,102,241,0.25)' : COLORS.primary[100]
-                              : isDark ? '#2d3148' : COLORS.gray[200],
+                              : isDark ? 'rgba(99,102,241,0.1)' : COLORS.gray[100],
                             color: isActive
                               ? COLORS.primary[600]
-                              : isDark ? '#9ca3b0' : COLORS.gray[600],
+                              : isDark ? '#9ca3b0' : COLORS.gray[500],
                           }}
                         >
                           {model.badge}
@@ -239,7 +239,8 @@ const SettingsPanel = ({
                     <p
                       className="text-xs"
                       style={{
-                        color: isDark ? '#9ca3b0' : COLORS.gray[500],
+                        color: isDark
+                          ? '#9ca3b0' : COLORS.gray[500],
                       }}
                     >
                       {model.description}
@@ -267,10 +268,10 @@ const SettingsPanel = ({
                 toggle: onToggleOrchestratorLogs,
               },
               {
-                label: 'Failed Ingredients',
-                icon: <ListX size={14} />,
-                value: showFailedIngredientsLogs,
-                toggle: onToggleFailedIngredientsLogs,
+                label: 'Product Match Trace',
+                icon: <Search size={14} />,
+                value: showMatchTraceLogs,
+                toggle: onToggleMatchTraceLogs,
               },
               {
                 label: 'Macro Debug Log',
