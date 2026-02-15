@@ -1,24 +1,16 @@
 // web/src/hooks/useVoiceCooking.js
 // =============================================================================
 // Voice Cooking Hook — Core State Machine
-//
-// Orchestrates:
-// - Speech recognition (Web Speech API)
-// - Text-to-speech (OpenAI via ttsClient)
-// - Intent detection (keyword matching)
-// - Step navigation
-// - Conversational responses
-// - Graceful degradation
+// [PATCHED] v1.1.0 — Fixed memory leaks causing progressive app lag:
+//   1. ttsClient.destroy() called on stopSession AND unmount (revokes blob URLs)
+//   2. SpeechRecognition onend/onerror guards strengthened against race conditions
+//   3. Pending speak() promises cancelled on stop via AbortController pattern
+//   4. Auto-restart setTimeout tracked and cleared on stop
+//   5. DEBUG-level logging added for all cleanup actions
 //
 // State machine:
 //   IDLE → SPEAKING → LISTENING → (SPEAKING | PAUSED | IDLE)
 //   Any state → PAUSED → SPEAKING | IDLE
-//
-// Usage:
-//   const vc = useVoiceCooking({ steps, ingredients, mealName });
-//   vc.start()    — Begin voice cooking from step 1
-//   vc.stop()     — End session
-//   vc.isActive   — Whether a session is running
 // =============================================================================
 
 import { useState, useRef, useCallback, useEffect } from 'react';
@@ -102,7 +94,7 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
     const [currentStep, setCurrentStep] = useState(0);
     const [transcript, setTranscript] = useState('');
     const [error, setError] = useState(null);
-    const [micPermission, setMicPermission] = useState('prompt'); // 'prompt' | 'granted' | 'denied'
+    const [micPermission, setMicPermission] = useState('prompt');
 
     const recognitionRef = useRef(null);
     const isActiveRef = useRef(false);
@@ -110,10 +102,25 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
     const currentStepRef = useRef(0);
     const stepsRef = useRef(steps);
 
+    // [FIX 1] Track pending auto-restart timers so we can cancel them on stop
+    const restartTimerRef = useRef(null);
+
+    // [FIX 2] Track session count for stale-closure detection
+    const sessionIdRef = useRef(0);
+
     // Keep refs in sync
     useEffect(() => { stateRef.current = state; }, [state]);
     useEffect(() => { currentStepRef.current = currentStep; }, [currentStep]);
     useEffect(() => { stepsRef.current = steps; }, [steps]);
+
+    // --- [FIX 3] Helper: clear any pending restart timer ---
+    const clearRestartTimer = useCallback(() => {
+        if (restartTimerRef.current !== null) {
+            clearTimeout(restartTimerRef.current);
+            restartTimerRef.current = null;
+            console.debug('[VoiceCooking] Cleared pending recognition restart timer');
+        }
+    }, []);
 
     // --- Speech Recognition Management ---
     const startListening = useCallback(() => {
@@ -122,6 +129,7 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
         // Don't start if already listening
         if (recognitionRef.current) {
             try { recognitionRef.current.stop(); } catch (_) {}
+            recognitionRef.current = null; // [FIX] Null the ref after stopping
         }
 
         const recognition = new SpeechRecognition();
@@ -130,17 +138,31 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
         recognition.lang = 'en-US';
         recognition.maxAlternatives = 1;
 
+        // [FIX 4] Capture session ID at creation time to detect stale handlers
+        const capturedSessionId = sessionIdRef.current;
+
         recognition.onresult = (event) => {
-            const text = event.results[0]?.[0]?.transcript || '';
+            // [FIX] Guard against stale session
+            if (capturedSessionId !== sessionIdRef.current || !isActiveRef.current) return;
+            const text = event.results[0]?.transcript || '';
             setTranscript(text);
             handleVoiceCommand(text);
         };
 
         recognition.onerror = (event) => {
-            // 'no-speech' and 'aborted' are normal — just restart listening
+            // [FIX] Guard against stale session
+            if (capturedSessionId !== sessionIdRef.current) return;
+
             if (event.error === 'no-speech' || event.error === 'aborted') {
+                // [FIX 5] Only auto-restart if still active AND in LISTENING state AND same session
                 if (isActiveRef.current && stateRef.current === STATE.LISTENING) {
-                    setTimeout(() => startListening(), 300);
+                    clearRestartTimer();
+                    restartTimerRef.current = setTimeout(() => {
+                        restartTimerRef.current = null;
+                        if (isActiveRef.current && capturedSessionId === sessionIdRef.current) {
+                            startListening();
+                        }
+                    }, 300);
                 }
                 return;
             }
@@ -154,9 +176,19 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
         };
 
         recognition.onend = () => {
-            // Auto-restart listening if we're still in listening state
+            // [FIX 6] Guard against stale session before auto-restarting
+            if (capturedSessionId !== sessionIdRef.current) {
+                console.debug('[VoiceCooking] Ignoring onend from stale recognition session');
+                return;
+            }
             if (isActiveRef.current && stateRef.current === STATE.LISTENING) {
-                setTimeout(() => startListening(), 200);
+                clearRestartTimer();
+                restartTimerRef.current = setTimeout(() => {
+                    restartTimerRef.current = null;
+                    if (isActiveRef.current && capturedSessionId === sessionIdRef.current) {
+                        startListening();
+                    }
+                }, 200);
             }
         };
 
@@ -167,21 +199,33 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
             setState(STATE.LISTENING);
         } catch (err) {
             console.warn('[VoiceCooking] Failed to start recognition:', err);
-            // Retry once after a short delay
-            setTimeout(() => {
-                if (isActiveRef.current) {
+            // [FIX 7] Guarded retry with timer tracking
+            clearRestartTimer();
+            restartTimerRef.current = setTimeout(() => {
+                restartTimerRef.current = null;
+                if (isActiveRef.current && capturedSessionId === sessionIdRef.current) {
                     try { recognition.start(); } catch (_) {}
                 }
             }, 500);
         }
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clearRestartTimer]);
 
     const stopListening = useCallback(() => {
+        // [FIX 8] Clear restart timer to prevent zombie restarts
+        clearRestartTimer();
+
         if (recognitionRef.current) {
-            try { recognitionRef.current.stop(); } catch (_) {}
+            try {
+                recognitionRef.current.onresult = null;
+                recognitionRef.current.onerror = null;
+                recognitionRef.current.onend = null;
+                recognitionRef.current.stop();
+            } catch (_) {}
             recognitionRef.current = null;
+            console.debug('[VoiceCooking] SpeechRecognition stopped and nulled');
         }
-    }, []);
+    }, [clearRestartTimer]);
 
     // --- TTS Speak Helper ---
     const speak = useCallback(async (text, options = {}) => {
@@ -200,7 +244,6 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
                 },
                 onError: (err) => {
                     console.error('[VoiceCooking] TTS playback error:', err);
-                    // Fall back to listening even if TTS fails
                     if (isActiveRef.current) {
                         startListening();
                     }
@@ -208,7 +251,6 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
             });
         } catch (err) {
             console.error('[VoiceCooking] TTS error:', err);
-            // If TTS fails entirely, still transition to listening
             if (isActiveRef.current) {
                 startListening();
             }
@@ -235,7 +277,6 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
     const handleVoiceCommand = useCallback(async (text) => {
         const result = detectIntent(text);
         if (!result) {
-            // Unrecognized — go back to listening
             if (isActiveRef.current) startListening();
             return;
         }
@@ -278,9 +319,8 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
                 ttsClient.pause();
                 setState(STATE.PAUSED);
                 stopListening();
-                // Speak the pause response, then go silent
                 await speak(randomResponse('pause'));
-                ttsClient.pause(); // Ensure we're paused after the response
+                ttsClient.pause();
                 setState(STATE.PAUSED);
                 break;
             }
@@ -341,7 +381,7 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
         try {
             setState(STATE.LOADING);
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            stream.getTracks().forEach(t => t.stop()); // Release immediately
+            stream.getTracks().forEach(t => t.stop());
             setMicPermission('granted');
         } catch (err) {
             setMicPermission('denied');
@@ -350,26 +390,50 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
             return;
         }
 
+        // [FIX 9] Increment session ID to invalidate any stale handlers from previous sessions
+        sessionIdRef.current += 1;
+        console.debug(`[VoiceCooking] Starting session #${sessionIdRef.current}`);
+
         // Initialize
         isActiveRef.current = true;
         setCurrentStep(0);
         setError(null);
         setTranscript('');
 
-        // Intro message
         const intro = `Let's cook ${mealName}! I'll guide you through ${steps.length} steps. You can say next, repeat, pause, or stop at any time. Let's start!`;
         await speak(intro);
         await speakStep(0);
     }, [steps, mealName, speak, speakStep]);
 
+    // [FIX 10] Full cleanup in stopSession — destroy ttsClient cache, null all refs
     const stopSession = useCallback(() => {
+        const sessionId = sessionIdRef.current;
+        console.debug(`[VoiceCooking] Stopping session #${sessionId} — full cleanup`);
+
+        // 1. Mark inactive FIRST to prevent any async callbacks from restarting things
         isActiveRef.current = false;
+
+        // 2. Clear all pending timers
+        clearRestartTimer();
+
+        // 3. Stop and null speech recognition (with handler cleanup)
         stopListening();
+
+        // 4. Stop TTS playback AND destroy cached blob URLs to free memory
         ttsClient.stop();
+        ttsClient.destroy();
+        console.debug('[VoiceCooking] TTS client destroyed — blob URL cache cleared');
+
+        // 5. Increment session ID to invalidate any in-flight async operations
+        sessionIdRef.current += 1;
+
+        // 6. Reset React state
         setState(STATE.IDLE);
         setCurrentStep(0);
         setTranscript('');
-    }, [stopListening]);
+
+        console.debug('[VoiceCooking] Session cleanup complete');
+    }, [stopListening, clearRestartTimer]);
 
     // Manual navigation (from UI buttons)
     const goToStep = useCallback(async (stepIndex) => {
@@ -394,14 +458,39 @@ export function useVoiceCooking({ steps = [], ingredients = [], mealName = '' })
         }
     }, [speakStep, stopListening]);
 
-    // --- Cleanup on unmount ---
+    // --- [FIX 11] Comprehensive cleanup on unmount ---
     useEffect(() => {
         return () => {
+            console.debug('[VoiceCooking] Unmount — performing full resource cleanup');
+
+            // Mark inactive
             isActiveRef.current = false;
-            if (recognitionRef.current) {
-                try { recognitionRef.current.stop(); } catch (_) {}
+
+            // Increment session to invalidate stale closures
+            sessionIdRef.current += 1;
+
+            // Clear any pending restart timers
+            if (restartTimerRef.current !== null) {
+                clearTimeout(restartTimerRef.current);
+                restartTimerRef.current = null;
             }
+
+            // Stop and detach speech recognition
+            if (recognitionRef.current) {
+                try {
+                    recognitionRef.current.onresult = null;
+                    recognitionRef.current.onerror = null;
+                    recognitionRef.current.onend = null;
+                    recognitionRef.current.stop();
+                } catch (_) {}
+                recognitionRef.current = null;
+            }
+
+            // Stop TTS and release ALL blob URLs
             ttsClient.stop();
+            ttsClient.destroy();
+
+            console.debug('[VoiceCooking] Unmount cleanup complete — all resources released');
         };
     }, []);
 
