@@ -22,5 +22,6 @@
   {
   "routes": [
     { "src": "/api/voice/tts", "dest": "/api/voice/tts.js" }
+    }
   ]
 }
