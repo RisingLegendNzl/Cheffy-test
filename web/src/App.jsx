@@ -389,6 +389,9 @@ handleDownloadMatchTraceReport={logic.handleDownloadMatchTraceReport || (() => {
 matchTraces={logic.matchTraces || []}
 showMatchTraceLogs={logic.showMatchTraceLogs ?? false}
 setShowMatchTraceLogs={logic.setShowMatchTraceLogs || (() => {})}
+// ADDED: Pass the new Product Match Trace state
+showProductMatchTrace={logic.showProductMatchTrace || false}
+setShowProductMatchTrace={logic.setShowProductMatchTrace || (() => {})}
                     handleDownloadLogs={logic.handleDownloadLogs}
                     onToggleMealEaten={logic.onToggleMealEaten}
                     handleRefresh={logic.handleRefresh}
