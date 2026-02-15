@@ -3,10 +3,10 @@
 // Replaces FailedIngredientLogViewer with a comprehensive Product Match Trace viewer.
 // Shows per-ingredient trace data: queries, raw results, scoring, selection, rejections.
 //
-// Version: 1.0.0
+// Version: 1.0.1 - Fixed toggle visibility control
 
-import React, { useState, useMemo, useCallback } from 'react';
-import { Search, Download, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertTriangle, Filter } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Search, Download, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 
 // ============================================================================
 // FILTER OPTIONS
@@ -101,73 +101,66 @@ const TraceItem = ({ trace }) => {
                     {/* Validation Rules */}
                     <div>
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Validation Rules</p>
-                        <div className="text-[11px] font-mono space-y-0.5">
-                            <div><span className="text-gray-500">required:</span> <span className="text-cyan-300">[{trace.validationRules.requiredWords.join(', ')}]</span></div>
-                            <div><span className="text-gray-500">negative:</span> <span className="text-red-300">[{trace.validationRules.negativeKeywords.join(', ')}]</span></div>
-                            <div><span className="text-gray-500">categories:</span> <span className="text-purple-300">[{trace.validationRules.allowedCategories.join(', ')}]</span></div>
+                        <div className="text-[10px] font-mono space-y-0.5">
+                            <div><span className="text-purple-400">Required:</span> <span className="text-gray-300">[{trace.validationRules.requiredWords.join(', ') || 'none'}]</span></div>
+                            <div><span className="text-red-400">Negative:</span> <span className="text-gray-300">[{trace.validationRules.negativeKeywords.join(', ') || 'none'}]</span></div>
+                            <div><span className="text-green-400">Categories:</span> <span className="text-gray-300">[{trace.validationRules.allowedCategories.join(', ') || 'any'}]</span></div>
                         </div>
                     </div>
 
-                    {/* Query Attempts */}
-                    {trace.attempts.map((attempt, idx) => (
-                        <div key={idx} className="border border-gray-700/30 rounded p-2">
-                            <div className="flex items-center gap-2 mb-1.5">
-                                <span className="text-[10px] font-bold text-gray-300 uppercase">{attempt.queryType}</span>
-                                <AttemptBadge status={attempt.status} />
-                                <span className="text-[10px] text-gray-500 font-mono">
-                                    raw:{attempt.rawCount} pass:{attempt.passCount} best:{attempt.bestScore}
-                                </span>
-                            </div>
-                            <p className="text-[11px] font-mono text-gray-400 mb-1.5">
-                                Query: <span className="text-white">"{attempt.queryString}"</span>
-                            </p>
-
-                            {/* Raw results */}
-                            {attempt.rawResults.length > 0 && (
-                                <div className="mb-1">
-                                    <p className="text-[9px] text-gray-500 uppercase">API Results ({attempt.rawCount} total, showing {attempt.rawResults.length})</p>
-                                    {attempt.rawResults.map((raw, i) => (
-                                        <div key={i} className="text-[10px] font-mono text-gray-400 pl-2 border-l border-gray-700 ml-1 mt-0.5">
-                                            {i + 1}. "{raw.name}" <span className="text-gray-600">${raw.price || '?'} {raw.size || ''}</span>
+                    {/* Attempts */}
+                    {trace.attempts && trace.attempts.length > 0 && (
+                        <div>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Attempts</p>
+                            {trace.attempts.map((attempt, idx) => (
+                                <div key={idx} className="bg-gray-800/60 rounded p-2 mb-1.5 text-[10px] font-mono">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <span className="text-gray-300">
+                                            {attempt.queryType.toUpperCase()}: <span className="text-blue-300">"{attempt.queryString}"</span>
+                                        </span>
+                                        <AttemptBadge status={attempt.status} />
+                                    </div>
+                                    <div className="flex gap-3 text-gray-400">
+                                        <span>Raw: {attempt.rawCount}</span>
+                                        <span>Passed: {attempt.passCount}</span>
+                                        <span>Best: {attempt.bestScore.toFixed(3)}</span>
+                                        {attempt.postFilterCount !== undefined && <span>Filtered: {attempt.postFilterCount}</span>}
+                                    </div>
+                                    {attempt.scoredResults && attempt.scoredResults.length > 0 && (
+                                        <div className="mt-1.5 space-y-0.5">
+                                            <p className="text-gray-500 text-[9px]">Top Scored:</p>
+                                            {attempt.scoredResults.slice(0, 3).map((scored, i) => (
+                                                <div key={i} className="text-gray-300 text-[9px] flex items-center gap-2">
+                                                    <span className="text-yellow-400">★</span>
+                                                    <span className="flex-1 truncate">{scored.name}</span>
+                                                    <span className="text-green-400">{scored.score.toFixed(3)}</span>
+                                                </div>
+                                            ))}
                                         </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {/* Scored results */}
-                            {attempt.scoredResults.length > 0 && (
-                                <div className="mb-1">
-                                    <p className="text-[9px] text-green-500 uppercase">Passed Scoring</p>
-                                    {attempt.scoredResults.map((scored, i) => (
-                                        <div key={i} className="flex items-center gap-2 text-[10px] font-mono text-green-300 pl-2 border-l border-green-700/50 ml-1 mt-0.5">
-                                            <span className="truncate flex-1">★ "{scored.name}"</span>
-                                            <ScoreBar score={scored.score} />
-                                            <span className="text-gray-500">${scored.price || '?'}</span>
+                                    )}
+                                    {attempt.rejections && attempt.rejections.length > 0 && (
+                                        <div className="mt-1.5 space-y-0.5">
+                                            <p className="text-gray-500 text-[9px]">Rejections ({attempt.rejections.length}):</p>
+                                            {attempt.rejections.slice(0, 2).map((rej, i) => (
+                                                <div key={i} className="text-red-300 text-[9px] flex items-center gap-2">
+                                                    <span>✗</span>
+                                                    <span className="flex-1 truncate">{rej.name}</span>
+                                                    <span className="text-gray-500">{rej.reason}</span>
+                                                </div>
+                                            ))}
                                         </div>
-                                    ))}
+                                    )}
                                 </div>
-                            )}
-
-                            {/* Rejections */}
-                            {attempt.rejections.length > 0 && (
-                                <div>
-                                    <p className="text-[9px] text-red-500 uppercase">Rejections</p>
-                                    {attempt.rejections.map((rej, i) => (
-                                        <div key={i} className="text-[10px] font-mono text-red-300/70 pl-2 border-l border-red-700/30 ml-1 mt-0.5">
-                                            ✗ "{rej.name}" → <span className="text-red-400">{rej.reason}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
+                            ))}
                         </div>
-                    ))}
+                    )}
 
-                    {/* Final Selection */}
+                    {/* Selection */}
                     {trace.selection && (
                         <div className="bg-green-900/30 border border-green-700/40 rounded p-2">
-                            <p className="text-[10px] font-bold text-green-400 uppercase">Selected Product</p>
-                            <p className="text-[11px] font-mono text-white">{trace.selection.productName}</p>
-                            <div className="text-[10px] text-gray-400 font-mono mt-0.5">
+                            <p className="text-[10px] font-bold text-green-400 uppercase mb-1">Selected Product</p>
+                            <div className="text-[11px] font-mono text-green-200">
+                                <strong>{trace.selection.productName}</strong> | 
                                 ${trace.selection.price || '?'} | {trace.selection.size || '?'} | 
                                 score: {trace.selection.score != null ? trace.selection.score.toFixed(3) : 'N/A'} | 
                                 via: {trace.selection.viaQueryType} ({trace.selection.source})
@@ -203,6 +196,9 @@ const ProductMatchLogViewer = ({ matchTraces = [], onDownload }) => {
     const [filter, setFilter] = useState('all');
     const [searchText, setSearchText] = useState('');
 
+    // Early return if no traces - component should not render at all
+    if (!matchTraces || matchTraces.length === 0) return null;
+
     const filteredTraces = useMemo(() => {
         let result = matchTraces;
         if (filter !== 'all') {
@@ -224,8 +220,6 @@ const ProductMatchLogViewer = ({ matchTraces = [], onDownload }) => {
         failed: matchTraces.filter(t => t.outcome === 'failed').length,
         error: matchTraces.filter(t => t.outcome === 'error').length,
     }), [matchTraces]);
-
-    if (!matchTraces || matchTraces.length === 0) return null;
 
     return (
         <div className="w-full bg-gray-900/95 text-gray-100 font-mono text-xs shadow-inner border-t-2 border-indigo-700">
