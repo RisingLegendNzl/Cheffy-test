@@ -132,6 +132,10 @@ const useAppLogic = ({
     const [showMatchTraceLogs, setShowMatchTraceLogs] = useState(
       () => JSON.parse(localStorage.getItem('cheffy_show_match_trace_logs') ?? 'true')
     );
+
+    // [FIX] Ref for SSE closure to read current toggle value
+    const showMatchTraceLogsRef = useRef(showMatchTraceLogs);
+    useEffect(() => { showMatchTraceLogsRef.current = showMatchTraceLogs; }, [showMatchTraceLogs]);
     
     const [generationStepKey, setGenerationStepKey] = useState(null);
     const [generationStatus, setGenerationStatus] = useState("Ready to generate plan."); 
@@ -301,6 +305,11 @@ const useAppLogic = ({
     // UPDATED: Persist showMatchTraceLogs instead of showFailedIngredientsLogs
     useEffect(() => {
       localStorage.setItem('cheffy_show_match_trace_logs', JSON.stringify(showMatchTraceLogs));
+      // [FIX] Clear accumulated traces when user disables the toggle
+      if (!showMatchTraceLogs) {
+        setMatchTraces([]);
+        console.debug('[SETTINGS] Match trace logging disabled — cleared accumulated traces');
+      }
     }, [showMatchTraceLogs]);
     
     // Macro Debug Log Persistence
@@ -778,7 +787,7 @@ const useAppLogic = ({
                                 
                             // UPDATED: Handle new match_trace event
                             case 'ingredient:match_trace':
-                                if (eventData.trace) {
+                                if (eventData.trace && showMatchTraceLogsRef.current) {
                                     setMatchTraces(prev => [...prev, eventData.trace]);
                                 }
                                 break;
@@ -916,8 +925,8 @@ const useAppLogic = ({
                                 mealPlan: recovered.mealPlan || [],
                                 results: recovered.results || {},
                                 uniqueIngredients: recovered.uniqueIngredients || [],
-                                formData: formData,
-                                nutritionalTargets: nutritionalTargets
+                                        formData: formData,
+                                        nutritionalTargets: nutritionalTargets
                             });
                             clearRunState();
                             return;
