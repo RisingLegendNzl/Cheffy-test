@@ -122,6 +122,10 @@ const MainApp = ({
     setShowMacroDebugLog = () => {},
     handleDownloadMacroDebugLogs = () => {},
     
+    // ADDED: Product Match Trace Props (Fix)
+    showProductMatchTrace = false,
+    setShowProductMatchTrace = () => {},
+    
     // Generation State
     generationStepKey,
     generationStatus,
@@ -494,8 +498,20 @@ const handleEditProfileClean = useCallback(() => {
                 onEditProfile={handleEditProfileClean}
                 showOrchestratorLogs={showOrchestratorLogs}
                 onToggleOrchestratorLogs={setShowOrchestratorLogs}
-                setShowMatchTraceLogs={setShowMatchTraceLogs}
-                onToggleFailedIngredientsLogs={setShowMatchTraceLogs}
+                
+                // MAPPING FIX: Map new state to potentially legacy props for safety
+                // We pass BOTH the legacy naming conventions and the new naming conventions
+                // to ensure SettingsPanel works regardless of its internal state.
+                
+                // Legacy Props (if SettingsPanel uses them)
+                setShowMatchTraceLogs={setShowProductMatchTrace}
+                onToggleFailedIngredientsLogs={setShowProductMatchTrace}
+                showMatchTraceLogs={showProductMatchTrace}
+                
+                // New Props (Standardized)
+                showProductMatchTrace={showProductMatchTrace}
+                onToggleProductMatchTrace={setShowProductMatchTrace}
+                
                 showMacroDebugLog={showMacroDebugLog}
                 onToggleMacroDebugLog={setShowMacroDebugLog}
                 selectedModel={selectedModel}
@@ -590,17 +606,18 @@ const handleEditProfileClean = useCallback(() => {
                 {showOrchestratorLogs && (
                     <DiagnosticLogViewer logs={diagnosticLogs} height={logHeight} setHeight={setLogHeight} isOpen={isLogOpen} setIsOpen={setIsLogOpen} onDownloadLogs={handleDownloadLogs} />
                 )}
-                {showMatchTraceLogs && (
-    <ProductMatchLogViewer 
-        matchTraces={matchTraces} 
-        onDownload={handleDownloadMatchTraceReport} 
-    />
-)}
+                {/* UPDATED: Condition now uses showProductMatchTrace */}
+                {showProductMatchTrace && (
+                    <ProductMatchLogViewer 
+                        matchTraces={matchTraces} 
+                        onDownload={handleDownloadMatchTraceReport} 
+                    />
+                )}
                 {showMacroDebugLog && (
                     <MacroDebugLogViewer macroDebug={macroDebug} onDownload={handleDownloadMacroDebugLogs} />
                 )}
-                {/* Fixed condition below: changed !ShowMatchTraceLogs to !showMatchTraceLogs */}
-                {!showOrchestratorLogs && !showMatchTraceLogs && !showMacroDebugLog && (
+                {/* Updated condition to include showProductMatchTrace */}
+                {!showOrchestratorLogs && !showProductMatchTrace && !showMacroDebugLog && (
     <div 
         className="p-2 text-xs text-center cursor-pointer"
         style={{
