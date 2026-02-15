@@ -130,8 +130,8 @@ const useAppLogic = ({
     
     // REPLACED: showFailedIngredientsLogs -> showMatchTraceLogs
     const [showMatchTraceLogs, setShowMatchTraceLogs] = useState(
-      () => JSON.parse(localStorage.getItem('cheffy_show_match_trace_logs') ?? 'true')
-    );
+  () => JSON.parse(localStorage.getItem('cheffy_show_match_trace_logs') ?? 'false')
+);
 
     // [FIX] Ref for SSE closure to read current toggle value
     const showMatchTraceLogsRef = useRef(showMatchTraceLogs);
@@ -473,7 +473,8 @@ const useAppLogic = ({
                 setShowOrchestratorLogs(data.showOrchestratorLogs ?? true);
                 
                 // UPDATED: Load showMatchTraceLogs, fallback to old key if missing
-                setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs ?? true);
+                // UPDATED: Load showMatchTraceLogs, fallback to old key if missing, default to FALSE
+setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs ?? false);
                 
                 setShowMacroDebugLog(data.showMacroDebugLog ?? false);
                 if (data.selectedModel) setSelectedModel(data.selectedModel);
