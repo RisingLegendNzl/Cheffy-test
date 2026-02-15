@@ -29,6 +29,7 @@ import React, { useEffect, useRef } from 'react';
 import { X, ListChecks, ListOrdered } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import VoiceCookingButton from './VoiceCookingButton';
+
 const MODAL_Z = 9999; // Above everything in the app
 
 const RecipeModal = ({ meal, onClose }) => {
@@ -272,14 +273,12 @@ const RecipeModal = ({ meal, onClose }) => {
                             </p>
                         </div>
                     )}
-                    
-                    
-                    /* ADD THIS BLOCK: Voice Cooking Button */}
-{meal.instructions && meal.instructions.length > 0 && (
-    <div style={{ marginBottom: '1.5rem' }}>
-        <VoiceCookingButton meal={meal} />
-    </div>
-)}
+
+                    {meal.instructions && meal.instructions.length > 0 && (
+                        <div style={{ marginBottom: '1.5rem' }}>
+                            <VoiceCookingButton meal={meal} />
+                        </div>
+                    )}
 
                     {/* Ingredients */}
                     {meal.items && meal.items.length > 0 && (
@@ -339,7 +338,7 @@ const RecipeModal = ({ meal, onClose }) => {
                                                         : 'transparent',
                                                 borderBottom: `1px solid ${t.ingredientBorder}`,
                                                 display: 'flex',
-                                                alignItems: 'center',
+                                                alignItems: 'baseline',
                                                 gap: '0.5rem',
                                             }}
                                         >
@@ -348,8 +347,8 @@ const RecipeModal = ({ meal, onClose }) => {
                                                     style={{
                                                         fontWeight: 600,
                                                         color: t.ingredientQty,
-                                                        fontSize: '0.875rem',
-                                                        minWidth: '60px',
+                                                        fontSize: '0.9rem',
+                                                        whiteSpace: 'nowrap',
                                                     }}
                                                 >
                                                     {qty}
@@ -359,7 +358,6 @@ const RecipeModal = ({ meal, onClose }) => {
                                                 style={{
                                                     color: t.ingredientText,
                                                     fontSize: '0.95rem',
-                                                    lineHeight: 1.4,
                                                 }}
                                             >
                                                 {name}
