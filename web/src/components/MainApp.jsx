@@ -599,7 +599,8 @@ const handleEditProfileClean = useCallback(() => {
                 {showMacroDebugLog && (
                     <MacroDebugLogViewer macroDebug={macroDebug} onDownload={handleDownloadMacroDebugLogs} />
                 )}
-                {!showOrchestratorLogs && !ShowMatchTraceLogs && !showMacroDebugLog && (
+                {/* Fixed condition below: changed !ShowMatchTraceLogs to !showMatchTraceLogs */}
+                {!showOrchestratorLogs && !showMatchTraceLogs && !showMacroDebugLog && (
                     <div 
                         className="p-2 text-xs text-center cursor-pointer"
                         style={{
@@ -624,3 +625,4 @@ const handleEditProfileClean = useCallback(() => {
 };
 
 export default MainApp;
+
