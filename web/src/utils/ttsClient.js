@@ -1,10 +1,14 @@
 // web/src/utils/ttsClient.js
 // =============================================================================
 // Voice Cooking — TTS Client
+// [PATCHED] v1.1.0 — Fixed memory leak from unbounded blob URL cache:
+//   1. Added MAX_CACHE_SIZE to prevent unbounded growth
+//   2. destroy() now also cancels in-flight fetches
+//   3. Added isDestroyed guard to prevent use-after-destroy
+//   4. DEBUG logging for cache eviction and cleanup
 //
 // Fetches audio from /api/voice/tts and manages playback via HTMLAudioElement.
 // Supports: play, pause, resume, stop, interrupt (play new while current plays).
-//
 // Uses HTMLAudioElement + Blob URLs for simplicity and broad compatibility.
 // Pre-fetches next step audio for seamless transitions.
 // =============================================================================
@@ -12,6 +16,9 @@
 const TTS_ENDPOINT = '/api/voice/tts';
 const DEFAULT_VOICE = 'nova';
 const DEFAULT_SPEED = 1.0;
+
+// [FIX] Cap cache to prevent unbounded blob URL accumulation across sessions
+const MAX_CACHE_SIZE = 30;
 
 class TTSClient {
     constructor() {
@@ -29,6 +36,8 @@ class TTSClient {
         this._onErrorCallback = null;
         /** @type {boolean} */
         this._isPlaying = false;
+        /** @type {boolean} [FIX] Track destroyed state */
+        this._isDestroyed = false;
     }
 
     /**
@@ -43,6 +52,12 @@ class TTSClient {
      * @returns {Promise<string>} Blob URL for the audio
      */
     async synthesize(text, options = {}) {
+        // [FIX] Auto-recover from destroyed state (new session started)
+        if (this._isDestroyed) {
+            this._isDestroyed = false;
+            console.debug('[TTSClient] Recovered from destroyed state for new session');
+        }
+
         const cacheKey = options.cacheKey || text;
 
         // Return cached if available
@@ -76,7 +91,17 @@ class TTSClient {
             const blob = await response.blob();
             const blobUrl = URL.createObjectURL(blob);
 
-            // Cache it
+            // [FIX] Evict oldest entries if cache exceeds limit
+            if (this._cache.size >= MAX_CACHE_SIZE) {
+                const oldestKey = this._cache.keys().next().value;
+                const oldestUrl = this._cache.get(oldestKey);
+                if (oldestUrl) {
+                    URL.revokeObjectURL(oldestUrl);
+                    console.debug(`[TTSClient] Cache eviction: revoked blob for "${oldestKey}" (cache size: ${this._cache.size})`);
+                }
+                this._cache.delete(oldestKey);
+            }
+
             this._cache.set(cacheKey, blobUrl);
 
             return blobUrl;
@@ -96,6 +121,8 @@ class TTSClient {
      * Useful for pre-loading the next step.
      */
     prefetch(text, options = {}) {
+        // [FIX] Don't prefetch if destroyed
+        if (this._isDestroyed) return;
         this.synthesize(text, options).catch(() => {
             // Silent failure for prefetch — not critical
         });
@@ -137,7 +164,6 @@ class TTSClient {
             await this._audio.play();
             this._isPlaying = true;
         } catch (err) {
-            // Autoplay blocked — common on mobile
             this._isPlaying = false;
             if (this._onErrorCallback) {
                 this._onErrorCallback(err);
@@ -170,7 +196,8 @@ class TTSClient {
     }
 
     /**
-     * Stop playback and release resources.
+     * Stop playback and release the current audio element.
+     * Does NOT clear the cache (use destroy() for full cleanup).
      */
     stop() {
         this._stopAudio();
@@ -179,11 +206,6 @@ class TTSClient {
 
     /**
      * Interrupt current playback with new text.
-     * Used for conversational responses ("No problem, I'll wait.").
-     *
-     * @param {string} text
-     * @param {object} [options]
-     * @returns {Promise<void>}
      */
     async interrupt(text, options = {}) {
         return this.play(text, options);
@@ -197,22 +219,40 @@ class TTSClient {
     }
 
     /**
-     * Clean up all resources. Call on unmount.
+     * Clean up ALL resources. Call on session end and unmount.
+     * [FIX] Also cancels in-flight fetches and marks as destroyed.
      */
     destroy() {
+        // 1. Stop any playing audio
         this._stopAudio();
 
-        // Revoke all cached blob URLs
+        // 2. Cancel any in-flight fetch
+        if (this._fetchController) {
+            this._fetchController.abort();
+            this._fetchController = null;
+            console.debug('[TTSClient] Cancelled in-flight TTS fetch');
+        }
+
+        // 3. Revoke ALL cached blob URLs to free memory
+        const cacheSize = this._cache.size;
         for (const url of this._cache.values()) {
             URL.revokeObjectURL(url);
         }
         this._cache.clear();
+
+        // 4. Mark as destroyed
+        this._isDestroyed = true;
+
+        if (cacheSize > 0) {
+            console.debug(`[TTSClient] destroy(): revoked ${cacheSize} cached blob URLs`);
+        }
     }
 
     // --- Private ---
 
     _stopAudio() {
         if (this._audio) {
+            // [FIX] Remove listeners BEFORE pausing to prevent stale callbacks
             this._audio.removeEventListener('ended', this._handleEnded);
             this._audio.removeEventListener('error', this._handleError);
             this._audio.pause();
@@ -220,9 +260,10 @@ class TTSClient {
             this._audio = null;
         }
         if (this._currentBlobUrl) {
-            // Don't revoke — it's in the cache for reuse
             this._currentBlobUrl = null;
         }
+        this._onEndCallback = null;
+        this._onErrorCallback = null;
         this._isPlaying = false;
     }
 
