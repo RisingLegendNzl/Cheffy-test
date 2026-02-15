@@ -1,8 +1,8 @@
 // web/src/components/SettingsPanel.jsx
-// [V4.0] Renamed "Failed Ingredients" log toggle → "Product Match Trace"
-// to reflect its actual purpose (tracking search queries + selected products).
-// Props updated: showMatchTraceLogs / onToggleMatchTraceLogs.
-// Icon changed from ListX to Search.
+// [V3.1] Added Product Match Trace toggle following exact pattern of Macro Debug Log
+// Updated AI model selector with usage descriptions and correct model IDs.
+// Removed "System" option from Appearance (#5).
+// "Default Store" was already removed in a prior update.
 import React from 'react';
 import {
   X,
@@ -13,11 +13,12 @@ import {
   Eye,
   EyeOff,
   Terminal,
-  Search,
+  ListX,
   Target,
   Cpu,
   Palette,
   Ruler,
+  Search,  // NEW: For Product Match Trace icon
 } from 'lucide-react';
 import { COLORS, Z_INDEX } from '../constants';
 import { useTheme } from '../contexts/ThemeContext';
@@ -64,10 +65,12 @@ const SettingsPanel = ({
   // Logs
   showOrchestratorLogs = true,
   onToggleOrchestratorLogs,
-  showMatchTraceLogs = true,
-  onToggleMatchTraceLogs,
+  showFailedIngredientsLogs = true,
+  onToggleFailedIngredientsLogs,
   showMacroDebugLog = false,
   onToggleMacroDebugLog = () => {},
+  showProductMatchTrace = false,  // NEW: Product Match Trace toggle
+  onToggleProductMatchTrace = () => {},  // NEW: Product Match Trace handler
   // AI Model
   selectedModel = 'gpt-5.1',
   onModelChange = () => {},
@@ -183,7 +186,7 @@ const SettingsPanel = ({
             </select>
           </div>
 
-          {/* ─── AI Model Section (V3.0: card-style selector with descriptions) ─── */}
+          {/* ─── AI Model Section ─── */}
           <div>
             <div className="flex items-center mb-4">
               <Cpu size={20} className="mr-2" style={{ color: COLORS.primary[600] }} />
@@ -202,7 +205,7 @@ const SettingsPanel = ({
                     className="w-full text-left p-3 rounded-lg transition-all"
                     style={{
                       backgroundColor: isActive
-                        ? isDark ? 'rgba(99,102,241,0.15)' : COLORS.primary[50]
+                        ? isDark ? 'rgba(99,102,241,0.2)' : COLORS.primary[50]
                         : isDark ? '#1e2130' : COLORS.gray[50],
                       border: isActive
                         ? `2px solid ${COLORS.primary[500]}`
@@ -215,21 +218,21 @@ const SettingsPanel = ({
                         style={{
                           color: isActive
                             ? COLORS.primary[600]
-                            : isDark ? '#d1d5db' : COLORS.gray[800],
+                            : isDark ? '#f0f1f5' : COLORS.gray[900],
                         }}
                       >
                         {model.label}
                       </span>
                       {model.badge && (
                         <span
-                          className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide"
+                          className="text-xs font-semibold px-2 py-0.5 rounded-full"
                           style={{
                             backgroundColor: isActive
                               ? isDark ? 'rgba(99,102,241,0.25)' : COLORS.primary[100]
-                              : isDark ? 'rgba(99,102,241,0.1)' : COLORS.gray[100],
+                              : isDark ? '#2d3148' : COLORS.gray[200],
                             color: isActive
                               ? COLORS.primary[600]
-                              : isDark ? '#9ca3b0' : COLORS.gray[500],
+                              : isDark ? '#9ca3b0' : COLORS.gray[600],
                           }}
                         >
                           {model.badge}
@@ -239,8 +242,7 @@ const SettingsPanel = ({
                     <p
                       className="text-xs"
                       style={{
-                        color: isDark
-                          ? '#9ca3b0' : COLORS.gray[500],
+                        color: isDark ? '#9ca3b0' : COLORS.gray[500],
                       }}
                     >
                       {model.description}
@@ -268,16 +270,22 @@ const SettingsPanel = ({
                 toggle: onToggleOrchestratorLogs,
               },
               {
-                label: 'Product Match Trace',
-                icon: <Search size={14} />,
-                value: showMatchTraceLogs,
-                toggle: onToggleMatchTraceLogs,
+                label: 'Failed Ingredients',
+                icon: <ListX size={14} />,
+                value: showFailedIngredientsLogs,
+                toggle: onToggleFailedIngredientsLogs,
               },
               {
                 label: 'Macro Debug Log',
                 icon: <Target size={14} />,
                 value: showMacroDebugLog,
                 toggle: onToggleMacroDebugLog,
+              },
+              {
+                label: 'Product Match Trace',  // NEW: Product Match Trace toggle
+                icon: <Search size={14} />,
+                value: showProductMatchTrace,
+                toggle: onToggleProductMatchTrace,
               },
             ].map((item) => (
               <div
@@ -359,10 +367,9 @@ const SettingsPanel = ({
             style={{ borderTop: `1px solid ${isDark ? '#2d3148' : COLORS.gray[200]}` }}
           >
             <p className="text-xs" style={{ color: isDark ? '#6b7280' : COLORS.gray[400] }}>
-              Cheffy v14 · Powered by AI
+              Cheffy v1.0.0
             </p>
           </div>
-
         </div>
       </div>
     </>
