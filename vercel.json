@@ -19,5 +19,8 @@
       "source": "/(.*)",
       "destination": "/web/dist/index.html"
     }
+  {
+  "routes": [
+    { "src": "/api/voice/tts", "dest": "/api/voice/tts.js" }
   ]
 }
