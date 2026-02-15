@@ -3,7 +3,8 @@
 // Replaces FailedIngredientLogViewer with a comprehensive Product Match Trace viewer.
 // Shows per-ingredient trace data: queries, raw results, scoring, selection, rejections.
 //
-// Version: 1.0.1 - Fixed toggle visibility control
+// Version: 1.0.2 - FIX: Moved useMemo hooks above early return to fix React error #310
+//                  ("Rendered more hooks than during the previous render")
 
 import React, { useState, useMemo } from 'react';
 import { Search, Download, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
@@ -196,10 +197,14 @@ const ProductMatchLogViewer = ({ matchTraces = [], onDownload }) => {
     const [filter, setFilter] = useState('all');
     const [searchText, setSearchText] = useState('');
 
-    // Early return if no traces - component should not render at all
-    if (!matchTraces || matchTraces.length === 0) return null;
-
+    // ✅ FIX (v1.0.2): All hooks MUST be called before any early return.
+    // Previously, these useMemo hooks were placed AFTER the early return below,
+    // which meant they were only called when matchTraces was non-empty.
+    // When matchTraces transitioned from [] → [data], React saw more hooks
+    // than the previous render, triggering error #310:
+    // "Rendered more hooks than during the previous render."
     const filteredTraces = useMemo(() => {
+        if (!matchTraces || matchTraces.length === 0) return [];
         let result = matchTraces;
         if (filter !== 'all') {
             result = result.filter(t => t.outcome === filter);
@@ -215,11 +220,15 @@ const ProductMatchLogViewer = ({ matchTraces = [], onDownload }) => {
     }, [matchTraces, filter, searchText]);
 
     const stats = useMemo(() => ({
-        total: matchTraces.length,
-        success: matchTraces.filter(t => t.outcome === 'success').length,
-        failed: matchTraces.filter(t => t.outcome === 'failed').length,
-        error: matchTraces.filter(t => t.outcome === 'error').length,
+        total: matchTraces?.length || 0,
+        success: matchTraces?.filter(t => t.outcome === 'success').length || 0,
+        failed: matchTraces?.filter(t => t.outcome === 'failed').length || 0,
+        error: matchTraces?.filter(t => t.outcome === 'error').length || 0,
     }), [matchTraces]);
+
+    // Early return if no traces - component should not render at all
+    // ✅ Now safely AFTER all hooks
+    if (!matchTraces || matchTraces.length === 0) return null;
 
     return (
         <div className="w-full bg-gray-900/95 text-gray-100 font-mono text-xs shadow-inner border-t-2 border-indigo-700">
