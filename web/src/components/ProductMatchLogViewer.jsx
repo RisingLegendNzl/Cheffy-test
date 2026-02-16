@@ -3,8 +3,8 @@
 // Replaces FailedIngredientLogViewer with a comprehensive Product Match Trace viewer.
 // Shows per-ingredient trace data: queries, raw results, scoring, selection, rejections.
 //
-// Version: 1.0.2 - FIX: Moved useMemo hooks above early return to fix React error #310
-//                  ("Rendered more hooks than during the previous render")
+// Version: 1.0.3 - FIX: Show empty state when toggle is ON but no traces exist yet
+//                  (instead of returning null which makes panel disappear)
 
 import React, { useState, useMemo } from 'react';
 import { Search, Download, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
@@ -51,117 +51,86 @@ const ScoreBar = ({ score }) => {
     const width = Math.round(score * 100);
     const color = score >= 0.8 ? 'bg-green-500' : score >= 0.6 ? 'bg-yellow-500' : 'bg-red-500';
     return (
-        <div className="flex items-center gap-1.5 min-w-[80px]">
+        <div className="flex items-center gap-1.5">
             <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                <div className={`h-full ${color} rounded-full`} style={{ width: `${width}%` }} />
+                <div className={`h-full ${color} transition-all`} style={{ width: `${width}%` }} />
             </div>
-            <span className="text-[10px] font-mono text-gray-400 w-8">{score.toFixed(2)}</span>
+            <span className="text-[10px] font-mono text-gray-400 w-8 text-right">{(score * 100).toFixed(0)}%</span>
         </div>
     );
 };
 
 // ============================================================================
-// SINGLE TRACE ITEM
+// TRACE ITEM (Expandable row for each ingredient)
 // ============================================================================
 
 const TraceItem = ({ trace }) => {
-    const [expanded, setExpanded] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(false);
 
     return (
-        <div className="border border-gray-700/50 rounded-md overflow-hidden">
-            {/* Header - always visible */}
+        <div className="bg-gray-800/60 rounded border border-gray-700/60 overflow-hidden hover:border-indigo-600/40 transition-colors">
+            {/* Header Row */}
             <button
-                onClick={() => setExpanded(!expanded)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-800/50 transition-colors"
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="w-full px-3 py-2 flex items-center justify-between hover:bg-gray-700/30 transition-colors text-left"
             >
-                <OutcomeIcon outcome={trace.outcome} />
-                <span className="font-mono text-xs text-white flex-1 truncate">{trace.ingredient}</span>
-                {trace.selection && (
-                    <span className="text-[10px] text-gray-400 truncate max-w-[200px] hidden sm:inline">
-                        → {trace.selection.productName}
-                    </span>
-                )}
-                {trace.selection?.score != null && <ScoreBar score={trace.selection.score} />}
-                <span className="text-[10px] text-gray-500 font-mono">{trace.durationMs}ms</span>
-                {expanded ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <OutcomeIcon outcome={trace.outcome} />
+                    <span className="font-semibold text-white truncate">{trace.ingredient}</span>
+                    {trace.selection && (
+                        <span className="text-gray-400 text-[10px] truncate">→ {trace.selection.productName}</span>
+                    )}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-gray-500 text-[10px]">{trace.durationMs}ms</span>
+                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </div>
             </button>
 
-            {/* Expanded detail */}
-            {expanded && (
-                <div className="px-3 pb-3 space-y-2 bg-gray-900/50 border-t border-gray-700/30">
-                    {/* Queries */}
-                    <div className="pt-2">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Queries</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 text-[11px] font-mono">
-                            <div><span className="text-blue-400">tight:</span> <span className="text-gray-300">{trace.queries.tight || 'N/A'}</span></div>
-                            <div><span className="text-green-400">normal:</span> <span className="text-gray-300">{trace.queries.normal || 'N/A'}</span></div>
-                            <div><span className="text-yellow-400">wide:</span> <span className="text-gray-300">{trace.queries.wide || 'N/A'}</span></div>
-                        </div>
-                    </div>
-
-                    {/* Validation Rules */}
-                    <div>
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Validation Rules</p>
-                        <div className="text-[10px] font-mono space-y-0.5">
-                            <div><span className="text-purple-400">Required:</span> <span className="text-gray-300">[{trace.validationRules.requiredWords.join(', ') || 'none'}]</span></div>
-                            <div><span className="text-red-400">Negative:</span> <span className="text-gray-300">[{trace.validationRules.negativeKeywords.join(', ') || 'none'}]</span></div>
-                            <div><span className="text-green-400">Categories:</span> <span className="text-gray-300">[{trace.validationRules.allowedCategories.join(', ') || 'any'}]</span></div>
-                        </div>
-                    </div>
-
+            {/* Expanded Details */}
+            {isExpanded && (
+                <div className="px-3 pb-3 space-y-2 border-t border-gray-700/40">
                     {/* Attempts */}
-                    {trace.attempts && trace.attempts.length > 0 && (
-                        <div>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Attempts</p>
-                            {trace.attempts.map((attempt, idx) => (
-                                <div key={idx} className="bg-gray-800/60 rounded p-2 mb-1.5 text-[10px] font-mono">
-                                    <div className="flex items-center justify-between mb-1">
-                                        <span className="text-gray-300">
-                                            {attempt.queryType.toUpperCase()}: <span className="text-blue-300">"{attempt.queryString}"</span>
-                                        </span>
-                                        <AttemptBadge status={attempt.status} />
-                                    </div>
-                                    <div className="flex gap-3 text-gray-400">
-                                        <span>Raw: {attempt.rawCount}</span>
-                                        <span>Passed: {attempt.passCount}</span>
-                                        <span>Best: {attempt.bestScore.toFixed(3)}</span>
-                                        {attempt.postFilterCount !== undefined && <span>Filtered: {attempt.postFilterCount}</span>}
-                                    </div>
-                                    {attempt.scoredResults && attempt.scoredResults.length > 0 && (
-                                        <div className="mt-1.5 space-y-0.5">
-                                            <p className="text-gray-500 text-[9px]">Top Scored:</p>
-                                            {attempt.scoredResults.slice(0, 3).map((scored, i) => (
-                                                <div key={i} className="text-gray-300 text-[9px] flex items-center gap-2">
-                                                    <span className="text-yellow-400">★</span>
-                                                    <span className="flex-1 truncate">{scored.name}</span>
-                                                    <span className="text-green-400">{scored.score.toFixed(3)}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    {attempt.rejections && attempt.rejections.length > 0 && (
-                                        <div className="mt-1.5 space-y-0.5">
-                                            <p className="text-gray-500 text-[9px]">Rejections ({attempt.rejections.length}):</p>
-                                            {attempt.rejections.slice(0, 2).map((rej, i) => (
-                                                <div key={i} className="text-red-300 text-[9px] flex items-center gap-2">
-                                                    <span>✗</span>
-                                                    <span className="flex-1 truncate">{rej.name}</span>
-                                                    <span className="text-gray-500">{rej.reason}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
+                    <div className="space-y-1.5 mt-2">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase">Query Attempts</p>
+                        {trace.attempts.map((attempt, i) => (
+                            <div key={i} className="bg-gray-900/50 rounded p-2 space-y-1">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-mono text-indigo-300">"{attempt.query}"</span>
+                                    <AttemptBadge status={attempt.status} />
                                 </div>
-                            ))}
-                        </div>
-                    )}
+                                {attempt.rawResultsCount > 0 && (
+                                    <div className="text-[10px] text-gray-500">
+                                        {attempt.rawResultsCount} raw → {attempt.passedResultsCount} passed filters
+                                    </div>
+                                )}
+                                {attempt.rejections && attempt.rejections.length > 0 && (
+                                    <div className="mt-1 space-y-0.5">
+                                        {attempt.rejections.slice(0, 3).map((rej, ri) => (
+                                            <div key={ri} className="text-[10px] text-red-400 font-mono">
+                                                ✗ {rej.name} → {rej.reason}
+                                            </div>
+                                        ))}
+                                        {attempt.rejections.length > 3 && (
+                                            <div className="text-[9px] text-gray-600">
+                                                +{attempt.rejections.length - 3} more rejections
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
 
                     {/* Selection */}
-                    {trace.selection && (
+                    {trace.outcome === 'success' && trace.selection && (
                         <div className="bg-green-900/30 border border-green-700/40 rounded p-2">
                             <p className="text-[10px] font-bold text-green-400 uppercase mb-1">Selected Product</p>
-                            <div className="text-[11px] font-mono text-green-200">
-                                <strong>{trace.selection.productName}</strong> | 
+                            <div className="text-[11px] font-mono text-green-200 mb-1">
+                                {trace.selection.productName}
+                            </div>
+                            <ScoreBar score={trace.selection.score || 0} />
+                            <div className="text-[10px] text-green-300 mt-1">
                                 ${trace.selection.price || '?'} | {trace.selection.size || '?'} | 
                                 score: {trace.selection.score != null ? trace.selection.score.toFixed(3) : 'N/A'} | 
                                 via: {trace.selection.viaQueryType} ({trace.selection.source})
@@ -226,9 +195,9 @@ const ProductMatchLogViewer = ({ matchTraces = [], onDownload }) => {
         error: matchTraces?.filter(t => t.outcome === 'error').length || 0,
     }), [matchTraces]);
 
-    // Early return if no traces - component should not render at all
-    // ✅ Now safely AFTER all hooks
-    if (!matchTraces || matchTraces.length === 0) return null;
+    // ✅ FIX (v1.0.3): Show empty state when toggle is ON but no traces exist yet
+    // (instead of returning null which makes panel disappear)
+    const hasTraces = matchTraces && matchTraces.length > 0;
 
     return (
         <div className="w-full bg-gray-900/95 text-gray-100 font-mono text-xs shadow-inner border-t-2 border-indigo-700">
@@ -237,37 +206,43 @@ const ProductMatchLogViewer = ({ matchTraces = [], onDownload }) => {
                 <div className="flex items-center gap-2">
                     <Search className="w-4 h-4 text-indigo-400" />
                     <h3 className="font-bold text-sm">Product Match Trace</h3>
-                    <div className="flex gap-1.5 ml-2">
-                        <span className="px-1.5 py-0.5 rounded bg-gray-700 text-[10px]">{stats.total} total</span>
-                        <span className="px-1.5 py-0.5 rounded bg-green-800 text-green-200 text-[10px]">{stats.success} ✓</span>
-                        {stats.failed > 0 && <span className="px-1.5 py-0.5 rounded bg-red-800 text-red-200 text-[10px]">{stats.failed} ✗</span>}
-                        {stats.error > 0 && <span className="px-1.5 py-0.5 rounded bg-yellow-800 text-yellow-200 text-[10px]">{stats.error} ⚠</span>}
-                    </div>
+                    {hasTraces && (
+                        <div className="flex gap-1.5 ml-2">
+                            <span className="px-1.5 py-0.5 rounded bg-gray-700 text-[10px]">{stats.total} total</span>
+                            <span className="px-1.5 py-0.5 rounded bg-green-800 text-green-200 text-[10px]">{stats.success} ✓</span>
+                            {stats.failed > 0 && <span className="px-1.5 py-0.5 rounded bg-red-800 text-red-200 text-[10px]">{stats.failed} ✗</span>}
+                            {stats.error > 0 && <span className="px-1.5 py-0.5 rounded bg-yellow-800 text-yellow-200 text-[10px]">{stats.error} ⚠</span>}
+                        </div>
+                    )}
                 </div>
                 <div className="flex items-center gap-2">
-                    {/* Filter buttons */}
-                    <div className="hidden sm:flex gap-1">
-                        {FILTER_OPTIONS.map(opt => (
+                    {hasTraces && (
+                        <>
+                            {/* Filter buttons */}
+                            <div className="hidden sm:flex gap-1">
+                                {FILTER_OPTIONS.map(opt => (
+                                    <button
+                                        key={opt.key}
+                                        onClick={() => setFilter(opt.key)}
+                                        className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                                            filter === opt.key
+                                                ? `${opt.color} text-white`
+                                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
                             <button
-                                key={opt.key}
-                                onClick={() => setFilter(opt.key)}
-                                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                                    filter === opt.key
-                                        ? `${opt.color} text-white`
-                                        : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-                                }`}
+                                onClick={onDownload}
+                                className="flex items-center px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-semibold"
+                                title="Download Match Trace Report"
                             >
-                                {opt.label}
+                                <Download size={12} className="mr-1" /> Report
                             </button>
-                        ))}
-                    </div>
-                    <button
-                        onClick={onDownload}
-                        className="flex items-center px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-semibold"
-                        title="Download Match Trace Report"
-                    >
-                        <Download size={12} className="mr-1" /> Report
-                    </button>
+                        </>
+                    )}
                     <button
                         onClick={() => setIsOpen(!isOpen)}
                         className="text-gray-400 hover:text-white"
@@ -280,44 +255,57 @@ const ProductMatchLogViewer = ({ matchTraces = [], onDownload }) => {
             {/* Content */}
             {isOpen && (
                 <div className="max-h-72 overflow-y-auto">
-                    {/* Search bar */}
-                    <div className="px-3 py-1.5 border-b border-gray-800">
-                        <input
-                            type="text"
-                            placeholder="Search ingredient or product..."
-                            value={searchText}
-                            onChange={(e) => setSearchText(e.target.value)}
-                            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500"
-                        />
-                    </div>
+                    {!hasTraces ? (
+                        /* ✅ Empty state when no traces - shows panel is active */
+                        <div className="p-8 text-center">
+                            <Search className="w-12 h-12 mx-auto mb-3 text-gray-600" />
+                            <p className="text-gray-400 text-sm font-semibold mb-1">No Product Match Traces Yet</p>
+                            <p className="text-gray-500 text-xs">
+                                Generate a meal plan to see product matching details here
+                            </p>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Search bar */}
+                            <div className="px-3 py-1.5 border-b border-gray-800">
+                                <input
+                                    type="text"
+                                    placeholder="Search ingredient or product..."
+                                    value={searchText}
+                                    onChange={(e) => setSearchText(e.target.value)}
+                                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                                />
+                            </div>
 
-                    {/* Mobile filter */}
-                    <div className="sm:hidden flex gap-1 px-3 py-1.5 border-b border-gray-800">
-                        {FILTER_OPTIONS.map(opt => (
-                            <button
-                                key={opt.key}
-                                onClick={() => setFilter(opt.key)}
-                                className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                                    filter === opt.key
-                                        ? `${opt.color} text-white`
-                                        : 'bg-gray-700 text-gray-400'
-                                }`}
-                            >
-                                {opt.label}
-                            </button>
-                        ))}
-                    </div>
+                            {/* Mobile filter */}
+                            <div className="sm:hidden flex gap-1 px-3 py-1.5 border-b border-gray-800">
+                                {FILTER_OPTIONS.map(opt => (
+                                    <button
+                                        key={opt.key}
+                                        onClick={() => setFilter(opt.key)}
+                                        className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                            filter === opt.key
+                                                ? `${opt.color} text-white`
+                                                : 'bg-gray-700 text-gray-400'
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
 
-                    {/* Trace list */}
-                    <div className="p-2 space-y-1">
-                        {filteredTraces.length === 0 ? (
-                            <p className="text-center text-gray-500 py-4">No traces match the current filter.</p>
-                        ) : (
-                            filteredTraces.map((trace, index) => (
-                                <TraceItem key={`${trace.ingredient}-${index}`} trace={trace} />
-                            ))
-                        )}
-                    </div>
+                            {/* Trace list */}
+                            <div className="p-2 space-y-1">
+                                {filteredTraces.length === 0 ? (
+                                    <p className="text-center text-gray-500 py-4">No traces match the current filter.</p>
+                                ) : (
+                                    filteredTraces.map((trace, index) => (
+                                        <TraceItem key={`${trace.ingredient}-${index}`} trace={trace} />
+                                    ))
+                                )}
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
         </div>
