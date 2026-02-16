@@ -241,15 +241,6 @@ const useAppLogic = ({
     }, []); // Intentionally empty deps — runs once on mount only
 
 
-     // ONE-TIME MIGRATION: Reset match trace logs default to FALSE
-        useEffect(() => {
-            const currentValue = localStorage.getItem('cheffy_show_match_trace_logs');
-            if (currentValue === 'true' || currentValue === null) {
-                localStorage.setItem('cheffy_show_match_trace_logs', 'false');
-                setShowMatchTraceLogs(false);
-                console.log('[MIGRATION] Reset Product Match Trace toggle to OFF by default');
-            }
-        }, []); // Run once on mount
 
 
     // --- Mount-time run recovery (survives tab close / refresh) ---
