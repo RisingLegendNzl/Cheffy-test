@@ -2,6 +2,18 @@
 // =============================================================================
 // VoiceCookingOverlay — Full-screen voice cooking companion
 //
+// [FIX] v1.1.0 — Navigation freeze resolved:
+//   1. Renders via createPortal(…, document.body) so the overlay escapes
+//      RecipeModal's DOM tree. Previously it was a direct child of
+//      RecipeModal, meaning its position:fixed div and body scroll lock
+//      fought with the parent modal's identical lock — corrupting
+//      document.body styles on cleanup and leaving navigation frozen.
+//   2. Body scroll lock now uses a ref-counted approach: it only restores
+//      body styles if no other modal still holds a lock. This prevents
+//      the race condition where VoiceCookingOverlay cleanup would undo
+//      RecipeModal's scroll lock (and vice versa).
+//   3. Escape key handler added for keyboard accessibility.
+//
 // Design:
 // - Full viewport overlay (like RecipeModal)
 // - Large, readable step text (kitchen-friendly)
@@ -13,6 +25,7 @@
 // =============================================================================
 
 import React, { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
     X, Mic, MicOff, Volume2, VolumeX, Pause, Play,
     ChevronLeft, ChevronRight, RotateCcw, AlertCircle,
@@ -21,6 +34,45 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useVoiceCooking, isVoiceCookingSupported } from '../hooks/useVoiceCooking';
 
 const OVERLAY_Z = 10001; // Above RecipeModal (9999)
+
+// ---------------------------------------------------------------------------
+// [FIX] Ref-counted body scroll lock
+// Multiple overlays (RecipeModal + VoiceCookingOverlay) can be open at once.
+// We track how many locks are active so we only restore body styles when the
+// LAST lock releases. This eliminates the cleanup race that froze navigation.
+// ---------------------------------------------------------------------------
+let scrollLockCount = 0;
+let savedBodyStyles = null;
+let savedScrollY = 0;
+
+function acquireScrollLock() {
+    if (scrollLockCount === 0) {
+        savedScrollY = window.scrollY;
+        savedBodyStyles = {
+            overflow: document.body.style.overflow,
+            position: document.body.style.position,
+            width: document.body.style.width,
+            top: document.body.style.top,
+        };
+        document.body.style.position = 'fixed';
+        document.body.style.top = `-${savedScrollY}px`;
+        document.body.style.width = '100%';
+        document.body.style.overflow = 'hidden';
+    }
+    scrollLockCount += 1;
+}
+
+function releaseScrollLock() {
+    scrollLockCount = Math.max(0, scrollLockCount - 1);
+    if (scrollLockCount === 0 && savedBodyStyles) {
+        document.body.style.overflow = savedBodyStyles.overflow;
+        document.body.style.position = savedBodyStyles.position;
+        document.body.style.width = savedBodyStyles.width;
+        document.body.style.top = savedBodyStyles.top;
+        window.scrollTo(0, savedScrollY);
+        savedBodyStyles = null;
+    }
+}
 
 const VoiceCookingOverlay = ({ meal, onClose }) => {
     const { isDark } = useTheme();
@@ -41,28 +93,20 @@ const VoiceCookingOverlay = ({ meal, onClose }) => {
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Lock body scroll
+    // [FIX] Ref-counted body scroll lock — safe with RecipeModal's lock
     useEffect(() => {
-        const scrollY = window.scrollY;
-        const orig = {
-            overflow: document.body.style.overflow,
-            position: document.body.style.position,
-            width: document.body.style.width,
-            top: document.body.style.top,
-        };
-        document.body.style.position = 'fixed';
-        document.body.style.top = `-${scrollY}px`;
-        document.body.style.width = '100%';
-        document.body.style.overflow = 'hidden';
-
-        return () => {
-            document.body.style.overflow = orig.overflow;
-            document.body.style.position = orig.position;
-            document.body.style.width = orig.width;
-            document.body.style.top = orig.top;
-            window.scrollTo(0, scrollY);
-        };
+        acquireScrollLock();
+        return () => releaseScrollLock();
     }, []);
+
+    // [FIX] Escape key handler
+    useEffect(() => {
+        const handler = (e) => {
+            if (e.key === 'Escape') handleClose();
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleClose = () => {
         vc.stop();
@@ -105,7 +149,8 @@ const VoiceCookingOverlay = ({ meal, onClose }) => {
         ? ((vc.currentStep + 1) / steps.length) * 100
         : 0;
 
-    return (
+    // --- Overlay content (rendered via portal) ---
+    const overlayContent = (
         <div
             style={{
                 position: 'fixed',
@@ -236,8 +281,8 @@ const VoiceCookingOverlay = ({ meal, onClose }) => {
                         borderRadius: '12px',
                         backgroundColor: t.dangerBg,
                         color: t.dangerText,
-                        fontSize: '0.875rem',
-                        maxWidth: '500px',
+                        fontSize: '0.85rem',
+                        maxWidth: '400px',
                         width: '100%',
                     }}>
                         <AlertCircle size={20} style={{ flexShrink: 0 }} />
@@ -246,60 +291,58 @@ const VoiceCookingOverlay = ({ meal, onClose }) => {
                 )}
 
                 {/* Step Counter */}
-                <div style={{
-                    fontSize: '0.875rem',
+                <p style={{
+                    fontSize: '0.85rem',
                     fontWeight: 600,
                     color: t.brandText,
+                    margin: 0,
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
                 }}>
                     Step {vc.currentStep + 1} of {steps.length}
-                </div>
+                </p>
 
-                {/* Step Text — Large, Readable */}
+                {/* Step Text */}
                 <div style={{
                     backgroundColor: t.stepBg,
-                    borderRadius: '16px',
-                    padding: '32px 24px',
-                    maxWidth: '600px',
-                    width: '100%',
                     border: `1px solid ${t.border}`,
-                    boxShadow: isDark
-                        ? '0 4px 12px rgba(0,0,0,0.3)'
-                        : '0 4px 12px rgba(0,0,0,0.06)',
+                    borderRadius: '16px',
+                    padding: '28px 24px',
+                    maxWidth: '480px',
+                    width: '100%',
+                    textAlign: 'center',
                 }}>
                     <p style={{
-                        fontSize: '1.35rem',
+                        fontSize: '1.25rem',
                         lineHeight: 1.6,
                         color: t.textPrimary,
                         margin: 0,
-                        textAlign: 'center',
                         fontWeight: 500,
                     }}>
-                        {steps[vc.currentStep] || 'No instructions available.'}
+                        {steps[vc.currentStep] || 'No step available.'}
                     </p>
                 </div>
 
-                {/* Voice Transcript (when listening) */}
-                {vc.transcript && vc.isListening && (
-                    <div style={{
-                        fontSize: '0.85rem',
+                {/* Transcript (when listening) */}
+                {vc.isListening && vc.transcript && (
+                    <p style={{
+                        fontSize: '0.8rem',
                         color: t.textMuted,
                         fontStyle: 'italic',
-                        textAlign: 'center',
-                        maxWidth: '400px',
+                        margin: 0,
                     }}>
-                        Heard: "{vc.transcript}"
-                    </div>
+                        "{vc.transcript}"
+                    </p>
                 )}
 
-                {/* Step Dots */}
-                {steps.length <= 12 && (
+                {/* Step dots */}
+                {steps.length <= 20 && (
                     <div style={{
                         display: 'flex',
-                        gap: '8px',
+                        gap: '6px',
                         flexWrap: 'wrap',
                         justifyContent: 'center',
+                        maxWidth: '300px',
                     }}>
                         {steps.map((_, i) => (
                             <button
@@ -411,6 +454,11 @@ const VoiceCookingOverlay = ({ meal, onClose }) => {
             `}</style>
         </div>
     );
+
+    // [FIX] Portal to document.body — escapes RecipeModal's DOM tree
+    // This prevents the overlay from being trapped inside the modal's
+    // overflow:hidden container and eliminates body scroll lock conflicts.
+    return createPortal(overlayContent, document.body);
 };
 
 // --- Control Button Sub-component ---
