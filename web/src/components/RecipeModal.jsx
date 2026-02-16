@@ -28,7 +28,8 @@
 import React, { useEffect, useRef } from 'react';
 import { X, ListChecks, ListOrdered } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
-import VoiceCookingButton from './VoiceCookingButton';
+import NaturalVoiceButton from './NaturalVoiceButton';
+
 
 const MODAL_Z = 9999; // Above everything in the app
 
@@ -276,7 +277,7 @@ const RecipeModal = ({ meal, onClose }) => {
 
                     {meal.instructions && meal.instructions.length > 0 && (
                         <div style={{ marginBottom: '1.5rem' }}>
-                            <VoiceCookingButton meal={meal} />
+                            <NaturalVoiceButton meal={meal} />
                         </div>
                     )}
 
