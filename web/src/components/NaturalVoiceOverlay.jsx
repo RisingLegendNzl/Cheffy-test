@@ -247,6 +247,12 @@ function StateIndicator({ voiceState, theme, sttProvider, ttsMode, wakeWordState
     let icon, label, color, pulse;
 
     switch (voiceState) {
+        case VOICE_STATE.GREETING:
+            icon = <Volume2 size={20} />; label = 'Cheffy is saying hello…'; color = theme.accent; pulse = true;
+            break;
+        case VOICE_STATE.WAITING_FOR_READY:
+            icon = <Mic size={20} />; label = 'Say "yes" when you\'re ready!'; color = theme.success; pulse = true;
+            break;
         case VOICE_STATE.LISTENING:
             icon = <Mic size={20} />; label = 'Listening…'; color = theme.success; pulse = true;
             break;
@@ -403,8 +409,9 @@ export default function NaturalVoiceOverlay({ meal, onClose }) {
         onClose?.();
     }, [voice, onClose]);
 
-    // Progress
-    const progress = steps.length > 0
+    // Progress — 0 during greeting/waiting
+    const isPreLoop = voice.isGreeting || voice.isWaitingForReady;
+    const progress = (steps.length > 0 && !isPreLoop)
         ? ((voice.currentStep + 1) / steps.length) * 100
         : 0;
 
@@ -469,19 +476,46 @@ export default function NaturalVoiceOverlay({ meal, onClose }) {
 
             {/* === MAIN CONTENT (scrollable) === */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-                {/* Step Display */}
-                <div style={{
-                    padding: '14px 16px', borderRadius: '12px',
-                    background: theme.card, border: `1px solid ${theme.cardBorder}`,
-                    marginBottom: '12px',
-                }}>
-                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: theme.accent, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>
-                        Step {voice.currentStep + 1} of {steps.length}
+
+                {/* ── GREETING / WAITING: Welcome panel instead of step ── */}
+                {(voice.isGreeting || voice.isWaitingForReady) ? (
+                    <div style={{
+                        padding: '24px 20px', borderRadius: '16px',
+                        background: theme.card, border: `1px solid ${theme.cardBorder}`,
+                        marginBottom: '12px', textAlign: 'center',
+                    }}>
+                        <div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>👨‍🍳</div>
+                        <div style={{ fontSize: '1.1rem', fontWeight: 700, color: theme.text, marginBottom: '6px' }}>
+                            {mealName}
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: theme.textMuted, lineHeight: 1.5 }}>
+                            {voice.isGreeting
+                                ? 'Cheffy is getting ready…'
+                                : 'Say "yes", "start", or "let\'s go" to begin!'}
+                        </div>
+                        <div style={{
+                            marginTop: '12px', fontSize: '0.72rem', color: theme.textDim,
+                            padding: '6px 12px', borderRadius: '8px',
+                            background: theme.accentBg, display: 'inline-block',
+                        }}>
+                            {steps.length} steps
+                        </div>
                     </div>
-                    <div style={{ fontSize: '0.9rem', color: theme.text, lineHeight: 1.5 }}>
-                        {steps[voice.currentStep] || 'Waiting to begin...'}
+                ) : (
+                    /* ── ACTIVE: Normal step display ── */
+                    <div style={{
+                        padding: '14px 16px', borderRadius: '12px',
+                        background: theme.card, border: `1px solid ${theme.cardBorder}`,
+                        marginBottom: '12px',
+                    }}>
+                        <div style={{ fontSize: '0.7rem', fontWeight: 700, color: theme.accent, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>
+                            Step {voice.currentStep + 1} of {steps.length}
+                        </div>
+                        <div style={{ fontSize: '0.9rem', color: theme.text, lineHeight: 1.5 }}>
+                            {steps[voice.currentStep] || 'Waiting to begin...'}
+                        </div>
                     </div>
-                </div>
+                )}
 
                 {/* Active Timers */}
                 {voice.activeTimers?.length > 0 && (
@@ -560,6 +594,10 @@ export default function NaturalVoiceOverlay({ meal, onClose }) {
             <div style={{
                 padding: '12px 16px', borderTop: `1px solid ${theme.cardBorder}`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
+                // Dim entire control bar during greeting/waiting
+                opacity: (voice.isGreeting || voice.isWaitingForReady) ? 0.35 : 1,
+                pointerEvents: (voice.isGreeting || voice.isWaitingForReady) ? 'none' : 'auto',
+                transition: 'opacity 0.3s ease',
             }}>
                 {/* Prev */}
                 <button onClick={voice.prevStep} disabled={voice.currentStep <= 0} style={{
