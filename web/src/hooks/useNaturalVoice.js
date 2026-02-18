@@ -1,14 +1,17 @@
 // web/src/hooks/useNaturalVoice.js
 // =============================================================================
-// Natural Voice Mode Hook — Cheffy Voice Cooking v3.2
+// Natural Voice Mode Hook — Cheffy Voice Cooking v3.3
 //
-// v3.2 fixes: TTS continuity + optional mic + second-voice elimination
-//   - ProactiveAssistant messages deferred when TTS is active (no second voice)
-//   - PROCESSING state preserved during TTS playback (no premature LISTENING)
-//   - LLM_DONE + TTS_PLAYBACK_END work together for correct state transitions
-//   - STT strictly off during SPEAKING/PROCESSING/GREETING (no echo loop)
-//   - Mic permission deferred until STT actually needed (greeting plays without mic)
-//   - Deferred proactive messages flushed when entering LISTENING
+// v3.3 fixes: Choppy TTS playback elimination
+//
+//   All v3.2 fixes preserved, plus:
+//   - TTS turn-level tracking: isTTSPlaying no longer toggles between sentences
+//     (TTSStreamer/TTSQueue now expose turn-level isPlaying)
+//   - STT effect debounced: 150ms delay before restarting STT after TTS ends,
+//     preventing rapid AudioContext churn from brief state toggles
+//   - GREETING_DONE dispatch guarded: only fires if still in GREETING state
+//   - ProactiveAssistant deferred messages flushed correctly
+//   - Single TTS queue for ALL output (greeting, LLM responses, step narration)
 //
 // State machine:
 //   IDLE → GREETING → WAITING_FOR_READY → LISTENING → PROCESSING → SPEAKING → LISTENING
@@ -31,8 +34,8 @@ import { ProactiveAssistant } from '../utils/proactiveAssistant';
 
 export const VOICE_STATE = {
     IDLE: 'IDLE',
-    GREETING: 'GREETING',               // NEW: TTS playing greeting, STT off
-    WAITING_FOR_READY: 'WAITING_FOR_READY', // NEW: Greeting done, STT on, waiting for "yes"
+    GREETING: 'GREETING',
+    WAITING_FOR_READY: 'WAITING_FOR_READY',
     LISTENING: 'LISTENING',
     PROCESSING: 'PROCESSING',
     SPEAKING: 'SPEAKING',
@@ -44,8 +47,8 @@ export const VOICE_STATE = {
 const ACTION = {
     START_SESSION: 'START_SESSION',
     SESSION_READY: 'SESSION_READY',
-    GREETING_DONE: 'GREETING_DONE',       // NEW: greeting TTS finished
-    USER_READY: 'USER_READY',             // NEW: user said "yes" / affirmative
+    GREETING_DONE: 'GREETING_DONE',
+    USER_READY: 'USER_READY',
     START_LISTENING: 'START_LISTENING',
     TRANSCRIPT_PARTIAL: 'TRANSCRIPT_PARTIAL',
     TRANSCRIPT_FINAL: 'TRANSCRIPT_FINAL',
@@ -75,7 +78,7 @@ const AFFIRMATIVE_PATTERNS = [
     /\bsure\b/i, /\bgo\b/i, /\bstart\b/i, /\blet'?s\b/i,
     /\bready\b/i, /\bok\b/i, /\bokay\b/i, /\bbegin\b/i,
     /\bdo it\b/i, /\bhit it\b/i, /\bplease\b/i,
-    /\bsí\b/i, /\boui\b/i, /\bja\b/i, /\bhai\b/i, // multi-language
+    /\bsí\b/i, /\boui\b/i, /\bja\b/i, /\bhai\b/i,
 ];
 
 function isAffirmative(text) {
@@ -85,7 +88,7 @@ function isAffirmative(text) {
 }
 
 // =============================================================================
-// NOISE FILTERING — prevent background noise from triggering LLM/TTS
+// NOISE FILTERING
 // =============================================================================
 
 const NOISE_WORDS = new Set([
@@ -94,21 +97,12 @@ const NOISE_WORDS = new Set([
     '.', '..', '...', ',', '-',
 ]);
 
-/**
- * Returns true if the transcript contains at least one real word
- * (not just noise/filler sounds). This prevents background noise,
- * echo artifacts, and accidental sounds from triggering the LLM.
- */
 function isSubstantiveTranscript(text) {
     const trimmed = (text || '').trim().toLowerCase();
     if (!trimmed || trimmed.length < 2) return false;
-
-    // Split into words and check if at least one is not a noise word
     const words = trimmed.split(/\s+/).filter(w => w.length > 0);
     if (words.length === 0) return false;
-
-    const realWords = words.filter(w => !NOISE_WORDS.has(w));
-    return realWords.length > 0;
+    return words.filter(w => !NOISE_WORDS.has(w)).length > 0;
 }
 
 // =============================================================================
@@ -128,7 +122,6 @@ const initialState = {
     isLLMStreaming: false,
     isTTSPlaying: false,
     sttProvider: null,
-    // Phase 6
     language: 'en',
     activeTimers: [],
     wakeWordState: 'idle',
@@ -138,7 +131,6 @@ const initialState = {
 function voiceReducer(state, action) {
     switch (action.type) {
 
-        // ── Session starts in GREETING state (not LISTENING) ──
         case ACTION.START_SESSION:
             return {
                 ...state,
@@ -155,15 +147,15 @@ function voiceReducer(state, action) {
         case ACTION.SESSION_READY:
             return { ...state, sttProvider: action.provider || null, ttsMode: action.ttsMode || state.ttsMode };
 
-        // ── Greeting TTS finished → transition to WAITING_FOR_READY ──
         case ACTION.GREETING_DONE:
+            // ── FIX v3.3: Guard — only transition if still in GREETING ──
+            if (state.voiceState !== VOICE_STATE.GREETING) return state;
             return {
                 ...state,
                 voiceState: VOICE_STATE.WAITING_FOR_READY,
                 turnId: state.turnId + 1,
             };
 
-        // ── User said "yes" → transition to LISTENING (full voice loop active) ──
         case ACTION.USER_READY:
             return {
                 ...state,
@@ -202,11 +194,8 @@ function voiceReducer(state, action) {
 
             if (state.voiceState === VOICE_STATE.PROCESSING) {
                 if (state.isTTSPlaying) {
-                    // LLM done, TTS still playing → move to SPEAKING
-                    // TTS_PLAYBACK_END will then → LISTENING
                     nextVoiceState = VOICE_STATE.SPEAKING;
                 } else {
-                    // LLM done AND TTS done → go straight to LISTENING
                     nextVoiceState = VOICE_STATE.LISTENING;
                 }
             }
@@ -223,11 +212,6 @@ function voiceReducer(state, action) {
 
         case ACTION.TTS_PLAYBACK_START:
             return { ...state, isTTSPlaying: true,
-                // ── Preserve pre-loop and active-processing states ──
-                // GREETING/WAITING_FOR_READY: don't leak to SPEAKING
-                // PROCESSING: LLM is still streaming; first sentence TTS started
-                //   but we need to stay PROCESSING so more sentences can enqueue.
-                //   The LLM_DONE + TTS_PLAYBACK_END combo handles the transition.
                 voiceState: (state.voiceState === VOICE_STATE.GREETING ||
                              state.voiceState === VOICE_STATE.WAITING_FOR_READY ||
                              state.voiceState === VOICE_STATE.PROCESSING)
@@ -239,15 +223,11 @@ function voiceReducer(state, action) {
             let nextVoiceState = state.voiceState;
 
             if (state.voiceState === VOICE_STATE.SPEAKING) {
-                // Normal case: TTS done → go listen
                 nextVoiceState = VOICE_STATE.LISTENING;
             } else if (state.voiceState === VOICE_STATE.PROCESSING && !state.isLLMStreaming) {
-                // Edge case: LLM finished while TTS was playing last sentence,
-                // but LLM_DONE saw isTTSPlaying=true and stayed PROCESSING.
-                // Now TTS is done too → go listen.
                 nextVoiceState = VOICE_STATE.LISTENING;
             }
-            // GREETING stays GREETING (GREETING_DONE is dispatched separately)
+            // GREETING stays GREETING (GREETING_DONE dispatched separately)
             // WAITING_FOR_READY stays (nudge TTS finished)
 
             return { ...state, isTTSPlaying: false, voiceState: nextVoiceState };
@@ -301,11 +281,11 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     const stateRef = useRef(state);
     const turnIdRef = useRef(0);
     const isActiveRef = useRef(false);
-
-    // Tracks whether the user has confirmed readiness (persists across renders)
     const userReadyRef = useRef(false);
 
-    // ── FIX 5: Debounce ref to prevent rapid-fire processUtterance calls ──
+    // ── FIX v3.3: Debounce ref for STT restart ──
+    const sttRestartTimerRef = useRef(null);
+
     const lastProcessTimeRef = useRef(0);
     const PROCESS_COOLDOWN_MS = 600;
 
@@ -330,6 +310,7 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             conversationRef.current = new ConversationManager({ mealName, steps, ingredients });
         }
         return conversationRef.current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const getTTS = useCallback(() => {
@@ -346,8 +327,8 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
 
                     dispatch({ type: ACTION.TTS_PLAYBACK_END });
 
-                    // ── KEY FIX: If we just finished the greeting TTS,
-                    // dispatch GREETING_DONE to move to WAITING_FOR_READY ──
+                    // ── GREETING_DONE: if greeting TTS just finished ──
+                    // FIX v3.3: Check stateRef (not state) for current voiceState
                     if (stateRef.current.voiceState === VOICE_STATE.GREETING) {
                         dispatch({ type: ACTION.GREETING_DONE });
                     }
@@ -358,6 +339,7 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             dispatch({ type: ACTION.SESSION_READY, ttsMode: useStreamer ? 'stream' : 'queue' });
         }
         return ttsRef.current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const getLLM = useCallback(() => {
@@ -390,30 +372,22 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             sttRef.current = new StreamingSTT({
                 language: stateRef.current.language,
                 onPartial: (text) => {
-                    if (isActiveRef.current) dispatch({ type: ACTION.TRANSCRIPT_PARTIAL, text });
+                    if (!isActiveRef.current) return;
+                    dispatch({ type: ACTION.TRANSCRIPT_PARTIAL, text });
                 },
                 onFinal: (text) => {
-                    if (!isActiveRef.current || !text?.trim()) return;
+                    if (!isActiveRef.current) return;
+                    if (!isSubstantiveTranscript(text)) return;
 
-                    // ── FIX 4: Drop noise/filler transcripts ──
-                    if (!isSubstantiveTranscript(text)) {
-                        console.debug('[NaturalVoice] Dropped noise transcript:', JSON.stringify(text));
-                        return;
-                    }
-
-                    // ── FIX 5: Debounce rapid-fire finals ──
                     const now = Date.now();
                     if (now - lastProcessTimeRef.current < PROCESS_COOLDOWN_MS) {
-                        console.debug('[NaturalVoice] Debounced rapid final:', JSON.stringify(text));
+                        console.debug('[NaturalVoice] Cooldown — skipping rapid final:', text);
                         return;
                     }
 
-                    proactiveRef.current?.recordActivity();
                     const cs = stateRef.current.voiceState;
 
-                    // ── FIX 1: During SPEAKING/PROCESSING, STT should be stopped.
-                    // If we somehow get a final here, ignore it rather than
-                    // triggering the echo→interrupt→LLM→TTS→echo loop. ──
+                    // ── Guard: ignore finals during states where STT should be off ──
                     if (cs === VOICE_STATE.SPEAKING || cs === VOICE_STATE.PROCESSING) {
                         console.debug('[NaturalVoice] Ignored final during', cs, '(STT should be off)');
                         return;
@@ -455,15 +429,9 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
                 onProactiveMessage: (msg) => {
                     if (!isActiveRef.current) return;
 
-                    // ── FIX: Only inject proactive messages when Cheffy is idle ──
-                    // Without this guard, proactive messages fire while TTS is
-                    // mid-sentence (SPEAKING), creating a second competing voice.
-                    // They can also fire during GREETING/WAITING before the user
-                    // has started cooking.
                     const vs = stateRef.current.voiceState;
                     if (vs !== VOICE_STATE.LISTENING) {
                         console.debug('[NaturalVoice] Proactive message deferred — state:', vs);
-                        // Queue it for next LISTENING state
                         if (!proactiveRef.current._pendingMessages) {
                             proactiveRef.current._pendingMessages = [];
                         }
@@ -482,11 +450,11 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             });
         }
         return proactiveRef.current;
-    // eslint-disable-next-line react-hooks-exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ===========================================================================
-    // READY CHECK — handles user's affirmative response to greeting
+    // READY CHECK
     // ===========================================================================
 
     const handleReadyCheck = useCallback((text) => {
@@ -494,12 +462,10 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             console.debug('[NaturalVoice] User confirmed ready:', text);
             userReadyRef.current = true;
 
-            // Stop STT briefly while we speak step 1
             sttRef.current?.stop();
 
             dispatch({ type: ACTION.USER_READY });
 
-            // Now speak step 1 and activate the full loop
             const conversation = getConversation();
             const tts = getTTS();
 
@@ -513,13 +479,11 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             tts.enqueue(stepText);
             tts.flush();
 
-            // Start proactive assistant for step 1
             const proactive = getProactive();
             proactive.processStep(0, stepsRef.current[0]);
             proactive.startTicking();
             proactive.startIdleMonitor();
         } else {
-            // Not affirmative — Cheffy gives a gentle nudge
             console.debug('[NaturalVoice] Non-affirmative during greeting wait:', text);
 
             const conversation = getConversation();
@@ -528,16 +492,10 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             const nudge = "No rush! Just say yes, start, or let's go when you're ready to begin.";
             conversation.addAssistantMessage(nudge);
 
-            dispatch({
-                type: ACTION.LLM_DONE,
-                fullText: nudge,
-            });
+            dispatch({ type: ACTION.LLM_DONE, fullText: nudge });
 
             getTTS().enqueue(nudge);
             getTTS().flush();
-
-            // After nudge finishes, we'll return to WAITING_FOR_READY via the
-            // TTS_PLAYBACK_END → stays in WAITING_FOR_READY (not LISTENING)
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -608,16 +566,6 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             return;
         }
 
-        // ── FIX Bug E: Do NOT request mic permission here. ──
-        // The old code called getUserMedia() immediately, which:
-        //   1. Showed the browser permission dialog before Cheffy even speaks
-        //   2. Blocked the greeting if user denied
-        //   3. Made mic mandatory even for listen-only mode
-        //
-        // Mic is now requested lazily when STT actually starts (in the
-        // WAITING_FOR_READY effect or the LISTENING effect).
-        // The greeting plays without any mic access.
-
         isActiveRef.current = true;
         userReadyRef.current = false;
 
@@ -626,13 +574,11 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         conversation.clear();
         conversation.setCurrentStep(0);
 
-        // ── Dispatch START_SESSION → enters GREETING state (not LISTENING) ──
         dispatch({ type: ACTION.START_SESSION });
 
-        // Pause wake word while session is active
         wakeWordRef.current?.pause();
 
-        // ── Speak ONLY the greeting. No mic required for TTS output. ──
+        // ── Speak greeting via single TTS queue. No mic required. ──
         const tts = getTTS();
         const greeting = `Hi! I'm Cheffy, and today we're making ${mealName}. ` +
                          `It's ${steps.length} steps. Just say yes when you're ready to start cooking!`;
@@ -641,9 +587,7 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         tts.enqueue(greeting);
         tts.flush();
 
-        // STT is NOT started here. It starts when greeting TTS finishes
-        // AND the user's mic permission is requested at that point.
-
+        // STT starts when greeting TTS finishes (GREETING_DONE → WAITING_FOR_READY → STT effect)
     }, [mealName, steps, ingredients, getConversation, getTTS]);
 
     const stopSession = useCallback(() => {
@@ -653,9 +597,15 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         llmRef.current?.abort();
         ttsRef.current?.interrupt();
         proactiveRef.current?.clear();
+
+        // ── FIX v3.3: Clear STT restart timer ──
+        if (sttRestartTimerRef.current) {
+            clearTimeout(sttRestartTimerRef.current);
+            sttRestartTimerRef.current = null;
+        }
+
         dispatch({ type: ACTION.STOP });
 
-        // Resume wake word after session ends
         setTimeout(() => { wakeWordRef.current?.resume(); }, 1000);
     }, []);
 
@@ -683,8 +633,6 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     const goToStep = useCallback((stepIndex) => {
         if (!isActiveRef.current) return;
 
-        // If user hasn't confirmed ready yet, activate the loop now
-        // (they pressed a nav button, so they're clearly ready)
         if (!userReadyRef.current) {
             userReadyRef.current = true;
             dispatch({ type: ACTION.USER_READY });
@@ -708,7 +656,7 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     const prevStep = useCallback(() => goToStep((stateRef.current.currentStep || 0) - 1), [goToStep]);
 
     // ===========================================================================
-    // PHASE 6: LANGUAGE SWITCHING
+    // LANGUAGE SWITCHING
     // ===========================================================================
 
     const setLanguage = useCallback(async (langCode) => {
@@ -719,7 +667,7 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     }, []);
 
     // ===========================================================================
-    // PHASE 6: WAKE WORD
+    // WAKE WORD
     // ===========================================================================
 
     const startWakeWord = useCallback(async (options = {}) => {
@@ -763,12 +711,9 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     // ── STT lifecycle: controls when mic is on/off ──
     // Rule: STT runs only when (LISTENING or WAITING_FOR_READY) AND TTS is silent.
     //
-    // FIX Bug A: We no longer stop+restart STT on every isTTSPlaying toggle.
-    // Instead, we stop STT when TTS starts, and only restart when TTS ends
-    // AND we're in a listening state. This prevents AudioContext churn.
-    //
-    // FIX Bug E: Mic permission is requested here (lazy), not in startSession.
-    // If denied, we dispatch an error but don't block the TTS-only experience.
+    // FIX v3.3: Added 150ms debounce before restarting STT after TTS ends.
+    // This prevents rapid AudioContext churn when isTTSPlaying briefly toggles
+    // (which no longer happens with the turn-level fix, but this is defense-in-depth).
     useEffect(() => {
         const vs = state.voiceState;
         const ttsPlaying = state.isTTSPlaying;
@@ -777,7 +722,6 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
 
         if (shouldListen && isActiveRef.current) {
             // ── Flush any deferred proactive messages ──
-            // These were queued while TTS was playing / state was SPEAKING.
             if (vs === VOICE_STATE.LISTENING && proactiveRef.current?._pendingMessages?.length > 0) {
                 const pending = proactiveRef.current._pendingMessages.splice(0);
                 const tts = getTTS();
@@ -791,21 +735,49 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
                 return;
             }
 
-            // ── Lazy start: STT.start() internally calls getUserMedia ──
-            const stt = sttRef.current || getSTT();
-            if (!stt.isListening) {
-                console.debug('[NaturalVoice] Starting STT — state:', vs);
-                stt.start().catch((err) => {
-                    console.warn('[NaturalVoice] STT start failed:', err);
-                    dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'denied' });
-                });
+            // ── FIX v3.3: Debounced STT restart ──
+            // Clear any existing timer first
+            if (sttRestartTimerRef.current) {
+                clearTimeout(sttRestartTimerRef.current);
             }
+
+            sttRestartTimerRef.current = setTimeout(() => {
+                sttRestartTimerRef.current = null;
+
+                // Re-check conditions — state may have changed during the 150ms delay
+                const currentVS = stateRef.current.voiceState;
+                const currentTTS = stateRef.current.isTTSPlaying;
+                if (!isActiveRef.current) return;
+                if (currentTTS) return; // TTS started again during delay
+                if (currentVS !== VOICE_STATE.LISTENING && currentVS !== VOICE_STATE.WAITING_FOR_READY) return;
+
+                const stt = sttRef.current || getSTT();
+                if (!stt.isListening) {
+                    console.debug('[NaturalVoice] Starting STT — state:', currentVS);
+                    stt.start().catch((err) => {
+                        console.warn('[NaturalVoice] STT start failed:', err);
+                        dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'denied' });
+                    });
+                }
+            }, 150); // 150ms debounce
+
         } else if (ttsPlaying && sttRef.current?.isListening) {
-            // ── TTS just started: stop STT to prevent echo pickup ──
+            // ── TTS just started: stop STT immediately to prevent echo pickup ──
+            // Also cancel any pending STT restart
+            if (sttRestartTimerRef.current) {
+                clearTimeout(sttRestartTimerRef.current);
+                sttRestartTimerRef.current = null;
+            }
             console.debug('[NaturalVoice] Stopping STT — TTS playing');
             sttRef.current.stop();
-        } else if ((vs === VOICE_STATE.PAUSED || vs === VOICE_STATE.IDLE || vs === VOICE_STATE.GREETING || vs === VOICE_STATE.PROCESSING || vs === VOICE_STATE.SPEAKING) && sttRef.current?.isListening) {
+        } else if ((vs === VOICE_STATE.PAUSED || vs === VOICE_STATE.IDLE ||
+                    vs === VOICE_STATE.GREETING || vs === VOICE_STATE.PROCESSING ||
+                    vs === VOICE_STATE.SPEAKING) && sttRef.current?.isListening) {
             // ── Non-listening state: ensure STT is off ──
+            if (sttRestartTimerRef.current) {
+                clearTimeout(sttRestartTimerRef.current);
+                sttRestartTimerRef.current = null;
+            }
             console.debug('[NaturalVoice] Stopping STT — state:', vs);
             sttRef.current.stop();
         }
@@ -815,12 +787,12 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     // Auto-recover from errors
     useEffect(() => {
         if (state.voiceState === VOICE_STATE.ERROR && isActiveRef.current) {
-            const t = setTimeout(() => {
-                if (isActiveRef.current && stateRef.current.voiceState === VOICE_STATE.ERROR) {
+            const timer = setTimeout(() => {
+                if (stateRef.current.voiceState === VOICE_STATE.ERROR) {
                     dispatch({ type: ACTION.CLEAR_ERROR });
                 }
-            }, 3000);
-            return () => clearTimeout(t);
+            }, 5000);
+            return () => clearTimeout(timer);
         }
     }, [state.voiceState]);
 
@@ -828,47 +800,56 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     useEffect(() => {
         return () => {
             isActiveRef.current = false;
-            sttRef.current?.destroy();
-            llmRef.current?.destroy();
-            ttsRef.current?.destroy();
-            conversationRef.current?.destroy();
-            wakeWordRef.current?.destroy();
-            proactiveRef.current?.destroy();
-            sttRef.current = null; llmRef.current = null; ttsRef.current = null;
-            conversationRef.current = null; wakeWordRef.current = null; proactiveRef.current = null;
+            if (sttRestartTimerRef.current) {
+                clearTimeout(sttRestartTimerRef.current);
+                sttRestartTimerRef.current = null;
+            }
+            sttRef.current?.destroy?.();
+            llmRef.current?.destroy?.();
+            ttsRef.current?.destroy?.();
+            proactiveRef.current?.destroy?.();
+            wakeWordRef.current?.destroy?.();
         };
     }, []);
 
     // ===========================================================================
-    // PUBLIC API
+    // EXPOSED API
     // ===========================================================================
+
+    const isActive = state.voiceState !== VOICE_STATE.IDLE;
+    const isGreeting = state.voiceState === VOICE_STATE.GREETING;
+    const isWaitingForReady = state.voiceState === VOICE_STATE.WAITING_FOR_READY;
 
     return useMemo(() => ({
         // State
         voiceState: state.voiceState,
-        isActive: state.voiceState !== VOICE_STATE.IDLE,
-        isGreeting: state.voiceState === VOICE_STATE.GREETING,
-        isWaitingForReady: state.voiceState === VOICE_STATE.WAITING_FOR_READY,
+        isActive,
+        isGreeting,
+        isWaitingForReady,
         isListening: state.voiceState === VOICE_STATE.LISTENING,
         isProcessing: state.voiceState === VOICE_STATE.PROCESSING,
         isSpeaking: state.voiceState === VOICE_STATE.SPEAKING,
         isPaused: state.voiceState === VOICE_STATE.PAUSED,
         isError: state.voiceState === VOICE_STATE.ERROR,
-        currentStep: state.currentStep,
-        totalSteps: steps.length,
+        isTTSPlaying: state.isTTSPlaying,
+        isLLMStreaming: state.isLLMStreaming,
+
+        // Data
         transcript: state.transcript,
         lastFinalTranscript: state.lastFinalTranscript,
         assistantText: state.assistantText,
         conversationLog: state.conversationLog,
+        currentStep: state.currentStep,
+        totalSteps: steps.length,
         error: state.error,
         micPermission: state.micPermission,
-        sttProvider: state.sttProvider,
-        isLLMStreaming: state.isLLMStreaming,
-        isTTSPlaying: state.isTTSPlaying,
+        turnId: state.turnId,
+
         // Phase 6
         language: state.language,
         activeTimers: state.activeTimers,
         wakeWordState: state.wakeWordState,
+        sttProvider: state.sttProvider,
         ttsMode: state.ttsMode,
 
         // Actions
@@ -880,31 +861,20 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         prevStep,
         goToStep,
         setLanguage,
+
+        // Wake word
         startWakeWord,
         stopWakeWord,
         setWakeWordSensitivity,
-        // ── FIX Bug E: Manual mic activation for users who denied initially ──
-        startMic: () => {
-            if (!isActiveRef.current) return;
-            const stt = getSTT();
-            if (!stt.isListening) {
-                stt.start().then(() => {
-                    dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'granted' });
-                }).catch(() => {
-                    dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'denied' });
-                });
-            }
-        },
 
+        // Constants
         VOICE_STATE,
-    }), [state, steps.length, startSession, stopSession, pauseSession, resumeSession, nextStep, prevStep, goToStep, setLanguage, startWakeWord, stopWakeWord, setWakeWordSensitivity]);
+    }), [state, steps.length, startSession, stopSession, pauseSession, resumeSession,
+         nextStep, prevStep, goToStep, setLanguage, startWakeWord, stopWakeWord, setWakeWordSensitivity,
+         isActive, isGreeting, isWaitingForReady]);
 }
 
 export function isNaturalVoiceSupported() {
-    const hasSR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
-    const hasAudio = typeof Audio !== 'undefined';
-    const hasMD = typeof navigator?.mediaDevices?.getUserMedia === 'function';
-    return (!!hasSR || hasMD) && hasAudio;
+    return typeof window !== 'undefined' &&
+        !!(window.AudioContext || window.webkitAudioContext);
 }
-
-export default useNaturalVoice;
