@@ -535,6 +535,24 @@ export default function NaturalVoiceOverlay({ meal, onClose }) {
                     />
                 </div>
 
+                {/* ── Mic permission banner (shows if mic denied or not yet granted) ── */}
+                {voice.micPermission === 'denied' && voice.isActive && !voice.isGreeting && (
+                    <button
+                        onClick={voice.startMic}
+                        style={{
+                            display: 'flex', alignItems: 'center', gap: '8px',
+                            width: '100%', padding: '10px 14px', borderRadius: '10px',
+                            border: `1px solid ${theme.warning}33`,
+                            background: `${theme.warning}10`,
+                            color: theme.warning, fontSize: '0.82rem',
+                            cursor: 'pointer', marginBottom: '10px',
+                            fontWeight: 500,
+                        }}
+                    >
+                        <Mic size={16} /> Tap to enable microphone for voice commands
+                    </button>
+                )}
+
                 {/* Live Transcript (partial) */}
                 {voice.transcript && (
                     <div style={{
