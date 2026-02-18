@@ -70,6 +70,9 @@ export class TTSStreamer {
         this._sentenceQueue = [];
         this._isSentenceActive = false;
         this._flushed = false;
+
+        // ── FIX Bug C: Atomic counter for completion detection ──
+        this._pendingSourceCount = 0;
     }
 
     get isPlaying() { return this._isPlaying; }
@@ -158,11 +161,26 @@ export class TTSStreamer {
         // Reset per-sentence state
         this._decodedBuffers = [];
         this._chunksDecoded = 0;
+        this._pendingSourceCount = 0;
         this._playbackStarted = false;
         this._streamDone = false;
         this._nextScheduleTime = this._audioContext.currentTime + 0.1;
 
         this._abortController = new AbortController();
+
+        // ── FIX Bug B: Watchdog monitors AudioContext suspension mid-sentence ──
+        // iOS Safari / Chrome can suspend AudioContext between chunks. Without
+        // this, playback dies silently — no error, no onended, sentence hangs.
+        const watchdogInterval = setInterval(() => {
+            if (capturedSession !== this._sessionId || this._destroyed) {
+                clearInterval(watchdogInterval);
+                return;
+            }
+            if (this._audioContext?.state === 'suspended') {
+                console.debug('[TTSStreamer] AudioContext suspended mid-sentence — resuming');
+                this._audioContext.resume().catch(() => {});
+            }
+        }, 500);
 
         try {
             const response = await fetch(TTS_STREAM_ENDPOINT, {
@@ -172,12 +190,12 @@ export class TTSStreamer {
                     text,
                     voice: this._voice,
                     speed: this._speed,
-                    format: 'mp3', // mp3 is broadly decodable by AudioContext
+                    format: 'mp3',
                 }),
                 signal: this._abortController.signal,
             });
 
-            if (capturedSession !== this._sessionId) return;
+            if (capturedSession !== this._sessionId) { clearInterval(watchdogInterval); return; }
 
             if (!response.ok) {
                 throw new Error(`TTS stream endpoint returned ${response.status}`);
@@ -191,7 +209,7 @@ export class TTSStreamer {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                if (capturedSession !== this._sessionId) return;
+                if (capturedSession !== this._sessionId) { clearInterval(watchdogInterval); return; }
 
                 sseBuffer += decoder.decode(value, { stream: true });
                 const lines = sseBuffer.split('\n');
@@ -227,11 +245,16 @@ export class TTSStreamer {
             this._checkSentenceComplete(capturedSession);
 
         } catch (err) {
-            if (err.name === 'AbortError' || capturedSession !== this._sessionId) return;
+            if (err.name === 'AbortError' || capturedSession !== this._sessionId) {
+                clearInterval(watchdogInterval);
+                return;
+            }
 
             console.warn('[TTSStreamer] Stream failed, falling back to blob:', err.message);
             // Fallback: fetch the full blob and play via HTMLAudioElement
             await this._fallbackBlobPlay(text, capturedSession);
+        } finally {
+            clearInterval(watchdogInterval);
         }
     }
 
@@ -281,6 +304,7 @@ export class TTSStreamer {
         this._nextScheduleTime = startTime + audioBuffer.duration;
 
         this._activeSources.push(source);
+        this._pendingSourceCount++;
 
         // Signal playback started
         if (!this._playbackStarted && this._chunksDecoded >= BUFFER_THRESHOLD) {
@@ -289,9 +313,13 @@ export class TTSStreamer {
             this._onPlaybackStart?.();
         }
 
-        // When this source finishes, check if sentence is complete
+        // ── FIX Bug C: Use a counter for race-safe completion detection ──
+        // The old code used splice(indexOf) + length check, which could race
+        // when onended fires synchronously during splice of another source.
         source.onended = () => {
             if (capturedSession !== this._sessionId) return;
+            this._pendingSourceCount = Math.max(0, this._pendingSourceCount - 1);
+            // Clean up reference
             const idx = this._activeSources.indexOf(source);
             if (idx > -1) this._activeSources.splice(idx, 1);
             this._checkSentenceComplete(capturedSession);
@@ -301,7 +329,8 @@ export class TTSStreamer {
     _checkSentenceComplete(capturedSession) {
         if (capturedSession !== this._sessionId) return;
         if (!this._streamDone) return;
-        if (this._activeSources.length > 0) return;
+        // ── FIX Bug C: Check counter, not array length ──
+        if (this._pendingSourceCount > 0) return;
 
         // This sentence is fully played
         this._isSentenceActive = false;
@@ -390,6 +419,7 @@ export class TTSStreamer {
             try { source.stop(); source.disconnect(); } catch (_) {}
         }
         this._activeSources = [];
+        this._pendingSourceCount = 0;
         this._decodedBuffers = [];
         this._playbackStarted = false;
         this._streamDone = false;
