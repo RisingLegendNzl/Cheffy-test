@@ -86,6 +86,11 @@ export class StreamingSTT {
         this._maxReconnectAttempts = 3;
         this._reconnectTimer = null;
         this._sessionId = 0;
+
+        // ── Anti-noise guards ──
+        this._lastFinalTs = 0;            // timestamp of last emitted final
+        this._finalDebounceMs = 400;      // minimum ms between finals
+        this._minFinalLength = 2;         // minimum chars to emit as final
     }
 
     get state() { return this._state; }
@@ -179,16 +184,40 @@ export class StreamingSTT {
                     this._partialBuffer += (this._partialBuffer ? ' ' : '') + t;
                     if (d.speech_final) {
                         const full = this._partialBuffer.trim(); this._partialBuffer = '';
-                        if (full) this._onFinal?.(full); this._onVADEnd?.();
+                        this._emitFinal(full);
+                        this._onVADEnd?.();
                     }
                 } else {
                     this._onPartial?.(this._partialBuffer ? `${this._partialBuffer} ${t}` : t);
                 }
             }
+            // UtteranceEnd — safety net, but guard against noise flush
             if (d.type === 'UtteranceEnd' && this._partialBuffer.trim()) {
-                this._onFinal?.(this._partialBuffer.trim()); this._partialBuffer = ''; this._onVADEnd?.();
+                const buffered = this._partialBuffer.trim(); this._partialBuffer = '';
+                this._emitFinal(buffered);
+                this._onVADEnd?.();
             }
         } catch (_) {}
+    }
+
+    /**
+     * Guard gate for all final transcript emissions.
+     * Filters out noise, enforces minimum length, debounces rapid-fire finals.
+     */
+    _emitFinal(text) {
+        if (!text || text.length < this._minFinalLength) {
+            console.debug('[StreamingSTT] Dropped sub-min final:', JSON.stringify(text));
+            return;
+        }
+
+        const now = Date.now();
+        if (now - this._lastFinalTs < this._finalDebounceMs) {
+            console.debug('[StreamingSTT] Debounced rapid final:', JSON.stringify(text));
+            return;
+        }
+
+        this._lastFinalTs = now;
+        this._onFinal?.(text);
     }
 
     _startAudioCapture() {
@@ -253,9 +282,25 @@ export class StreamingSTT {
         r.onresult = (e) => {
             if (cs !== this._sessionId) return;
             let fin = '', int = '';
-            for (let i = e.resultIndex; i < e.results.length; i++) { const t = e.results[i][0]?.transcript || ''; if (e.results[i].isFinal) fin += t; else int += t; }
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                const alt = e.results[i][0];
+                const t = alt?.transcript || '';
+                if (e.results[i].isFinal) {
+                    // ── FIX 3: Confidence gate for Web Speech ──
+                    // Web Speech fires isFinal for noise bursts with low confidence.
+                    // Require confidence > 0.5 (0 means unknown/not-provided, allow those).
+                    const conf = alt?.confidence ?? 0;
+                    if (conf > 0 && conf < 0.5) {
+                        console.debug('[StreamingSTT] Web Speech low-confidence final dropped:', conf, JSON.stringify(t));
+                        continue;
+                    }
+                    fin += t;
+                } else {
+                    int += t;
+                }
+            }
             if (int) this._onPartial?.(int);
-            if (fin.trim()) this._onFinal?.(fin.trim());
+            if (fin.trim()) this._emitFinal(fin.trim());
         };
         r.onerror = (e) => {
             if (cs !== this._sessionId) return;
