@@ -339,9 +339,14 @@ export class TTSQueue {
     _stopAudio() {
         if (this._audio) {
             try {
+                // ── FIX Bug D: Remove listeners BEFORE pausing ──
+                // Without this, the load() call below fires an error event on the
+                // old audio element, which triggers item.status = 'error' → skip.
+                this._audio.onended = null;
+                this._audio.onerror = null;
                 this._audio.pause();
                 this._audio.removeAttribute('src');
-                this._audio.load(); // Release resources
+                // Removed: this._audio.load() — fires error events on dead elements
             } catch (_) {}
             this._audio = null;
         }
