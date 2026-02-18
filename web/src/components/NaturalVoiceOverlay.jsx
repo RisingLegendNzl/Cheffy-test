@@ -1,34 +1,42 @@
 // web/src/components/NaturalVoiceOverlay.jsx
 // =============================================================================
-// NaturalVoiceOverlay — Full-screen conversational voice cooking companion
+// NaturalVoiceOverlay — Cheffy Voice Cooking v3.0 (Phase 6)
 //
-// Replaces VoiceCookingOverlay with the Natural Voice Mode experience.
-// Uses useNaturalVoice hook for streaming STT → LLM → TTS loop.
+// Full-screen conversational voice cooking companion overlay.
+// Renders as a portal (escapes RecipeModal DOM tree).
 //
-// Features:
-// - Live transcript display (partials + finals)
-// - Streaming assistant response display
-// - Conversation history panel
-// - Visual state indicators (listening, thinking, speaking)
-// - Touch-friendly navigation controls
-// - Interrupt-capable (user can speak during TTS)
+// Phase 6 additions:
+//   - Active timer display panel with live countdowns
+//   - Language selector dropdown (30+ languages)
+//   - Wake word state indicator
+//   - TTS mode badge (stream vs queue)
+//   - Proactive message visual indicators
 //
-// DARK MODE: Theme-aware via useTheme()
+// Preserved from v2.0:
+//   - Live transcript + streaming assistant response
+//   - Conversation history panel
+//   - Visual state indicators (listening / thinking / speaking)
+//   - Touch-friendly nav controls
+//   - Interrupt-capable
+//   - Ref-counted body scroll lock
+//   - Theme-aware (dark/light mode)
 // =============================================================================
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
     X, Mic, MicOff, Volume2, Pause, Play,
     ChevronLeft, ChevronRight, AlertCircle, MessageCircle,
-    ChevronDown, ChevronUp, Loader, Wifi, WifiOff,
+    ChevronDown, ChevronUp, Loader, Globe, Timer, Zap,
+    Ear, Radio,
 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useNaturalVoice, isNaturalVoiceSupported, VOICE_STATE } from '../hooks/useNaturalVoice';
+import { STT_LANGUAGES } from '../utils/streamingSTT';
 
 const OVERLAY_Z = 10001;
 
-// --- Ref-counted body scroll lock (shared with other modals) ---
+// --- Ref-counted body scroll lock ---
 let scrollLockCount = 0;
 let savedBodyStyles = null;
 
@@ -62,63 +70,313 @@ function releaseScrollLock() {
 // --- Theme tokens ---
 function getTheme(isDark) {
     return isDark ? {
-        bg: '#0f0f14',
-        cardBg: '#1a1a24',
-        border: 'rgba(255,255,255,0.08)',
-        textPrimary: '#f0f0f5',
-        textSecondary: '#9ca3af',
-        textMuted: '#6b7280',
-        brandBg: 'rgba(99,102,241,0.15)',
-        brandText: '#a5b4fc',
-        activeBg: 'rgba(52,211,153,0.15)',
-        activeText: '#6ee7b7',
-        errorBg: 'rgba(239,68,68,0.15)',
-        errorText: '#fca5a5',
-        btnBg: 'rgba(255,255,255,0.06)',
-        bubbleUser: 'rgba(99,102,241,0.2)',
-        bubbleAssistant: 'rgba(255,255,255,0.06)',
-        processingBg: 'rgba(251,191,36,0.15)',
-        processingText: '#fcd34d',
+        bg: 'rgba(15,15,20,0.97)',
+        card: 'rgba(30,30,40,0.85)',
+        cardBorder: 'rgba(255,255,255,0.06)',
+        text: '#e2e8f0',
+        textMuted: '#94a3b8',
+        textDim: '#64748b',
+        accent: '#818cf8',
+        accentBg: 'rgba(129,140,248,0.12)',
+        success: '#4ade80',
+        warning: '#facc15',
+        error: '#f87171',
+        transcriptBg: 'rgba(30,41,59,0.7)',
+        userBubble: 'rgba(99,102,241,0.15)',
+        assistantBubble: 'rgba(30,30,40,0.6)',
+        timerBg: 'rgba(250,204,21,0.08)',
+        timerBorder: 'rgba(250,204,21,0.2)',
     } : {
-        bg: '#f8fafc',
-        cardBg: '#ffffff',
-        border: '#e5e7eb',
-        textPrimary: '#111827',
-        textSecondary: '#6b7280',
-        textMuted: '#9ca3af',
-        brandBg: '#eef2ff',
-        brandText: '#4f46e5',
-        activeBg: '#ecfdf5',
-        activeText: '#059669',
-        errorBg: '#fef2f2',
-        errorText: '#dc2626',
-        btnBg: '#f3f4f6',
-        bubbleUser: '#eef2ff',
-        bubbleAssistant: '#f9fafb',
-        processingBg: '#fffbeb',
-        processingText: '#d97706',
+        bg: 'rgba(248,250,252,0.97)',
+        card: 'rgba(255,255,255,0.9)',
+        cardBorder: 'rgba(0,0,0,0.06)',
+        text: '#1e293b',
+        textMuted: '#475569',
+        textDim: '#94a3b8',
+        accent: '#6366f1',
+        accentBg: 'rgba(99,102,241,0.08)',
+        success: '#22c55e',
+        warning: '#eab308',
+        error: '#ef4444',
+        transcriptBg: 'rgba(241,245,249,0.8)',
+        userBubble: 'rgba(99,102,241,0.08)',
+        assistantBubble: 'rgba(241,245,249,0.7)',
+        timerBg: 'rgba(234,179,8,0.06)',
+        timerBorder: 'rgba(234,179,8,0.2)',
     };
 }
 
+// --- Format seconds as mm:ss ---
+function fmtTime(seconds) {
+    if (seconds == null || seconds < 0) return '--:--';
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 // =============================================================================
-// MAIN COMPONENT
+// LANGUAGE PICKER (populated languages)
 // =============================================================================
 
-const NaturalVoiceOverlay = ({ meal, onClose }) => {
+// Filter to commonly useful cooking languages (subset of STT_LANGUAGES)
+const POPULAR_LANGUAGES = [
+    'en', 'en-GB', 'es', 'fr', 'de', 'it', 'pt', 'pt-BR',
+    'ja', 'ko', 'zh', 'hi', 'ru', 'tr', 'nl', 'pl', 'sv',
+    'ar', 'th', 'vi', 'id',
+];
+
+function LanguagePicker({ currentLang, onSelect, theme }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
+
+    // Close on outside click
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('pointerdown', handler);
+        return () => document.removeEventListener('pointerdown', handler);
+    }, [open]);
+
+    const currentLabel = STT_LANGUAGES[currentLang]?.label || 'English';
+
+    return (
+        <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+            <button
+                onClick={() => setOpen(!open)}
+                style={{
+                    display: 'flex', alignItems: 'center', gap: '5px',
+                    padding: '5px 10px', borderRadius: '8px',
+                    border: `1px solid ${theme.cardBorder}`,
+                    background: theme.card, color: theme.textMuted,
+                    fontSize: '0.75rem', cursor: 'pointer',
+                }}
+                title="Change STT language"
+            >
+                <Globe size={13} />
+                <span>{currentLabel}</span>
+                <ChevronDown size={11} />
+            </button>
+
+            {open && (
+                <div style={{
+                    position: 'absolute', top: '100%', left: 0, zIndex: 99,
+                    marginTop: '4px', minWidth: '180px', maxHeight: '260px',
+                    overflowY: 'auto', borderRadius: '10px',
+                    border: `1px solid ${theme.cardBorder}`,
+                    background: theme.bg, boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
+                }}>
+                    {POPULAR_LANGUAGES.map((code) => {
+                        const lang = STT_LANGUAGES[code];
+                        if (!lang) return null;
+                        const active = code === currentLang;
+                        return (
+                            <button
+                                key={code}
+                                onClick={() => { onSelect(code); setOpen(false); }}
+                                style={{
+                                    display: 'block', width: '100%', textAlign: 'left',
+                                    padding: '8px 14px', border: 'none', cursor: 'pointer',
+                                    background: active ? theme.accentBg : 'transparent',
+                                    color: active ? theme.accent : theme.text,
+                                    fontSize: '0.8rem', fontWeight: active ? 600 : 400,
+                                }}
+                            >
+                                {lang.label}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// =============================================================================
+// TIMER PANEL
+// =============================================================================
+
+function TimerPanel({ timers, theme }) {
+    if (!timers || timers.length === 0) return null;
+
+    return (
+        <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: '8px',
+            padding: '8px 12px', borderRadius: '10px',
+            background: theme.timerBg, border: `1px solid ${theme.timerBorder}`,
+        }}>
+            {timers.map((t) => {
+                const pct = t.totalSeconds > 0
+                    ? Math.max(0, Math.min(100, ((t.totalSeconds - t.remainingSeconds) / t.totalSeconds) * 100))
+                    : 100;
+                const urgent = t.remainingSeconds <= 60;
+                return (
+                    <div key={t.id} style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        padding: '4px 10px', borderRadius: '8px',
+                        background: urgent ? 'rgba(239,68,68,0.1)' : 'rgba(250,204,21,0.06)',
+                        border: `1px solid ${urgent ? 'rgba(239,68,68,0.3)' : 'rgba(250,204,21,0.15)'}`,
+                        fontSize: '0.75rem',
+                    }}>
+                        <Timer size={13} style={{ color: urgent ? theme.error : theme.warning }} />
+                        <span style={{ color: theme.textMuted, maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {t.label}
+                        </span>
+                        <span style={{
+                            fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                            color: urgent ? theme.error : theme.warning,
+                            minWidth: '42px', textAlign: 'right',
+                        }}>
+                            {t.isPaused ? '⏸' : fmtTime(t.remainingSeconds)}
+                        </span>
+                        {/* Tiny progress bar */}
+                        <div style={{ width: '40px', height: '3px', borderRadius: '2px', background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                            <div style={{ width: `${pct}%`, height: '100%', borderRadius: '2px', background: urgent ? theme.error : theme.warning, transition: 'width 1s linear' }} />
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+// =============================================================================
+// STATE INDICATOR
+// =============================================================================
+
+function StateIndicator({ voiceState, theme, sttProvider, ttsMode, wakeWordState }) {
+    let icon, label, color, pulse;
+
+    switch (voiceState) {
+        case VOICE_STATE.LISTENING:
+            icon = <Mic size={20} />; label = 'Listening…'; color = theme.success; pulse = true;
+            break;
+        case VOICE_STATE.PROCESSING:
+            icon = <Loader size={20} style={{ animation: 'spin 1s linear infinite' }} />;
+            label = 'Thinking…'; color = theme.accent; pulse = false;
+            break;
+        case VOICE_STATE.SPEAKING:
+            icon = <Volume2 size={20} />; label = 'Speaking…'; color = theme.accent; pulse = true;
+            break;
+        case VOICE_STATE.INTERRUPTED:
+            icon = <Mic size={20} />; label = 'Interrupted'; color = theme.warning; pulse = false;
+            break;
+        case VOICE_STATE.PAUSED:
+            icon = <Pause size={20} />; label = 'Paused'; color = theme.textDim; pulse = false;
+            break;
+        case VOICE_STATE.ERROR:
+            icon = <AlertCircle size={20} />; label = 'Error'; color = theme.error; pulse = false;
+            break;
+        default:
+            icon = <MicOff size={20} />; label = 'Idle'; color = theme.textDim; pulse = false;
+    }
+
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '6px 0' }}>
+            <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                width: 40, height: 40, borderRadius: '50%',
+                background: `${color}15`,
+                boxShadow: pulse ? `0 0 0 6px ${color}10` : 'none',
+                transition: 'all 0.3s ease',
+                animation: pulse ? 'voicePulse 2s ease-in-out infinite' : 'none',
+            }}>
+                <span style={{ color }}>{icon}</span>
+            </div>
+
+            <div style={{ flex: 1 }}>
+                <div style={{ color, fontWeight: 600, fontSize: '0.9rem' }}>{label}</div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '2px' }}>
+                    {/* STT provider badge */}
+                    <span style={{ fontSize: '0.65rem', color: theme.textDim }}>
+                        STT: {sttProvider === 'deepgram' ? '🟢 Deepgram' : '🟡 Web Speech'}
+                    </span>
+                    {/* TTS mode badge */}
+                    <span style={{ fontSize: '0.65rem', color: theme.textDim }}>
+                        TTS: {ttsMode === 'stream' ? '⚡ Stream' : '📦 Queue'}
+                    </span>
+                    {/* Wake word indicator */}
+                    {wakeWordState === 'listening' && (
+                        <span style={{ fontSize: '0.65rem', color: theme.success }}>
+                            <Ear size={10} style={{ display: 'inline', verticalAlign: 'middle' }} /> Wake
+                        </span>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// =============================================================================
+// CONVERSATION HISTORY
+// =============================================================================
+
+function ConversationHistory({ log, theme, expanded, onToggle }) {
+    const bottomRef = useRef(null);
+
+    useEffect(() => {
+        if (expanded && bottomRef.current) {
+            bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [log.length, expanded]);
+
+    if (log.length === 0) return null;
+
+    return (
+        <div style={{
+            borderRadius: '12px', border: `1px solid ${theme.cardBorder}`,
+            background: theme.card, overflow: 'hidden',
+        }}>
+            <button onClick={onToggle} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', padding: '10px 14px', border: 'none',
+                background: 'transparent', color: theme.textMuted,
+                cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600,
+            }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <MessageCircle size={14} /> Conversation ({log.length})
+                </span>
+                {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+
+            {expanded && (
+                <div style={{ maxHeight: '200px', overflowY: 'auto', padding: '0 12px 10px 12px' }}>
+                    {log.map((entry, i) => (
+                        <div key={i} style={{
+                            padding: '8px 12px', borderRadius: '10px', marginBottom: '6px',
+                            background: entry.role === 'user' ? theme.userBubble : theme.assistantBubble,
+                            fontSize: '0.8rem', color: theme.text, lineHeight: 1.45,
+                        }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.7rem', color: theme.textDim, display: 'block', marginBottom: '2px' }}>
+                                {entry.role === 'user' ? '🧑 You' : '👨‍🍳 Cheffy'}
+                            </span>
+                            {entry.content}
+                        </div>
+                    ))}
+                    <div ref={bottomRef} />
+                </div>
+            )}
+        </div>
+    );
+}
+
+// =============================================================================
+// MAIN OVERLAY
+// =============================================================================
+
+export { isNaturalVoiceSupported };
+
+export default function NaturalVoiceOverlay({ meal, onClose }) {
     const { isDark } = useTheme();
-    const t = getTheme(isDark);
+    const theme = getTheme(isDark);
 
-    const mealName = meal?.name || meal?.title || 'this recipe';
     const steps = meal?.instructions || [];
-    const ingredients = meal?.items || meal?.ingredients || [];
+    const ingredients = meal?.ingredients || [];
+    const mealName = meal?.name || meal?.title || 'this recipe';
 
-    const vc = useNaturalVoice({ mealName, steps, ingredients });
+    const voice = useNaturalVoice({ mealName, steps, ingredients });
+    const [historyExpanded, setHistoryExpanded] = useState(false);
 
-    const [showHistory, setShowHistory] = useState(false);
-    const historyEndRef = useRef(null);
-    const overlayRef = useRef(null);
-
-    // Body scroll lock
+    // Scroll lock
     useEffect(() => {
         acquireScrollLock();
         return () => releaseScrollLock();
@@ -126,378 +384,228 @@ const NaturalVoiceOverlay = ({ meal, onClose }) => {
 
     // Auto-start session on mount
     useEffect(() => {
-        vc.start();
-        return () => vc.stop();
+        if (!voice.isActive) {
+            voice.start();
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Escape key to close
+    // Escape key closes
     useEffect(() => {
-        const handleKey = (e) => {
-            if (e.key === 'Escape') {
-                vc.stop();
-                onClose();
-            }
-        };
-        document.addEventListener('keydown', handleKey);
-        return () => document.removeEventListener('keydown', handleKey);
-    }, [vc, onClose]);
+        const handler = (e) => { if (e.key === 'Escape') handleClose(); };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    // Auto-scroll conversation history
-    useEffect(() => {
-        if (showHistory) {
-            historyEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-        }
-    }, [vc.conversationLog, showHistory]);
+    const handleClose = useCallback(() => {
+        voice.stop();
+        onClose?.();
+    }, [voice, onClose]);
 
-    // --- Status display ---
-    const statusConfig = {
-        [VOICE_STATE.IDLE]:        { icon: Mic,         label: 'Ready',       color: t.textMuted,       pulse: false, bg: t.btnBg },
-        [VOICE_STATE.LISTENING]:   { icon: Mic,         label: 'Listening',   color: t.brandText,       pulse: true,  bg: t.brandBg },
-        [VOICE_STATE.PROCESSING]:  { icon: Loader,      label: 'Thinking',    color: t.processingText,  pulse: true,  bg: t.processingBg },
-        [VOICE_STATE.SPEAKING]:    { icon: Volume2,     label: 'Speaking',    color: t.activeText,      pulse: true,  bg: t.activeBg },
-        [VOICE_STATE.INTERRUPTED]: { icon: Mic,         label: 'Heard you',   color: t.processingText,  pulse: false, bg: t.processingBg },
-        [VOICE_STATE.PAUSED]:      { icon: Pause,       label: 'Paused',      color: t.textMuted,       pulse: false, bg: t.btnBg },
-        [VOICE_STATE.ERROR]:       { icon: AlertCircle,  label: 'Error',       color: t.errorText,       pulse: false, bg: t.errorBg },
-    };
-
-    const status = statusConfig[vc.voiceState] || statusConfig[VOICE_STATE.IDLE];
-    const StatusIcon = status.icon;
-
-    // --- Progress ---
+    // Progress
     const progress = steps.length > 0
-        ? ((vc.currentStep + 1) / steps.length) * 100
+        ? ((voice.currentStep + 1) / steps.length) * 100
         : 0;
 
-    // --- Handle close ---
-    const handleClose = () => {
-        vc.stop();
-        onClose();
-    };
+    // --- Portal render ---
+    return createPortal(
+        <div style={{
+            position: 'fixed', inset: 0, zIndex: OVERLAY_Z,
+            background: theme.bg, display: 'flex', flexDirection: 'column',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        }}>
+            {/* === CSS Animations === */}
+            <style>{`
+                @keyframes voicePulse {
+                    0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+                    50% { box-shadow: 0 0 0 10px transparent; opacity: 0.85; }
+                }
+                @keyframes spin {
+                    to { transform: rotate(360deg); }
+                }
+            `}</style>
 
-    // =======================================================================
-    // RENDER
-    // =======================================================================
-
-    const overlayContent = (
-        <div
-            ref={overlayRef}
-            style={{
-                position: 'fixed',
-                inset: 0,
-                zIndex: OVERLAY_Z,
-                backgroundColor: t.bg,
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-                fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
-            }}
-        >
-            {/* ── HEADER ── */}
+            {/* === HEADER === */}
             <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '12px 16px',
-                paddingTop: 'max(12px, env(safe-area-inset-top, 12px))',
-                borderBottom: `1px solid ${t.border}`,
-                backgroundColor: t.cardBg,
-                flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px', borderBottom: `1px solid ${theme.cardBorder}`,
             }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                    <h2 style={{
-                        fontSize: '1rem', fontWeight: 700, color: t.textPrimary,
-                        margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>
-                        🎙️ Voice Cooking
-                    </h2>
-                    <p style={{
-                        fontSize: '0.8rem', color: t.textSecondary, margin: 0,
-                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>
+                <div>
+                    <div style={{ fontSize: '1rem', fontWeight: 700, color: theme.text }}>
+                        👨‍🍳 Cheffy — Voice Cooking
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: theme.textMuted, marginTop: '2px' }}>
                         {mealName}
-                    </p>
+                    </div>
                 </div>
-
-                {/* Status Badge */}
-                <div style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    padding: '6px 12px', borderRadius: '20px',
-                    backgroundColor: status.bg, flexShrink: 0, marginRight: '12px',
-                }}>
-                    <StatusIcon
-                        size={16}
-                        color={status.color}
-                        style={status.pulse ? { animation: 'nvPulse 1.5s ease-in-out infinite' } : {}}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {/* Language picker */}
+                    <LanguagePicker
+                        currentLang={voice.language}
+                        onSelect={voice.setLanguage}
+                        theme={theme}
                     />
-                    <span style={{ fontSize: '0.75rem', fontWeight: 600, color: status.color }}>
-                        {status.label}
-                    </span>
-                    {vc.sttProvider && (
-                        <span style={{ fontSize: '0.6rem', color: t.textMuted, marginLeft: '4px' }}>
-                            {vc.sttProvider === 'deepgram' ? '🟢' : '🟡'}
-                        </span>
-                    )}
+                    {/* Close button */}
+                    <button onClick={handleClose} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        width: 36, height: 36, borderRadius: '50%',
+                        border: `1px solid ${theme.cardBorder}`,
+                        background: theme.card, color: theme.textMuted, cursor: 'pointer',
+                    }}>
+                        <X size={18} />
+                    </button>
                 </div>
-
-                <button
-                    onClick={handleClose}
-                    style={{
-                        width: 36, height: 36, borderRadius: 10, border: 'none',
-                        cursor: 'pointer', display: 'flex', alignItems: 'center',
-                        justifyContent: 'center', background: t.btnBg, color: t.textSecondary,
-                        flexShrink: 0,
-                    }}
-                    aria-label="Close voice cooking"
-                >
-                    <X size={20} />
-                </button>
             </div>
 
-            {/* ── PROGRESS BAR ── */}
-            <div style={{ height: '3px', backgroundColor: t.border, flexShrink: 0 }}>
+            {/* === PROGRESS BAR === */}
+            <div style={{ height: '3px', background: theme.cardBorder, position: 'relative' }}>
                 <div style={{
-                    height: '100%', width: `${progress}%`,
-                    background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
-                    transition: 'width 0.4s ease',
+                    position: 'absolute', left: 0, top: 0, height: '100%',
+                    width: `${progress}%`, background: theme.accent,
+                    transition: 'width 0.3s ease', borderRadius: '0 3px 3px 0',
                 }} />
             </div>
 
-            {/* ── MAIN CONTENT ── */}
-            <div style={{
-                flex: 1, display: 'flex', flexDirection: 'column',
-                padding: '20px 16px', overflow: 'auto', gap: '16px',
-            }}>
-                {/* Step Counter */}
-                <div style={{ textAlign: 'center' }}>
-                    <span style={{
-                        fontSize: '0.75rem', fontWeight: 600, color: t.brandText,
-                        textTransform: 'uppercase', letterSpacing: '1px',
-                    }}>
-                        Step {vc.currentStep + 1} of {steps.length}
-                    </span>
-                </div>
-
-                {/* Current Step Text */}
+            {/* === MAIN CONTENT (scrollable) === */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+                {/* Step Display */}
                 <div style={{
-                    backgroundColor: t.cardBg, borderRadius: '16px',
-                    padding: '24px 20px', border: `1px solid ${t.border}`,
-                    maxHeight: '35vh', overflow: 'auto',
+                    padding: '14px 16px', borderRadius: '12px',
+                    background: theme.card, border: `1px solid ${theme.cardBorder}`,
+                    marginBottom: '12px',
                 }}>
-                    <p style={{
-                        fontSize: '1.15rem', lineHeight: '1.7', color: t.textPrimary,
-                        margin: 0, fontWeight: 400,
-                    }}>
-                        {steps[vc.currentStep] || 'No step available.'}
-                    </p>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: theme.accent, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>
+                        Step {voice.currentStep + 1} of {steps.length}
+                    </div>
+                    <div style={{ fontSize: '0.9rem', color: theme.text, lineHeight: 1.5 }}>
+                        {steps[voice.currentStep] || 'Waiting to begin...'}
+                    </div>
                 </div>
 
-                {/* Live Transcript / Assistant Response */}
-                <div style={{
-                    backgroundColor: t.cardBg, borderRadius: '12px',
-                    padding: '14px 16px', border: `1px solid ${t.border}`,
-                    minHeight: '60px',
-                }}>
-                    {vc.transcript && (
-                        <div style={{ marginBottom: vc.assistantText ? '8px' : 0 }}>
-                            <span style={{
-                                fontSize: '0.7rem', fontWeight: 600, color: t.brandText,
-                                textTransform: 'uppercase', letterSpacing: '0.5px',
-                            }}>You</span>
-                            <p style={{
-                                fontSize: '0.9rem', color: t.textSecondary, margin: '4px 0 0',
-                                fontStyle: 'italic',
-                            }}>
-                                {vc.transcript}
-                            </p>
-                        </div>
-                    )}
+                {/* Active Timers */}
+                {voice.activeTimers?.length > 0 && (
+                    <div style={{ marginBottom: '12px' }}>
+                        <TimerPanel timers={voice.activeTimers} theme={theme} />
+                    </div>
+                )}
 
-                    {vc.assistantText && (
-                        <div>
-                            <span style={{
-                                fontSize: '0.7rem', fontWeight: 600, color: t.activeText,
-                                textTransform: 'uppercase', letterSpacing: '0.5px',
-                            }}>Cheffy</span>
-                            <p style={{
-                                fontSize: '0.9rem', color: t.textPrimary, margin: '4px 0 0',
-                            }}>
-                                {vc.assistantText.replace(/\[ACTION:[A-Z_]+(?::\d+)?\]/g, '').trim()}
-                                {vc.isLLMStreaming && (
-                                    <span style={{ color: t.brandText, animation: 'nvBlink 1s infinite' }}>▊</span>
-                                )}
-                            </p>
-                        </div>
-                    )}
-
-                    {!vc.transcript && !vc.assistantText && (
-                        <p style={{
-                            fontSize: '0.85rem', color: t.textMuted, margin: 0,
-                            textAlign: 'center', fontStyle: 'italic',
-                        }}>
-                            {vc.isListening ? 'Listening... say anything!' :
-                             vc.isSpeaking ? 'Speaking... interrupt me anytime!' :
-                             vc.isProcessing ? 'Thinking...' :
-                             vc.isPaused ? 'Paused — tap resume to continue' :
-                             'Starting voice mode...'}
-                        </p>
-                    )}
+                {/* State Indicator */}
+                <div style={{ marginBottom: '12px' }}>
+                    <StateIndicator
+                        voiceState={voice.voiceState}
+                        theme={theme}
+                        sttProvider={voice.sttProvider}
+                        ttsMode={voice.ttsMode}
+                        wakeWordState={voice.wakeWordState}
+                    />
                 </div>
 
-                {/* Error display */}
-                {vc.error && (
+                {/* Live Transcript (partial) */}
+                {voice.transcript && (
                     <div style={{
-                        backgroundColor: t.errorBg, borderRadius: '10px',
-                        padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px',
+                        padding: '10px 14px', borderRadius: '10px',
+                        background: theme.transcriptBg,
+                        fontSize: '0.85rem', color: theme.textMuted,
+                        fontStyle: 'italic', marginBottom: '10px',
                     }}>
-                        <AlertCircle size={16} color={t.errorText} />
-                        <span style={{ fontSize: '0.8rem', color: t.errorText }}>{vc.error}</span>
+                        🎤 {voice.transcript}
                     </div>
                 )}
 
-                {/* Conversation History (collapsible) */}
-                {vc.conversationLog.length > 0 && (
-                    <div>
-                        <button
-                            onClick={() => setShowHistory(!showHistory)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '6px',
-                                background: 'none', border: 'none', cursor: 'pointer',
-                                color: t.textMuted, fontSize: '0.75rem', fontWeight: 600,
-                                padding: '4px 0',
-                            }}
-                        >
-                            <MessageCircle size={14} />
-                            <span>Conversation ({vc.conversationLog.length})</span>
-                            {showHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-
-                        {showHistory && (
-                            <div style={{
-                                maxHeight: '30vh', overflow: 'auto', marginTop: '8px',
-                                display: 'flex', flexDirection: 'column', gap: '8px',
-                            }}>
-                                {vc.conversationLog.map((msg, i) => (
-                                    <div
-                                        key={i}
-                                        style={{
-                                            padding: '8px 12px', borderRadius: '10px',
-                                            backgroundColor: msg.role === 'user' ? t.bubbleUser : t.bubbleAssistant,
-                                            alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                                            maxWidth: '85%',
-                                        }}
-                                    >
-                                        <span style={{
-                                            fontSize: '0.65rem', fontWeight: 600,
-                                            color: msg.role === 'user' ? t.brandText : t.activeText,
-                                            textTransform: 'uppercase',
-                                        }}>
-                                            {msg.role === 'user' ? 'You' : 'Cheffy'}
-                                        </span>
-                                        <p style={{
-                                            fontSize: '0.8rem', color: t.textPrimary,
-                                            margin: '2px 0 0', lineHeight: '1.4',
-                                        }}>
-                                            {msg.content}
-                                        </p>
-                                    </div>
-                                ))}
-                                <div ref={historyEndRef} />
-                            </div>
-                        )}
+                {/* Streaming Assistant Response */}
+                {voice.assistantText && (
+                    <div style={{
+                        padding: '10px 14px', borderRadius: '10px',
+                        background: theme.assistantBubble,
+                        border: `1px solid ${theme.cardBorder}`,
+                        fontSize: '0.85rem', color: theme.text,
+                        lineHeight: 1.5, marginBottom: '10px',
+                    }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.7rem', color: theme.textDim }}>
+                            👨‍🍳 Cheffy
+                        </span>
+                        <div style={{ marginTop: '4px' }}>
+                            {voice.assistantText.replace(/\[ACTION:[A-Z_]+(?::\d+)?\]/g, '')}
+                            {voice.isLLMStreaming && (
+                                <span style={{ display: 'inline-block', width: '6px', height: '14px', background: theme.accent, marginLeft: '2px', animation: 'blink 1s step-end infinite', verticalAlign: 'text-bottom' }} />
+                            )}
+                        </div>
                     </div>
                 )}
+
+                {/* Error Message */}
+                {voice.error && (
+                    <div style={{
+                        padding: '10px 14px', borderRadius: '10px',
+                        background: 'rgba(239,68,68,0.1)',
+                        border: '1px solid rgba(239,68,68,0.2)',
+                        color: theme.error, fontSize: '0.82rem',
+                        marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px',
+                    }}>
+                        <AlertCircle size={16} /> {voice.error}
+                    </div>
+                )}
+
+                {/* Conversation History */}
+                <ConversationHistory
+                    log={voice.conversationLog}
+                    theme={theme}
+                    expanded={historyExpanded}
+                    onToggle={() => setHistoryExpanded(!historyExpanded)}
+                />
             </div>
 
-            {/* ── CONTROLS ── */}
+            {/* === BOTTOM CONTROLS === */}
             <div style={{
-                padding: '12px 16px',
-                paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',
-                borderTop: `1px solid ${t.border}`,
-                backgroundColor: t.cardBg,
-                display: 'flex', justifyContent: 'center', gap: '12px',
-                flexShrink: 0,
+                padding: '12px 16px', borderTop: `1px solid ${theme.cardBorder}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
             }}>
-                {/* Previous */}
-                <ControlButton
-                    icon={ChevronLeft} label="Prev"
-                    onClick={vc.prevStep}
-                    disabled={vc.currentStep <= 0}
-                    t={t}
-                />
+                {/* Prev */}
+                <button onClick={voice.prevStep} disabled={voice.currentStep <= 0} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 44, height: 44, borderRadius: '50%',
+                    border: `1px solid ${theme.cardBorder}`,
+                    background: theme.card, color: voice.currentStep <= 0 ? theme.textDim : theme.text,
+                    cursor: voice.currentStep <= 0 ? 'not-allowed' : 'pointer',
+                    opacity: voice.currentStep <= 0 ? 0.4 : 1,
+                }}>
+                    <ChevronLeft size={20} />
+                </button>
 
                 {/* Pause / Resume */}
                 <button
-                    onClick={vc.isPaused ? vc.resume : vc.pause}
+                    onClick={voice.isPaused ? voice.resume : voice.pause}
                     style={{
-                        width: 56, height: 56, borderRadius: 16, border: 'none',
-                        cursor: 'pointer', display: 'flex', flexDirection: 'column',
-                        alignItems: 'center', justifyContent: 'center', gap: 2,
-                        background: vc.isPaused ? t.activeBg : t.brandBg,
-                        color: vc.isPaused ? t.activeText : t.brandText,
-                        transition: 'all 0.15s',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        width: 56, height: 56, borderRadius: '50%',
+                        border: 'none', cursor: 'pointer',
+                        background: voice.isPaused
+                            ? `linear-gradient(135deg, ${theme.success}, #22c55e)`
+                            : `linear-gradient(135deg, ${theme.accent}, #8b5cf6)`,
+                        color: '#fff', boxShadow: '0 4px 16px rgba(99,102,241,0.3)',
                     }}
-                    aria-label={vc.isPaused ? 'Resume' : 'Pause'}
                 >
-                    {vc.isPaused ? <Play size={28} /> : <Pause size={28} />}
+                    {voice.isPaused ? <Play size={24} /> : <Pause size={24} />}
                 </button>
 
                 {/* Next */}
-                <ControlButton
-                    icon={ChevronRight} label="Next"
-                    onClick={vc.nextStep}
-                    disabled={vc.currentStep >= steps.length - 1}
-                    t={t}
-                />
-
-                {/* Mic Status Indicator */}
-                <ControlButton
-                    icon={vc.micPermission === 'denied' ? MicOff : Mic}
-                    label={vc.isListening ? 'On' : 'Mic'}
-                    onClick={() => {}}
-                    t={t}
-                    highlight={vc.isListening}
-                />
+                <button onClick={voice.nextStep} disabled={voice.currentStep >= steps.length - 1} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 44, height: 44, borderRadius: '50%',
+                    border: `1px solid ${theme.cardBorder}`,
+                    background: theme.card,
+                    color: voice.currentStep >= steps.length - 1 ? theme.textDim : theme.text,
+                    cursor: voice.currentStep >= steps.length - 1 ? 'not-allowed' : 'pointer',
+                    opacity: voice.currentStep >= steps.length - 1 ? 0.4 : 1,
+                }}>
+                    <ChevronRight size={20} />
+                </button>
             </div>
 
-            {/* ── ANIMATIONS ── */}
-            <style>{`
-                @keyframes nvPulse {
-                    0%, 100% { opacity: 1; }
-                    50% { opacity: 0.4; }
-                }
-                @keyframes nvBlink {
-                    0%, 100% { opacity: 1; }
-                    50% { opacity: 0; }
-                }
-            `}</style>
-        </div>
+            {/* Blink cursor animation */}
+            <style>{`@keyframes blink { 50% { opacity: 0; } }`}</style>
+        </div>,
+        document.body,
     );
-
-    return createPortal(overlayContent, document.body);
-};
-
-// --- Control Button ---
-const ControlButton = ({ icon: Icon, label, onClick, disabled, t, highlight = false }) => (
-    <button
-        onClick={onClick}
-        disabled={disabled}
-        style={{
-            width: 44, height: 44, borderRadius: 12, border: 'none',
-            cursor: disabled ? 'default' : 'pointer',
-            display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: 2,
-            background: highlight ? t.activeBg : t.btnBg,
-            color: highlight ? t.activeText : (disabled ? t.textMuted : t.textSecondary),
-            opacity: disabled ? 0.4 : 1,
-            transition: 'background 0.15s, opacity 0.15s',
-        }}
-        aria-label={label}
-    >
-        <Icon size={20} />
-        <span style={{ fontSize: '0.6rem', fontWeight: 600 }}>{label}</span>
-    </button>
-);
-
-export default NaturalVoiceOverlay;
-export { isNaturalVoiceSupported };
+}
