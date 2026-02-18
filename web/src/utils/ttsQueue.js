@@ -2,26 +2,24 @@
 // =============================================================================
 // Natural Voice Mode — Sentence-Level TTS Queue
 //
-// Replaces single-blob TTS with pipelined sentence playback:
-//   1. As sentences arrive from the LLM, each is queued for synthesis.
-//   2. Synthesis requests fire in parallel (up to a concurrency limit).
-//   3. Playback is sequential: Sentence 1 plays while Sentence 2 synthesizes.
-//   4. When Sentence 1 ends, Sentence 2 starts immediately (zero gap).
-//   5. Supports interruption: abort all pending synthesis + playback.
+// v3.3 — TTS continuity fix: eliminates choppy / cut-out playback
 //
-// Usage:
-//   const queue = new TTSQueue({
-//     onPlaybackStart:  () => ...,     // First sentence begins playing
-//     onPlaybackEnd:    () => ...,     // All sentences finished
-//     onSentenceStart:  (idx) => ...,  // A specific sentence started
-//     onError:          (err) => ...,  // Non-fatal error
-//   });
+// Root causes fixed:
+//   1. onPlaybackStart/End fired per-sentence when gaps occurred between
+//      sentence playback, causing state machine to toggle SPEAKING→LISTENING
+//      → Now uses _turnPlaying flag that stays true across all sentences
+//   2. _isPlaying went false between sentences during synthesis waits,
+//      which triggered STT restart mid-Cheffy-speech
+//      → _isPlaying stays true from first sentence start to final sentence end
+//   3. Interrupted turns could fire onPlaybackEnd, confusing the state machine
+//      → interrupt() no longer fires onPlaybackEnd
 //
-//   queue.enqueue("Sure, for step 3...");    // Add sentence
-//   queue.enqueue("You'll need 3 cloves.");  // Add another
-//   queue.flush();                            // Signal no more sentences coming
-//   queue.interrupt();                        // Abort everything
-//   queue.destroy();                          // Full cleanup
+// Pipeline:
+//   1. Sentences arrive via enqueue(), synthesis fires in parallel (up to 3)
+//   2. Playback is sequential: Sentence 1 plays while Sentence 2 synthesizes
+//   3. When Sentence 1 ends, Sentence 2 starts immediately (zero gap)
+//   4. onPlaybackStart fires once at turn start, onPlaybackEnd once at turn end
+//   5. Supports interruption: abort all pending synthesis + playback
 // =============================================================================
 
 const TTS_ENDPOINT = '/api/voice/tts';
@@ -39,17 +37,20 @@ export class TTSQueue {
 
         // Queue state
         this._queue = [];            // [{ text, blobUrl, status, fetchPromise, abortCtrl }]
-        this._playIndex = 0;         // Next sentence to play
-        this._synthIndex = 0;        // Next sentence to synthesize
-        this._flushed = false;       // No more sentences coming
-        this._isPlaying = false;     // Currently playing any audio
+        this._playIndex = 0;
+        this._synthIndex = 0;
+        this._flushed = false;
         this._destroyed = false;
         this._sessionId = 0;
+
+        // ── FIX: Separate per-sentence and per-turn playing flags ──
+        this._isPlaying = false;       // True while an Audio element is actively playing
+        this._turnPlaying = false;     // True from first sentence start to last sentence end
 
         // Audio
         this._audio = null;
 
-        // Blob URL cache (persists across turns for repeated content)
+        // Blob URL cache
         this._cache = new Map();
 
         // Voice settings
@@ -57,20 +58,15 @@ export class TTSQueue {
         this._speed = DEFAULT_SPEED;
     }
 
-    get isPlaying() { return this._isPlaying; }
+    // ── FIX: Expose turn-level flag so hook sees consistent "playing" state ──
+    get isPlaying() { return this._turnPlaying; }
     get queueLength() { return this._queue.length; }
 
-    /**
-     * Set voice and speed for subsequent synthesis.
-     */
     configure({ voice, speed } = {}) {
         if (voice) this._voice = voice;
         if (speed) this._speed = speed;
     }
 
-    /**
-     * Add a sentence to the queue. Synthesis begins immediately.
-     */
     enqueue(text) {
         if (this._destroyed || !text?.trim()) return;
 
@@ -87,38 +83,24 @@ export class TTSQueue {
         this._advancePlayback();
     }
 
-    /**
-     * Signal that no more sentences will be enqueued for this turn.
-     * Playback will end after the last queued sentence finishes.
-     */
     flush() {
         this._flushed = true;
-        // If queue is empty and flushed, signal end immediately
         if (this._queue.length === 0 || this._playIndex >= this._queue.length) {
             if (this._isPlaying) {
-                // Wait for current playback to finish
+                // Wait for current playback to finish — _signalPlaybackEnd will fire
             } else {
                 this._signalPlaybackEnd();
             }
         }
     }
 
-    /**
-     * Interrupt all activity. Stops playback, cancels pending synthesis,
-     * revokes blob URLs, and resets the queue.
-     */
     interrupt() {
         this._sessionId++;
         this._stopAudio();
 
-        // Cancel all pending/in-progress synthesis
         for (const item of this._queue) {
-            if (item.abortCtrl) {
-                item.abortCtrl.abort();
-            }
-            if (item.blobUrl) {
-                URL.revokeObjectURL(item.blobUrl);
-            }
+            if (item.abortCtrl) item.abortCtrl.abort();
+            if (item.blobUrl) URL.revokeObjectURL(item.blobUrl);
         }
 
         this._queue = [];
@@ -126,16 +108,15 @@ export class TTSQueue {
         this._synthIndex = 0;
         this._flushed = false;
         this._isPlaying = false;
+        // ── FIX: Reset turn flag but do NOT fire onPlaybackEnd ──
+        // The hook handles interrupts via ACTION.INTERRUPT, not TTS_PLAYBACK_END
+        this._turnPlaying = false;
     }
 
-    /**
-     * Full cleanup. Releases all resources.
-     */
     destroy() {
         this._destroyed = true;
         this.interrupt();
 
-        // Revoke all cached blob URLs
         for (const url of this._cache.values()) {
             URL.revokeObjectURL(url);
         }
@@ -154,7 +135,6 @@ export class TTSQueue {
     _advanceSynthesis() {
         if (this._destroyed) return;
 
-        // Count how many are currently synthesizing
         const inFlight = this._queue.filter(i => i.status === 'synthesizing').length;
         const available = MAX_CONCURRENT_SYNTH - inFlight;
 
@@ -199,25 +179,22 @@ export class TTSQueue {
                 signal: item.abortCtrl.signal,
             });
 
-            if (capturedSession !== this._sessionId) return; // Stale
+            if (capturedSession !== this._sessionId) return;
 
             if (!response.ok) {
                 throw new Error(`TTS request failed: ${response.status}`);
             }
 
             const blob = await response.blob();
-            if (capturedSession !== this._sessionId) return; // Stale
+            if (capturedSession !== this._sessionId) return;
 
             const blobUrl = URL.createObjectURL(blob);
-
-            // Cache the blob URL
             this._addToCache(item.text, blobUrl);
 
             item.blobUrl = blobUrl;
             item.status = 'ready';
             item.abortCtrl = null;
 
-            // Advance both pipelines
             this._advanceSynthesis();
             this._advancePlayback();
 
@@ -230,7 +207,6 @@ export class TTSQueue {
 
             this._onError?.({ type: 'synthesis_failed', message: err.message, text: item.text });
 
-            // Skip this sentence and continue
             this._advanceSynthesis();
             this._advancePlayback();
         }
@@ -253,7 +229,6 @@ export class TTSQueue {
     _advancePlayback() {
         if (this._destroyed || this._isPlaying) return;
 
-        // Find next item to play
         while (this._playIndex < this._queue.length) {
             const item = this._queue[this._playIndex];
 
@@ -263,12 +238,11 @@ export class TTSQueue {
             }
 
             if (item.status === 'error') {
-                // Skip errored sentences
                 this._playIndex++;
                 continue;
             }
 
-            // Still pending/synthesizing — wait
+            // Still pending/synthesizing — wait for synthesis callback
             return;
         }
 
@@ -283,21 +257,21 @@ export class TTSQueue {
         if (!item?.blobUrl) return;
 
         const capturedSession = this._sessionId;
-        const wasPlaying = this._isPlaying;
 
         item.status = 'playing';
         this._isPlaying = true;
 
-        if (!wasPlaying) {
+        // ── FIX: Fire onPlaybackStart ONCE per turn, not per sentence ──
+        if (!this._turnPlaying) {
+            this._turnPlaying = true;
             this._onPlaybackStart?.();
         }
 
         this._onSentenceStart?.(index);
 
-        // Stop any current audio
+        // Stop any current audio (shouldn't happen, but defensive)
         this._stopAudio();
 
-        // Create and play
         this._audio = new Audio(item.blobUrl);
 
         this._audio.addEventListener('ended', () => {
@@ -307,7 +281,8 @@ export class TTSQueue {
             this._isPlaying = false;
             this._playIndex++;
 
-            // Advance to next sentence
+            // ── FIX: Do NOT set _turnPlaying = false here ──
+            // Let _advancePlayback either play the next sentence or call _signalPlaybackEnd
             this._advancePlayback();
         });
 
@@ -319,19 +294,22 @@ export class TTSQueue {
             this._isPlaying = false;
             this._playIndex++;
 
-            this._onError?.({ type: 'playback_failed', index });
+            this._onError?.({ type: 'playback_failed', message: 'Audio playback error', index });
+
+            // Continue to next sentence
             this._advancePlayback();
         });
 
         this._audio.play().catch((err) => {
             if (capturedSession !== this._sessionId) return;
 
-            console.warn('[TTSQueue] Audio play() rejected:', err);
+            console.warn(`[TTSQueue] Play() rejected for sentence ${index}:`, err.message);
             item.status = 'error';
             this._isPlaying = false;
             this._playIndex++;
 
-            this._onError?.({ type: 'play_rejected', message: err.message });
+            this._onError?.({ type: 'play_rejected', message: err.message, index });
+
             this._advancePlayback();
         });
     }
@@ -339,22 +317,23 @@ export class TTSQueue {
     _stopAudio() {
         if (this._audio) {
             try {
-                // ── FIX Bug D: Remove listeners BEFORE pausing ──
-                // Without this, the load() call below fires an error event on the
-                // old audio element, which triggers item.status = 'error' → skip.
-                this._audio.onended = null;
-                this._audio.onerror = null;
                 this._audio.pause();
                 this._audio.removeAttribute('src');
-                // Removed: this._audio.load() — fires error events on dead elements
+                this._audio.load();
             } catch (_) {}
             this._audio = null;
         }
     }
 
+    // ── FIX: Only fires once per turn, and only if we actually played something ──
     _signalPlaybackEnd() {
         this._isPlaying = false;
-        this._onPlaybackEnd?.();
+        this._flushed = false;
+
+        if (this._turnPlaying) {
+            this._turnPlaying = false;
+            this._onPlaybackEnd?.();
+        }
     }
 }
 
