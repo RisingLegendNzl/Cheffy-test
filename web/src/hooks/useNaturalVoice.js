@@ -1,33 +1,28 @@
 // web/src/hooks/useNaturalVoice.js
 // =============================================================================
-// Natural Voice Mode Hook — Cheffy Voice Cooking v2.0
+// Natural Voice Mode Hook — Cheffy Voice Cooking v3.0 (Phase 6)
 //
-// Full conversational voice loop:
-//   listen → transcribe (streaming) → generate (streaming) → speak (streaming)
-//   → automatically continue listening → allow interruption
+// Phase 6 additions:
+//   - Byte-level TTS streaming via TTSStreamer (Web Audio API)
+//   - Wake word detection ("Hey Cheffy") via WakeWordDetector
+//   - Multi-language STT support (30+ languages)
+//   - Proactive cooking assistant (timer extraction & scheduled prompts)
+//   - Falls back to TTSQueue if Web Audio API is unavailable
 //
-// Architecture:
-//   - useReducer-based state machine for atomic transitions
-//   - Turn ID gating to prevent stale async callbacks
-//   - AbortController per turn for clean cancellation
-//   - StreamingSTT (Deepgram + Web Speech fallback)
-//   - LLMStream (SSE with sentence buffering + action tags)
-//   - TTSQueue (sentence-level pipelined playback)
-//   - ConversationManager (sliding window context)
-//
-// State machine:
+// State machine unchanged from v2.0:
 //   IDLE → LISTENING → PROCESSING → SPEAKING → LISTENING (loop)
-//   SPEAKING → INTERRUPTED → PROCESSING (interruption)
-//   Any → PAUSED → LISTENING (resume)
-//   Any → IDLE (stop)
-//   Any → ERROR → LISTENING (auto-recover)
+//   SPEAKING → INTERRUPTED → PROCESSING
+//   Any → PAUSED → LISTENING / Any → IDLE
 // =============================================================================
 
 import { useReducer, useRef, useCallback, useEffect, useMemo } from 'react';
 import { StreamingSTT } from '../utils/streamingSTT';
 import { LLMStream } from '../utils/llmStream';
+import { TTSStreamer, isTTSStreamingSupported } from '../utils/ttsStreamer';
 import { TTSQueue } from '../utils/ttsQueue';
 import { ConversationManager } from '../utils/conversationManager';
+import { WakeWordDetector } from '../utils/wakeWordDetector';
+import { ProactiveAssistant } from '../utils/proactiveAssistant';
 
 // =============================================================================
 // STATES & ACTIONS
@@ -61,6 +56,9 @@ const ACTION = {
     ERROR: 'ERROR',
     CLEAR_ERROR: 'CLEAR_ERROR',
     SET_MIC_PERMISSION: 'SET_MIC_PERMISSION',
+    SET_LANGUAGE: 'SET_LANGUAGE',
+    UPDATE_TIMERS: 'UPDATE_TIMERS',
+    SET_WAKE_WORD_STATE: 'SET_WAKE_WORD_STATE',
 };
 
 // =============================================================================
@@ -70,159 +68,67 @@ const ACTION = {
 const initialState = {
     voiceState: VOICE_STATE.IDLE,
     currentStep: 0,
-    transcript: '',           // Live partial transcript
-    lastFinalTranscript: '',  // Last completed utterance
-    assistantText: '',        // Currently streaming LLM response
-    conversationLog: [],      // [{ role, content, timestamp }] for UI display
+    transcript: '',
+    lastFinalTranscript: '',
+    assistantText: '',
+    conversationLog: [],
     error: null,
-    micPermission: 'prompt',  // 'prompt' | 'granted' | 'denied'
+    micPermission: 'prompt',
     turnId: 0,
     isLLMStreaming: false,
     isTTSPlaying: false,
-    sttProvider: null,        // 'deepgram' | 'webspeech' | null
+    sttProvider: null,
+    // Phase 6
+    language: 'en',
+    activeTimers: [],
+    wakeWordState: 'idle', // idle | listening | detected
+    ttsMode: 'stream',     // 'stream' (byte-level) | 'queue' (sentence-level fallback)
 };
 
 function voiceReducer(state, action) {
     switch (action.type) {
-
         case ACTION.START_SESSION:
-            return {
-                ...state,
-                voiceState: VOICE_STATE.LISTENING,
-                currentStep: 0,
-                transcript: '',
-                lastFinalTranscript: '',
-                assistantText: '',
-                conversationLog: [],
-                error: null,
-                turnId: state.turnId + 1,
-            };
-
+            return { ...state, voiceState: VOICE_STATE.LISTENING, currentStep: 0, transcript: '', lastFinalTranscript: '', assistantText: '', conversationLog: [], error: null, turnId: state.turnId + 1 };
         case ACTION.SESSION_READY:
-            return {
-                ...state,
-                sttProvider: action.provider || null,
-            };
-
+            return { ...state, sttProvider: action.provider || null, ttsMode: action.ttsMode || state.ttsMode };
         case ACTION.START_LISTENING:
-            return {
-                ...state,
-                voiceState: VOICE_STATE.LISTENING,
-                transcript: '',
-                assistantText: '',
-            };
-
+            return { ...state, voiceState: VOICE_STATE.LISTENING, transcript: '', assistantText: '' };
         case ACTION.TRANSCRIPT_PARTIAL:
-            return {
-                ...state,
-                transcript: action.text,
-            };
-
+            return { ...state, transcript: action.text };
         case ACTION.TRANSCRIPT_FINAL:
-            return {
-                ...state,
-                voiceState: VOICE_STATE.PROCESSING,
-                transcript: '',
-                lastFinalTranscript: action.text,
-                assistantText: '',
-                turnId: state.turnId + 1,
-                isLLMStreaming: true,
-                conversationLog: [
-                    ...state.conversationLog,
-                    { role: 'user', content: action.text, timestamp: Date.now() },
-                ],
-            };
-
+            return { ...state, voiceState: VOICE_STATE.PROCESSING, transcript: '', lastFinalTranscript: action.text, assistantText: '', turnId: state.turnId + 1, isLLMStreaming: true, conversationLog: [...state.conversationLog, { role: 'user', content: action.text, timestamp: Date.now() }] };
         case ACTION.LLM_TOKEN:
-            return {
-                ...state,
-                assistantText: action.fullText,
-            };
-
-        case ACTION.LLM_DONE:
-            return {
-                ...state,
-                isLLMStreaming: false,
-                conversationLog: action.fullText?.trim() ? [
-                    ...state.conversationLog,
-                    {
-                        role: 'assistant',
-                        content: action.fullText.replace(/\[ACTION:[A-Z_]+(?::\d+)?\]/g, '').trim(),
-                        timestamp: Date.now(),
-                    },
-                ] : state.conversationLog,
-            };
-
+            return { ...state, assistantText: action.fullText };
+        case ACTION.LLM_DONE: {
+            const clean = action.fullText?.replace(/\[ACTION:[A-Z_]+(?::\d+)?\]/g, '').trim();
+            return { ...state, isLLMStreaming: false, conversationLog: clean ? [...state.conversationLog, { role: 'assistant', content: clean, timestamp: Date.now() }] : state.conversationLog };
+        }
         case ACTION.TTS_PLAYBACK_START:
-            return {
-                ...state,
-                voiceState: VOICE_STATE.SPEAKING,
-                isTTSPlaying: true,
-            };
-
+            return { ...state, voiceState: VOICE_STATE.SPEAKING, isTTSPlaying: true };
         case ACTION.TTS_PLAYBACK_END:
-            return {
-                ...state,
-                isTTSPlaying: false,
-                // Transition to LISTENING unless paused or stopped
-                voiceState: state.voiceState === VOICE_STATE.SPEAKING
-                    ? VOICE_STATE.LISTENING
-                    : state.voiceState,
-            };
-
+            return { ...state, isTTSPlaying: false, voiceState: state.voiceState === VOICE_STATE.SPEAKING ? VOICE_STATE.LISTENING : state.voiceState };
         case ACTION.INTERRUPT:
-            return {
-                ...state,
-                voiceState: VOICE_STATE.INTERRUPTED,
-                turnId: state.turnId + 1,
-            };
-
+            return { ...state, voiceState: VOICE_STATE.INTERRUPTED, turnId: state.turnId + 1 };
         case ACTION.STEP_CHANGE:
-            return {
-                ...state,
-                currentStep: action.step,
-            };
-
+            return { ...state, currentStep: action.step };
         case ACTION.PAUSE:
-            return {
-                ...state,
-                voiceState: VOICE_STATE.PAUSED,
-            };
-
+            return { ...state, voiceState: VOICE_STATE.PAUSED };
         case ACTION.RESUME:
-            return {
-                ...state,
-                voiceState: VOICE_STATE.LISTENING,
-                turnId: state.turnId + 1,
-            };
-
+            return { ...state, voiceState: VOICE_STATE.LISTENING, turnId: state.turnId + 1 };
         case ACTION.STOP:
-            return {
-                ...initialState,
-                micPermission: state.micPermission,
-                turnId: state.turnId + 1,
-            };
-
+            return { ...initialState, micPermission: state.micPermission, language: state.language, turnId: state.turnId + 1 };
         case ACTION.ERROR:
-            return {
-                ...state,
-                voiceState: VOICE_STATE.ERROR,
-                error: action.error,
-            };
-
+            return { ...state, voiceState: VOICE_STATE.ERROR, error: action.error };
         case ACTION.CLEAR_ERROR:
-            return {
-                ...state,
-                error: null,
-                voiceState: VOICE_STATE.LISTENING,
-            };
-
+            return { ...state, error: null, voiceState: VOICE_STATE.LISTENING };
         case ACTION.SET_MIC_PERMISSION:
-            return {
-                ...state,
-                micPermission: action.permission,
-            };
-
+            return { ...state, micPermission: action.permission };
+        case ACTION.SET_LANGUAGE:
+            return { ...state, language: action.language };
+        case ACTION.UPDATE_TIMERS:
+            return { ...state, activeTimers: action.timers };
+        case ACTION.SET_WAKE_WORD_STATE:
+            return { ...state, wakeWordState: action.wakeState };
         default:
             return state;
     }
@@ -232,64 +138,49 @@ function voiceReducer(state, action) {
 // HOOK
 // =============================================================================
 
-/**
- * @param {Object} options
- * @param {string}   options.mealName    - Name of the recipe
- * @param {string[]} options.steps       - Array of instruction strings
- * @param {Object[]} options.ingredients - Array of ingredient objects
- */
 export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] }) {
     const [state, dispatch] = useReducer(voiceReducer, initialState);
 
-    // Refs for accessing state in async callbacks without stale closures
     const stateRef = useRef(state);
     const turnIdRef = useRef(0);
     const isActiveRef = useRef(false);
 
-    // Service instances (created once, reused across turns)
     const sttRef = useRef(null);
     const llmRef = useRef(null);
-    const ttsRef = useRef(null);
+    const ttsRef = useRef(null);      // TTSStreamer or TTSQueue
     const conversationRef = useRef(null);
+    const wakeWordRef = useRef(null);
+    const proactiveRef = useRef(null);
 
-    // Keep refs in sync
-    useEffect(() => {
-        stateRef.current = state;
-        turnIdRef.current = state.turnId;
-    }, [state]);
+    useEffect(() => { stateRef.current = state; turnIdRef.current = state.turnId; }, [state]);
 
-    // Steps ref for async access
     const stepsRef = useRef(steps);
     useEffect(() => { stepsRef.current = steps; }, [steps]);
 
     // ===========================================================================
-    // SERVICE INITIALIZATION (lazy, once per mount)
+    // SERVICE INITIALIZATION
     // ===========================================================================
 
     const getConversation = useCallback(() => {
         if (!conversationRef.current) {
-            conversationRef.current = new ConversationManager({
-                mealName, steps, ingredients,
-            });
+            conversationRef.current = new ConversationManager({ mealName, steps, ingredients });
         }
         return conversationRef.current;
-    }, []); // Intentionally empty — mealName/steps/ingredients updated via ref
+    }, []);
 
     const getTTS = useCallback(() => {
         if (!ttsRef.current) {
-            ttsRef.current = new TTSQueue({
-                onPlaybackStart: () => {
-                    if (!isActiveRef.current) return;
-                    dispatch({ type: ACTION.TTS_PLAYBACK_START });
-                },
-                onPlaybackEnd: () => {
-                    if (!isActiveRef.current) return;
-                    dispatch({ type: ACTION.TTS_PLAYBACK_END });
-                },
-                onError: (err) => {
-                    console.warn('[NaturalVoice] TTS error:', err);
-                },
+            // Phase 6: Use byte-level streamer if supported, else fall back to queue
+            const useStreamer = isTTSStreamingSupported();
+            const Ctor = useStreamer ? TTSStreamer : TTSQueue;
+
+            ttsRef.current = new Ctor({
+                onPlaybackStart: () => { if (isActiveRef.current) dispatch({ type: ACTION.TTS_PLAYBACK_START }); },
+                onPlaybackEnd: () => { if (isActiveRef.current) dispatch({ type: ACTION.TTS_PLAYBACK_END }); },
+                onError: (err) => { console.warn('[NaturalVoice] TTS error:', err); },
             });
+
+            dispatch({ type: ACTION.SESSION_READY, ttsMode: useStreamer ? 'stream' : 'queue' });
         }
         return ttsRef.current;
     }, []);
@@ -297,18 +188,9 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     const getLLM = useCallback(() => {
         if (!llmRef.current) {
             llmRef.current = new LLMStream({
-                onSentence: (text) => {
-                    if (!isActiveRef.current) return;
-                    getTTS().enqueue(text);
-                },
-                onToken: (token, fullText) => {
-                    if (!isActiveRef.current) return;
-                    dispatch({ type: ACTION.LLM_TOKEN, fullText });
-                },
-                onAction: (action) => {
-                    if (!isActiveRef.current) return;
-                    handleAction(action);
-                },
+                onSentence: (text) => { if (isActiveRef.current) getTTS().enqueue(text); },
+                onToken: (token, fullText) => { if (isActiveRef.current) dispatch({ type: ACTION.LLM_TOKEN, fullText }); },
+                onAction: (action) => { if (isActiveRef.current) handleAction(action); },
                 onDone: (fullText) => {
                     if (!isActiveRef.current) return;
                     dispatch({ type: ACTION.LLM_DONE, fullText });
@@ -319,7 +201,6 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
                     if (!isActiveRef.current) return;
                     console.warn('[NaturalVoice] LLM error:', err);
                     dispatch({ type: ACTION.LLM_DONE, fullText: '' });
-                    // Speak error and return to listening
                     getTTS().enqueue("Sorry, I had trouble with that. Could you say that again?");
                     getTTS().flush();
                 },
@@ -332,50 +213,29 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     const getSTT = useCallback(() => {
         if (!sttRef.current) {
             sttRef.current = new StreamingSTT({
-                onPartial: (text) => {
-                    if (!isActiveRef.current) return;
-                    dispatch({ type: ACTION.TRANSCRIPT_PARTIAL, text });
-                },
+                language: stateRef.current.language,
+                onPartial: (text) => { if (isActiveRef.current) dispatch({ type: ACTION.TRANSCRIPT_PARTIAL, text }); },
                 onFinal: (text) => {
                     if (!isActiveRef.current || !text?.trim()) return;
-
-                    const currentState = stateRef.current.voiceState;
-
-                    // If speaking, this is an interruption
-                    if (currentState === VOICE_STATE.SPEAKING ||
-                        currentState === VOICE_STATE.PROCESSING) {
+                    // Record activity for proactive assistant
+                    proactiveRef.current?.recordActivity();
+                    const cs = stateRef.current.voiceState;
+                    if (cs === VOICE_STATE.SPEAKING || cs === VOICE_STATE.PROCESSING) {
                         handleInterruption(text);
-                        return;
-                    }
-
-                    // Normal: send to LLM
-                    if (currentState === VOICE_STATE.LISTENING) {
+                    } else if (cs === VOICE_STATE.LISTENING) {
                         processUtterance(text);
                     }
                 },
-                onVADStart: () => {
-                    if (!isActiveRef.current) return;
-                    const currentState = stateRef.current.voiceState;
-
-                    // If we hear voice during speaking, prepare for potential interruption
-                    // (actual interruption happens on final transcript)
-                },
-                onVADEnd: () => {
-                    // No-op — we rely on final transcript, not VAD end
-                },
+                onVADStart: () => {},
+                onVADEnd: () => {},
                 onError: (err) => {
                     if (!isActiveRef.current) return;
-                    if (err.fatal) {
-                        dispatch({ type: ACTION.ERROR, error: err.message });
-                    } else {
-                        console.warn('[NaturalVoice] STT error:', err);
-                    }
+                    if (err.fatal) dispatch({ type: ACTION.ERROR, error: err.message });
                 },
                 onStateChange: (sttState) => {
                     if (!isActiveRef.current) return;
                     if (sttState === 'listening') {
-                        const provider = sttRef.current?.provider;
-                        dispatch({ type: ACTION.SESSION_READY, provider });
+                        dispatch({ type: ACTION.SESSION_READY, provider: sttRef.current?.provider });
                     }
                 },
             });
@@ -384,95 +244,85 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    const getProactive = useCallback(() => {
+        if (!proactiveRef.current) {
+            proactiveRef.current = new ProactiveAssistant({
+                onProactiveMessage: (msg) => {
+                    if (!isActiveRef.current) return;
+                    // Inject proactive message into conversation and speak it
+                    getConversation().addAssistantMessage(msg);
+                    dispatch({ type: ACTION.LLM_DONE, fullText: msg });
+                    getTTS().enqueue(msg);
+                    getTTS().flush();
+                },
+                onTimerStart: (timer) => {
+                    console.debug('[NaturalVoice] Timer started:', timer.label);
+                },
+                onTimerComplete: (timer) => {
+                    console.debug('[NaturalVoice] Timer complete:', timer);
+                },
+                onTimerTick: (timers) => {
+                    dispatch({ type: ACTION.UPDATE_TIMERS, timers });
+                },
+            });
+        }
+        return proactiveRef.current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // ===========================================================================
     // CORE VOICE LOOP
     // ===========================================================================
 
-    /**
-     * Process a final utterance: add to conversation, send to LLM.
-     */
     const processUtterance = useCallback((text) => {
         dispatch({ type: ACTION.TRANSCRIPT_FINAL, text });
-
         const conversation = getConversation();
         conversation.addUserMessage(text);
-
         const { messages, recipeContext } = conversation.getPayload();
+        // Pass language to recipeContext so server can adapt
+        recipeContext.language = stateRef.current.language;
         getLLM().send(messages, recipeContext);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    /**
-     * Handle interruption: user spoke during TTS/LLM.
-     */
     const handleInterruption = useCallback((text) => {
         dispatch({ type: ACTION.INTERRUPT });
-
-        // Abort LLM and TTS
         getLLM().abort();
         getTTS().interrupt();
-
-        // Store partial assistant response in context
-        const partialResponse = stateRef.current.assistantText;
-        if (partialResponse?.trim()) {
-            getConversation().addPartialAssistantMessage(partialResponse);
-        }
-
-        // Process the interruption as a new utterance
-        setTimeout(() => {
-            if (isActiveRef.current) {
-                processUtterance(text);
-            }
-        }, 50);
+        const partial = stateRef.current.assistantText;
+        if (partial?.trim()) getConversation().addPartialAssistantMessage(partial);
+        setTimeout(() => { if (isActiveRef.current) processUtterance(text); }, 50);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [processUtterance]);
 
-    /**
-     * Handle LLM action tags.
-     */
     const handleAction = useCallback((action) => {
-        const conversation = getConversation();
-
+        const conv = getConversation();
         switch (action.type) {
             case 'NEXT': {
-                const next = Math.min(conversation.currentStep + 1, stepsRef.current.length - 1);
-                conversation.setCurrentStep(next);
-                dispatch({ type: ACTION.STEP_CHANGE, step: next });
+                const n = Math.min(conv.currentStep + 1, stepsRef.current.length - 1);
+                conv.setCurrentStep(n); dispatch({ type: ACTION.STEP_CHANGE, step: n });
+                // Process step for proactive timers
+                getProactive().processStep(n, stepsRef.current[n]);
                 break;
             }
             case 'PREV': {
-                const prev = Math.max(conversation.currentStep - 1, 0);
-                conversation.setCurrentStep(prev);
-                dispatch({ type: ACTION.STEP_CHANGE, step: prev });
+                const p = Math.max(conv.currentStep - 1, 0);
+                conv.setCurrentStep(p); dispatch({ type: ACTION.STEP_CHANGE, step: p });
                 break;
             }
             case 'GOTO': {
                 if (action.payload !== null) {
-                    const target = Math.max(0, Math.min(action.payload - 1, stepsRef.current.length - 1));
-                    conversation.setCurrentStep(target);
-                    dispatch({ type: ACTION.STEP_CHANGE, step: target });
+                    const t = Math.max(0, Math.min(action.payload - 1, stepsRef.current.length - 1));
+                    conv.setCurrentStep(t); dispatch({ type: ACTION.STEP_CHANGE, step: t });
+                    getProactive().processStep(t, stepsRef.current[t]);
                 }
                 break;
             }
-            case 'REPEAT': {
-                // No step change needed — LLM will re-narrate in its response
-                break;
-            }
-            case 'PAUSE': {
-                pauseSession();
-                break;
-            }
-            case 'STOP': {
-                // Delay stop so TTS can finish speaking farewell
-                setTimeout(() => stopSession(), 2000);
-                break;
-            }
-            case 'INGREDIENTS': {
-                // No action needed — LLM will list them in its response
-                break;
-            }
-            default:
-                console.debug('[NaturalVoice] Unknown action:', action.type);
+            case 'REPEAT': break;
+            case 'PAUSE': pauseSession(); break;
+            case 'STOP': setTimeout(() => stopSession(), 2000); break;
+            case 'INGREDIENTS': break;
+            default: break;
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -483,29 +333,19 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
 
     const startSession = useCallback(async () => {
         if (isActiveRef.current) return;
+        if (steps.length === 0) { dispatch({ type: ACTION.ERROR, error: 'No recipe steps available.' }); return; }
 
-        if (steps.length === 0) {
-            dispatch({ type: ACTION.ERROR, error: 'No recipe steps available.' });
-            return;
-        }
-
-        // Request mic permission
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             stream.getTracks().forEach(t => t.stop());
             dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'granted' });
         } catch (err) {
             dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'denied' });
-            dispatch({
-                type: ACTION.ERROR,
-                error: 'Microphone access is required. Please allow mic access and try again.',
-            });
+            dispatch({ type: ACTION.ERROR, error: 'Microphone access required.' });
             return;
         }
 
-        // Initialize services
         isActiveRef.current = true;
-
         const conversation = getConversation();
         conversation.updateRecipe({ mealName, steps, ingredients });
         conversation.clear();
@@ -513,150 +353,177 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
 
         dispatch({ type: ACTION.START_SESSION });
 
-        // Speak introduction via TTS
+        // Pause wake word while session is active
+        wakeWordRef.current?.pause();
+
         const tts = getTTS();
-        const intro = `Let's cook ${mealName}! I'll guide you through ${steps.length} steps. You can talk to me naturally — ask questions, say next, or just chat. Let's start!`;
-
+        const intro = `Let's cook ${mealName}! I'll guide you through ${steps.length} steps. Talk to me naturally — ask questions, say next, or just chat. Let's start!`;
         const stepText = `Step 1 of ${steps.length}. ${steps[0]}`;
-
-        // Add intro + first step to conversation context
         conversation.addAssistantMessage(`${intro} ${stepText}`);
-
         tts.enqueue(intro);
         tts.enqueue(stepText);
         tts.flush();
 
-        // Start STT after a brief delay (let TTS begin first)
+        // Start proactive assistant
+        const proactive = getProactive();
+        proactive.clear();
+        proactive.processStep(0, steps[0]);
+        proactive.startTicking();
+        proactive.startIdleMonitor();
+
+        // Start STT
         setTimeout(() => {
             if (isActiveRef.current) {
                 getSTT().start().catch((err) => {
-                    console.error('[NaturalVoice] STT start failed:', err);
                     dispatch({ type: ACTION.ERROR, error: 'Failed to start speech recognition.' });
                 });
             }
         }, 500);
-    }, [mealName, steps, ingredients, getConversation, getTTS, getSTT]);
+    }, [mealName, steps, ingredients, getConversation, getTTS, getSTT, getProactive]);
 
     const stopSession = useCallback(() => {
         isActiveRef.current = false;
-
-        // Tear down all services
         sttRef.current?.stop();
         llmRef.current?.abort();
         ttsRef.current?.interrupt();
-
+        proactiveRef.current?.clear();
         dispatch({ type: ACTION.STOP });
 
-        console.debug('[NaturalVoice] Session stopped');
+        // Resume wake word after session ends
+        setTimeout(() => { wakeWordRef.current?.resume(); }, 1000);
     }, []);
 
     const pauseSession = useCallback(() => {
         if (!isActiveRef.current) return;
-
         sttRef.current?.stop();
         llmRef.current?.abort();
         ttsRef.current?.interrupt();
-
+        proactiveRef.current?.pause();
         dispatch({ type: ACTION.PAUSE });
     }, []);
 
     const resumeSession = useCallback(() => {
         if (stateRef.current.voiceState !== VOICE_STATE.PAUSED) return;
-
         isActiveRef.current = true;
+        proactiveRef.current?.resume();
         dispatch({ type: ACTION.RESUME });
-
-        getSTT().start().catch((err) => {
-            console.warn('[NaturalVoice] STT resume failed:', err);
-        });
+        getSTT().start().catch(() => {});
     }, [getSTT]);
 
     // ===========================================================================
-    // MANUAL NAVIGATION (from UI buttons)
+    // MANUAL NAVIGATION
     // ===========================================================================
 
     const goToStep = useCallback((stepIndex) => {
         if (!isActiveRef.current) return;
-
         const clamped = Math.max(0, Math.min(stepIndex, stepsRef.current.length - 1));
-        const conversation = getConversation();
-        conversation.setCurrentStep(clamped);
+        const conv = getConversation();
+        conv.setCurrentStep(clamped);
         dispatch({ type: ACTION.STEP_CHANGE, step: clamped });
-
-        // Interrupt current output and speak new step
         getLLM().abort();
         getTTS().interrupt();
-
         const stepText = `Step ${clamped + 1} of ${stepsRef.current.length}. ${stepsRef.current[clamped]}`;
-        conversation.addAssistantMessage(stepText);
-
+        conv.addAssistantMessage(stepText);
         getTTS().enqueue(stepText);
         getTTS().flush();
+        getProactive().processStep(clamped, stepsRef.current[clamped]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const nextStep = useCallback(() => {
-        goToStep((stateRef.current.currentStep || 0) + 1);
-    }, [goToStep]);
-
-    const prevStep = useCallback(() => {
-        goToStep((stateRef.current.currentStep || 0) - 1);
-    }, [goToStep]);
+    const nextStep = useCallback(() => goToStep((stateRef.current.currentStep || 0) + 1), [goToStep]);
+    const prevStep = useCallback(() => goToStep((stateRef.current.currentStep || 0) - 1), [goToStep]);
 
     // ===========================================================================
-    // AUTO-LISTEN after TTS ends
+    // PHASE 6: LANGUAGE SWITCHING
     // ===========================================================================
 
+    const setLanguage = useCallback(async (langCode) => {
+        dispatch({ type: ACTION.SET_LANGUAGE, language: langCode });
+        if (sttRef.current) {
+            await sttRef.current.setLanguage(langCode);
+        }
+    }, []);
+
+    // ===========================================================================
+    // PHASE 6: WAKE WORD
+    // ===========================================================================
+
+    const startWakeWord = useCallback(async (options = {}) => {
+        if (wakeWordRef.current) return;
+
+        wakeWordRef.current = new WakeWordDetector({
+            sensitivity: options.sensitivity ?? 0.6,
+            accessKey: options.porcupineAccessKey || '',
+            keywordPath: options.keywordPath || null,
+            onWakeWord: () => {
+                dispatch({ type: ACTION.SET_WAKE_WORD_STATE, wakeState: 'detected' });
+                // Auto-start voice session if not already active
+                if (!isActiveRef.current) {
+                    startSession();
+                }
+            },
+            onStateChange: (wakeState) => {
+                dispatch({ type: ACTION.SET_WAKE_WORD_STATE, wakeState });
+            },
+            onError: (err) => {
+                console.warn('[NaturalVoice] Wake word error:', err);
+            },
+        });
+
+        await wakeWordRef.current.start();
+    }, [startSession]);
+
+    const stopWakeWord = useCallback(() => {
+        wakeWordRef.current?.destroy();
+        wakeWordRef.current = null;
+        dispatch({ type: ACTION.SET_WAKE_WORD_STATE, wakeState: 'idle' });
+    }, []);
+
+    const setWakeWordSensitivity = useCallback((value) => {
+        if (wakeWordRef.current) wakeWordRef.current.sensitivity = value;
+    }, []);
+
+    // ===========================================================================
+    // EFFECTS
+    // ===========================================================================
+
+    // Auto-listen after TTS ends
     useEffect(() => {
-        // When TTS finishes and we transition to LISTENING, ensure STT is running
         if (state.voiceState === VOICE_STATE.LISTENING && isActiveRef.current) {
             const stt = sttRef.current;
             if (stt && !stt.isListening) {
-                stt.start().catch((err) => {
-                    console.warn('[NaturalVoice] Auto-listen STT start failed:', err);
-                });
+                stt.start().catch(() => {});
             }
         }
-
-        // When entering PAUSED or IDLE, ensure STT is stopped
         if (state.voiceState === VOICE_STATE.PAUSED || state.voiceState === VOICE_STATE.IDLE) {
             sttRef.current?.stop();
         }
     }, [state.voiceState]);
 
-    // ===========================================================================
-    // AUTO-RECOVER from errors
-    // ===========================================================================
-
+    // Auto-recover from errors
     useEffect(() => {
         if (state.voiceState === VOICE_STATE.ERROR && isActiveRef.current) {
-            const timer = setTimeout(() => {
+            const t = setTimeout(() => {
                 if (isActiveRef.current && stateRef.current.voiceState === VOICE_STATE.ERROR) {
                     dispatch({ type: ACTION.CLEAR_ERROR });
                 }
             }, 3000);
-            return () => clearTimeout(timer);
+            return () => clearTimeout(t);
         }
     }, [state.voiceState]);
 
-    // ===========================================================================
-    // CLEANUP ON UNMOUNT
-    // ===========================================================================
-
+    // Cleanup on unmount
     useEffect(() => {
         return () => {
-            console.debug('[NaturalVoice] Unmount — full cleanup');
             isActiveRef.current = false;
-
             sttRef.current?.destroy();
             llmRef.current?.destroy();
             ttsRef.current?.destroy();
             conversationRef.current?.destroy();
-
-            sttRef.current = null;
-            llmRef.current = null;
-            ttsRef.current = null;
-            conversationRef.current = null;
+            wakeWordRef.current?.destroy();
+            proactiveRef.current?.destroy();
+            sttRef.current = null; llmRef.current = null; ttsRef.current = null;
+            conversationRef.current = null; wakeWordRef.current = null; proactiveRef.current = null;
         };
     }, []);
 
@@ -673,7 +540,6 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         isSpeaking: state.voiceState === VOICE_STATE.SPEAKING,
         isPaused: state.voiceState === VOICE_STATE.PAUSED,
         isError: state.voiceState === VOICE_STATE.ERROR,
-
         currentStep: state.currentStep,
         totalSteps: steps.length,
         transcript: state.transcript,
@@ -685,6 +551,11 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         sttProvider: state.sttProvider,
         isLLMStreaming: state.isLLMStreaming,
         isTTSPlaying: state.isTTSPlaying,
+        // Phase 6
+        language: state.language,
+        activeTimers: state.activeTimers,
+        wakeWordState: state.wakeWordState,
+        ttsMode: state.ttsMode,
 
         // Actions
         start: startSession,
@@ -694,32 +565,21 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         nextStep,
         prevStep,
         goToStep,
+        // Phase 6
+        setLanguage,
+        startWakeWord,
+        stopWakeWord,
+        setWakeWordSensitivity,
 
-        // Constants
         VOICE_STATE,
-    }), [
-        state,
-        steps.length,
-        startSession,
-        stopSession,
-        pauseSession,
-        resumeSession,
-        nextStep,
-        prevStep,
-        goToStep,
-    ]);
+    }), [state, steps.length, startSession, stopSession, pauseSession, resumeSession, nextStep, prevStep, goToStep, setLanguage, startWakeWord, stopWakeWord, setWakeWordSensitivity]);
 }
 
-/**
- * Check if Natural Voice Mode is supported in this browser.
- */
 export function isNaturalVoiceSupported() {
-    const hasSpeechRecognition = typeof window !== 'undefined' &&
-        (window.SpeechRecognition || window.webkitSpeechRecognition);
+    const hasSR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
     const hasAudio = typeof Audio !== 'undefined';
-    const hasMediaDevices = typeof navigator?.mediaDevices?.getUserMedia === 'function';
-
-    return (!!hasSpeechRecognition || hasMediaDevices) && hasAudio;
+    const hasMD = typeof navigator?.mediaDevices?.getUserMedia === 'function';
+    return (!!hasSR || hasMD) && hasAudio;
 }
 
 export default useNaturalVoice;
