@@ -1,32 +1,15 @@
 // web/src/utils/ttsClient.js
 // =============================================================================
-// Voice Cooking — TTS Client (Legacy)
-// v1.2.0 — Secondary-voice elimination
+// Voice Cooking — TTS Client (Legacy) v1.3
 //
-// CRITICAL FIX: This singleton was the "secondary voice" causing overlap with
-// Natural Voice Cooking's TTSStreamer/TTSQueue. The root cause:
-//   - ttsClient is a module-level singleton (instantiated on import)
-//   - useVoiceCooking.js imports and uses it via ttsClient.play()
-//   - useNaturalVoice.js uses TTSStreamer/TTSQueue (separate pipeline)
-//   - Both can play audio simultaneously via different mechanisms:
-//       ttsClient → HTMLAudioElement
-//       TTSStreamer → Web Audio API (AudioContext + AudioBufferSourceNode)
-//       TTSQueue → HTMLAudioElement (separate instance)
-//   - Result: two voices speaking at once, causing choppy/overlapping audio
+// v1.3: Added ttsMute global gate (debug toggle from Settings).
+//   - synthesize(), play(), prefetch() all check ttsMute.isMuted
+//   - play() fires onEnd immediately when muted (prevents state machine hangs)
 //
-// FIX: Added a global lock (`claimExclusiveAudio` / `releaseExclusiveAudio`)
-// that the Natural Voice system calls on session start/stop. While claimed,
-// ALL ttsClient methods become no-ops — no synthesis, no playback, no cache
-// growth. This is a zero-risk change because:
-//   1. RecipeModal only renders NaturalVoiceButton (not VoiceCookingButton)
-//   2. The old VoiceCookingOverlay is never mounted in the current UI
-//   3. Even if it were, the lock prevents audio overlap
-//
-// Previous fixes preserved:
-//   - MAX_CACHE_SIZE to prevent unbounded blob URL growth
-//   - destroy() cancels in-flight fetches
-//   - isDestroyed guard prevents use-after-destroy
+// v1.2 (preserved): Exclusive audio lock for Natural Voice sessions
 // =============================================================================
+
+import { ttsMute } from './ttsMute';
 
 const TTS_ENDPOINT = '/api/voice/tts';
 const DEFAULT_VOICE = 'nova';
@@ -35,26 +18,14 @@ const MAX_CACHE_SIZE = 30;
 
 class TTSClient {
     constructor() {
-        /** @type {HTMLAudioElement|null} */
         this._audio = null;
-        /** @type {string|null} */
         this._currentBlobUrl = null;
-        /** @type {Map<string, string>} key → blobUrl */
         this._cache = new Map();
-        /** @type {AbortController|null} */
         this._fetchController = null;
-        /** @type {Function|null} */
         this._onEndCallback = null;
-        /** @type {Function|null} */
         this._onErrorCallback = null;
-        /** @type {boolean} */
         this._isPlaying = false;
-        /** @type {boolean} */
         this._isDestroyed = false;
-
-        // ── FIX v1.2.0: Exclusive audio lock ──
-        // When true, Natural Voice has claimed audio output.
-        // All ttsClient methods become no-ops to prevent secondary voice.
         this._exclusiveLocked = false;
     }
 
@@ -62,48 +33,34 @@ class TTSClient {
     // EXCLUSIVE AUDIO LOCK — called by Natural Voice system
     // =========================================================================
 
-    /**
-     * Called by useNaturalVoice when a session starts.
-     * Stops any in-progress playback and prevents future playback.
-     */
     claimExclusiveAudio() {
         console.debug('[TTSClient] Exclusive audio claimed by Natural Voice');
         this._exclusiveLocked = true;
-        // Stop anything currently playing
         this._stopAudio();
         this._isPlaying = false;
-        // Cancel any in-flight fetches
         if (this._fetchController) {
             this._fetchController.abort();
             this._fetchController = null;
         }
     }
 
-    /**
-     * Called by useNaturalVoice when a session ends.
-     * Re-enables ttsClient for potential legacy use.
-     */
     releaseExclusiveAudio() {
         console.debug('[TTSClient] Exclusive audio released');
         this._exclusiveLocked = false;
     }
 
-    /**
-     * Whether audio output is locked by another system.
-     */
-    get isLocked() {
-        return this._exclusiveLocked;
-    }
+    get isLocked() { return this._exclusiveLocked; }
 
     // =========================================================================
-    // PUBLIC API (all gated by exclusive lock)
+    // PUBLIC API
     // =========================================================================
 
-    /**
-     * Synthesize text and return a blob URL (cached).
-     */
     async synthesize(text, options = {}) {
-        // ── FIX: Block synthesis when Natural Voice owns audio ──
+        // ── v1.3 MUTE GATE ──
+        if (ttsMute.isMuted) {
+            console.debug('[TTSClient] Muted — blocking synthesis');
+            throw new Error('TTS muted via debug toggle');
+        }
         if (this._exclusiveLocked) {
             console.debug('[TTSClient] Blocked synthesis — exclusive audio locked');
             throw new Error('Audio locked by Natural Voice');
@@ -165,22 +122,20 @@ class TTSClient {
         }
     }
 
-    /**
-     * Pre-fetch audio (fire-and-forget).
-     */
     prefetch(text, options = {}) {
-        if (this._isDestroyed || this._exclusiveLocked) return;
+        if (this._isDestroyed || this._exclusiveLocked || ttsMute.isMuted) return;
         this.synthesize(text, options).catch(() => {});
     }
 
-    /**
-     * Play audio.
-     */
     async play(textOrBlobUrl, options = {}) {
-        // ── FIX: Block playback when Natural Voice owns audio ──
+        // ── v1.3 MUTE GATE ──
+        if (ttsMute.isMuted) {
+            console.debug('[TTSClient] Muted — blocking play');
+            if (options.onEnd) setTimeout(options.onEnd, 0);
+            return;
+        }
         if (this._exclusiveLocked) {
             console.debug('[TTSClient] Blocked play — exclusive audio locked');
-            // Fire onEnd so the caller's state machine doesn't hang
             if (options.onEnd) setTimeout(options.onEnd, 0);
             return;
         }
@@ -220,7 +175,7 @@ class TTSClient {
     }
 
     resume() {
-        if (this._exclusiveLocked) return;
+        if (this._exclusiveLocked || ttsMute.isMuted) return;
         if (this._audio && !this._isPlaying) {
             this._audio.play().then(() => { this._isPlaying = true; }).catch(() => {});
         }
@@ -232,13 +187,11 @@ class TTSClient {
     }
 
     async interrupt(text, options = {}) {
-        if (this._exclusiveLocked) return;
+        if (this._exclusiveLocked || ttsMute.isMuted) return;
         return this.play(text, options);
     }
 
-    get isPlaying() {
-        return this._isPlaying;
-    }
+    get isPlaying() { return this._isPlaying; }
 
     destroy() {
         this._stopAudio();
@@ -287,6 +240,5 @@ class TTSClient {
     };
 }
 
-// Export singleton
 export const ttsClient = new TTSClient();
 export default ttsClient;
