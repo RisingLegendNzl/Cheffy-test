@@ -1,23 +1,36 @@
 // web/src/utils/ttsClient.js
 // =============================================================================
-// Voice Cooking — TTS Client
-// [PATCHED] v1.1.0 — Fixed memory leak from unbounded blob URL cache:
-//   1. Added MAX_CACHE_SIZE to prevent unbounded growth
-//   2. destroy() now also cancels in-flight fetches
-//   3. Added isDestroyed guard to prevent use-after-destroy
-//   4. DEBUG logging for cache eviction and cleanup
+// Voice Cooking — TTS Client (Legacy)
+// v1.2.0 — Secondary-voice elimination
 //
-// Fetches audio from /api/voice/tts and manages playback via HTMLAudioElement.
-// Supports: play, pause, resume, stop, interrupt (play new while current plays).
-// Uses HTMLAudioElement + Blob URLs for simplicity and broad compatibility.
-// Pre-fetches next step audio for seamless transitions.
+// CRITICAL FIX: This singleton was the "secondary voice" causing overlap with
+// Natural Voice Cooking's TTSStreamer/TTSQueue. The root cause:
+//   - ttsClient is a module-level singleton (instantiated on import)
+//   - useVoiceCooking.js imports and uses it via ttsClient.play()
+//   - useNaturalVoice.js uses TTSStreamer/TTSQueue (separate pipeline)
+//   - Both can play audio simultaneously via different mechanisms:
+//       ttsClient → HTMLAudioElement
+//       TTSStreamer → Web Audio API (AudioContext + AudioBufferSourceNode)
+//       TTSQueue → HTMLAudioElement (separate instance)
+//   - Result: two voices speaking at once, causing choppy/overlapping audio
+//
+// FIX: Added a global lock (`claimExclusiveAudio` / `releaseExclusiveAudio`)
+// that the Natural Voice system calls on session start/stop. While claimed,
+// ALL ttsClient methods become no-ops — no synthesis, no playback, no cache
+// growth. This is a zero-risk change because:
+//   1. RecipeModal only renders NaturalVoiceButton (not VoiceCookingButton)
+//   2. The old VoiceCookingOverlay is never mounted in the current UI
+//   3. Even if it were, the lock prevents audio overlap
+//
+// Previous fixes preserved:
+//   - MAX_CACHE_SIZE to prevent unbounded blob URL growth
+//   - destroy() cancels in-flight fetches
+//   - isDestroyed guard prevents use-after-destroy
 // =============================================================================
 
 const TTS_ENDPOINT = '/api/voice/tts';
 const DEFAULT_VOICE = 'nova';
 const DEFAULT_SPEED = 1.0;
-
-// [FIX] Cap cache to prevent unbounded blob URL accumulation across sessions
 const MAX_CACHE_SIZE = 30;
 
 class TTSClient {
@@ -36,36 +49,77 @@ class TTSClient {
         this._onErrorCallback = null;
         /** @type {boolean} */
         this._isPlaying = false;
-        /** @type {boolean} [FIX] Track destroyed state */
+        /** @type {boolean} */
         this._isDestroyed = false;
+
+        // ── FIX v1.2.0: Exclusive audio lock ──
+        // When true, Natural Voice has claimed audio output.
+        // All ttsClient methods become no-ops to prevent secondary voice.
+        this._exclusiveLocked = false;
+    }
+
+    // =========================================================================
+    // EXCLUSIVE AUDIO LOCK — called by Natural Voice system
+    // =========================================================================
+
+    /**
+     * Called by useNaturalVoice when a session starts.
+     * Stops any in-progress playback and prevents future playback.
+     */
+    claimExclusiveAudio() {
+        console.debug('[TTSClient] Exclusive audio claimed by Natural Voice');
+        this._exclusiveLocked = true;
+        // Stop anything currently playing
+        this._stopAudio();
+        this._isPlaying = false;
+        // Cancel any in-flight fetches
+        if (this._fetchController) {
+            this._fetchController.abort();
+            this._fetchController = null;
+        }
     }
 
     /**
+     * Called by useNaturalVoice when a session ends.
+     * Re-enables ttsClient for potential legacy use.
+     */
+    releaseExclusiveAudio() {
+        console.debug('[TTSClient] Exclusive audio released');
+        this._exclusiveLocked = false;
+    }
+
+    /**
+     * Whether audio output is locked by another system.
+     */
+    get isLocked() {
+        return this._exclusiveLocked;
+    }
+
+    // =========================================================================
+    // PUBLIC API (all gated by exclusive lock)
+    // =========================================================================
+
+    /**
      * Synthesize text and return a blob URL (cached).
-     * Does NOT play — call play() separately or use speakAndPlay().
-     *
-     * @param {string} text
-     * @param {object} [options]
-     * @param {string} [options.voice]
-     * @param {number} [options.speed]
-     * @param {string} [options.cacheKey] - Custom cache key (default: text itself)
-     * @returns {Promise<string>} Blob URL for the audio
      */
     async synthesize(text, options = {}) {
-        // [FIX] Auto-recover from destroyed state (new session started)
+        // ── FIX: Block synthesis when Natural Voice owns audio ──
+        if (this._exclusiveLocked) {
+            console.debug('[TTSClient] Blocked synthesis — exclusive audio locked');
+            throw new Error('Audio locked by Natural Voice');
+        }
+
         if (this._isDestroyed) {
             this._isDestroyed = false;
-            console.debug('[TTSClient] Recovered from destroyed state for new session');
+            console.debug('[TTSClient] Recovered from destroyed state');
         }
 
         const cacheKey = options.cacheKey || text;
 
-        // Return cached if available
         if (this._cache.has(cacheKey)) {
             return this._cache.get(cacheKey);
         }
 
-        // Cancel any in-flight fetch
         if (this._fetchController) {
             this._fetchController.abort();
         }
@@ -91,19 +145,14 @@ class TTSClient {
             const blob = await response.blob();
             const blobUrl = URL.createObjectURL(blob);
 
-            // [FIX] Evict oldest entries if cache exceeds limit
             if (this._cache.size >= MAX_CACHE_SIZE) {
                 const oldestKey = this._cache.keys().next().value;
                 const oldestUrl = this._cache.get(oldestKey);
-                if (oldestUrl) {
-                    URL.revokeObjectURL(oldestUrl);
-                    console.debug(`[TTSClient] Cache eviction: revoked blob for "${oldestKey}" (cache size: ${this._cache.size})`);
-                }
+                if (oldestUrl) URL.revokeObjectURL(oldestUrl);
                 this._cache.delete(oldestKey);
             }
 
             this._cache.set(cacheKey, blobUrl);
-
             return blobUrl;
 
         } catch (err) {
@@ -117,41 +166,34 @@ class TTSClient {
     }
 
     /**
-     * Pre-fetch audio for a given text (fire-and-forget).
-     * Useful for pre-loading the next step.
+     * Pre-fetch audio (fire-and-forget).
      */
     prefetch(text, options = {}) {
-        // [FIX] Don't prefetch if destroyed
-        if (this._isDestroyed) return;
-        this.synthesize(text, options).catch(() => {
-            // Silent failure for prefetch — not critical
-        });
+        if (this._isDestroyed || this._exclusiveLocked) return;
+        this.synthesize(text, options).catch(() => {});
     }
 
     /**
-     * Play a blob URL (or synthesize + play in one call).
-     *
-     * @param {string} textOrBlobUrl - Either raw text or a blob: URL
-     * @param {object} [options]
-     * @param {Function} [options.onEnd] - Called when audio finishes naturally
-     * @param {Function} [options.onError] - Called on playback error
-     * @param {string}   [options.voice]
-     * @param {number}   [options.speed]
-     * @returns {Promise<void>}
+     * Play audio.
      */
     async play(textOrBlobUrl, options = {}) {
-        let blobUrl;
+        // ── FIX: Block playback when Natural Voice owns audio ──
+        if (this._exclusiveLocked) {
+            console.debug('[TTSClient] Blocked play — exclusive audio locked');
+            // Fire onEnd so the caller's state machine doesn't hang
+            if (options.onEnd) setTimeout(options.onEnd, 0);
+            return;
+        }
 
+        let blobUrl;
         if (textOrBlobUrl.startsWith('blob:')) {
             blobUrl = textOrBlobUrl;
         } else {
             blobUrl = await this.synthesize(textOrBlobUrl, options);
         }
 
-        // Stop any current playback
         this._stopAudio();
 
-        // Create fresh audio element
         this._audio = new Audio(blobUrl);
         this._currentBlobUrl = blobUrl;
         this._onEndCallback = options.onEnd || null;
@@ -165,16 +207,11 @@ class TTSClient {
             this._isPlaying = true;
         } catch (err) {
             this._isPlaying = false;
-            if (this._onErrorCallback) {
-                this._onErrorCallback(err);
-            }
+            if (this._onErrorCallback) this._onErrorCallback(err);
             throw err;
         }
     }
 
-    /**
-     * Pause current playback.
-     */
     pause() {
         if (this._audio && this._isPlaying) {
             this._audio.pause();
@@ -182,67 +219,39 @@ class TTSClient {
         }
     }
 
-    /**
-     * Resume paused playback.
-     */
     resume() {
+        if (this._exclusiveLocked) return;
         if (this._audio && !this._isPlaying) {
-            this._audio.play().then(() => {
-                this._isPlaying = true;
-            }).catch(() => {
-                // Silently handle if resume fails
-            });
+            this._audio.play().then(() => { this._isPlaying = true; }).catch(() => {});
         }
     }
 
-    /**
-     * Stop playback and release the current audio element.
-     * Does NOT clear the cache (use destroy() for full cleanup).
-     */
     stop() {
         this._stopAudio();
         this._isPlaying = false;
     }
 
-    /**
-     * Interrupt current playback with new text.
-     */
     async interrupt(text, options = {}) {
+        if (this._exclusiveLocked) return;
         return this.play(text, options);
     }
 
-    /**
-     * Whether audio is currently playing.
-     */
     get isPlaying() {
         return this._isPlaying;
     }
 
-    /**
-     * Clean up ALL resources. Call on session end and unmount.
-     * [FIX] Also cancels in-flight fetches and marks as destroyed.
-     */
     destroy() {
-        // 1. Stop any playing audio
         this._stopAudio();
-
-        // 2. Cancel any in-flight fetch
         if (this._fetchController) {
             this._fetchController.abort();
             this._fetchController = null;
-            console.debug('[TTSClient] Cancelled in-flight TTS fetch');
         }
-
-        // 3. Revoke ALL cached blob URLs to free memory
         const cacheSize = this._cache.size;
         for (const url of this._cache.values()) {
             URL.revokeObjectURL(url);
         }
         this._cache.clear();
-
-        // 4. Mark as destroyed
         this._isDestroyed = true;
-
         if (cacheSize > 0) {
             console.debug(`[TTSClient] destroy(): revoked ${cacheSize} cached blob URLs`);
         }
@@ -252,7 +261,6 @@ class TTSClient {
 
     _stopAudio() {
         if (this._audio) {
-            // [FIX] Remove listeners BEFORE pausing to prevent stale callbacks
             this._audio.removeEventListener('ended', this._handleEnded);
             this._audio.removeEventListener('error', this._handleError);
             this._audio.pause();
@@ -269,17 +277,13 @@ class TTSClient {
 
     _handleEnded = () => {
         this._isPlaying = false;
-        if (this._onEndCallback) {
-            this._onEndCallback();
-        }
+        if (this._onEndCallback) this._onEndCallback();
     };
 
     _handleError = (e) => {
         this._isPlaying = false;
         console.error('[TTSClient] Playback error:', e);
-        if (this._onErrorCallback) {
-            this._onErrorCallback(e);
-        }
+        if (this._onErrorCallback) this._onErrorCallback(e);
     };
 }
 
