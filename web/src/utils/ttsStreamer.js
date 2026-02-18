@@ -1,39 +1,21 @@
 // web/src/utils/ttsStreamer.js
 // =============================================================================
-// Phase 6 — Byte-Level TTS Streamer v3.3
+// Phase 6 — Byte-Level TTS Streamer v3.4
 //
-// Fixes choppy/cut-out TTS by ensuring continuous audio across sentences:
+// v3.4: Added global ttsMute gate for debug toggle.
+//   - enqueue() drops text when muted (no synthesis, no network calls)
+//   - flush() fires onPlaybackEnd immediately when muted (unblocks state machine)
+//   - Existing turn-level playback tracking from v3.3 preserved
 //
-//   1. TURN-LEVEL PLAYBACK FLAG (_turnPlaying):
-//      Stays true from first sentence's audio start until ALL sentences in
-//      the turn finish. Prevents the hook's STT effect from toggling mic
-//      on/off between sentences (which caused AudioContext contention).
-//
-//   2. SINGLE onPlaybackStart/End PER TURN:
-//      Previously fired per-sentence, causing state machine churn
-//      (SPEAKING→LISTENING→SPEAKING flicker). Now fires exactly once:
-//      onPlaybackStart when first audio plays, onPlaybackEnd when last
-//      sentence finishes.
-//
-//   3. TURN-LEVEL WATCHDOG:
-//      AudioContext suspension monitor runs across all sentences in a turn
-//      (not reset per-sentence). Catches iOS Safari / Chrome suspensions.
-//
-//   4. BUFFER WAIT TIMER:
-//      Short sentences with few chunks no longer hang waiting for
-//      BUFFER_THRESHOLD. A fallback timer starts playback after 800ms.
-//
-//   5. interrupt() NO LONGER FIRES onPlaybackEnd:
-//      The hook handles interrupts via ACTION.INTERRUPT, not TTS_PLAYBACK_END.
-//      Firing both caused double state transitions.
-//
-// Architecture:
-//   1. enqueue(text) adds sentences from LLM
-//   2. flush() signals no more sentences coming
-//   3. Each sentence streams via SSE from /api/voice/tts-stream
-//   4. Chunks decoded + scheduled for gapless Web Audio playback
-//   5. Falls back to blob playback if streaming fails per-sentence
+// v3.3 fixes (preserved):
+//   1. TURN-LEVEL PLAYBACK FLAG (_turnPlaying)
+//   2. SINGLE onPlaybackStart/End PER TURN
+//   3. TURN-LEVEL WATCHDOG
+//   4. BUFFER WAIT TIMER
+//   5. interrupt() NO LONGER FIRES onPlaybackEnd
 // =============================================================================
+
+import { ttsMute } from './ttsMute';
 
 const TTS_STREAM_ENDPOINT = '/api/voice/tts-stream';
 const TTS_FALLBACK_ENDPOINT = '/api/voice/tts';
@@ -41,8 +23,8 @@ const TTS_FALLBACK_ENDPOINT = '/api/voice/tts';
 const DEFAULT_VOICE = 'nova';
 const DEFAULT_SPEED = 1.0;
 const SCHEDULE_AHEAD_SECONDS = 0.05;
-const BUFFER_THRESHOLD = 3;     // Raised from 2: more chunks before starting
-const BUFFER_WAIT_MS = 800;     // Max wait before starting even if threshold not met
+const BUFFER_THRESHOLD = 3;
+const BUFFER_WAIT_MS = 800;
 
 export class TTSStreamer {
     constructor(callbacks = {}) {
@@ -56,32 +38,25 @@ export class TTSStreamer {
         this._isPlaying = false;
         this._destroyed = false;
 
-        // Turn-level: stays true across all sentences in one enqueue…flush cycle
         this._turnPlaying = false;
 
-        // Per-sentence scheduling state
         this._nextScheduleTime = 0;
         this._activeSources = [];
         this._playbackStarted = false;
         this._streamDone = false;
         this._chunksDecoded = 0;
 
-        // Abort
         this._abortController = null;
 
-        // Voice config
         this._voice = DEFAULT_VOICE;
         this._speed = DEFAULT_SPEED;
 
-        // Sentence queue
         this._sentenceQueue = [];
         this._isSentenceActive = false;
         this._flushed = false;
 
-        // Atomic counter for completion detection
         this._pendingSourceCount = 0;
 
-        // Turn-level watchdog + buffer wait timer
         this._turnWatchdogInterval = null;
         this._bufferWaitTimer = null;
     }
@@ -99,12 +74,22 @@ export class TTSStreamer {
 
     enqueue(text) {
         if (this._destroyed || !text?.trim()) return;
+        // ── v3.4 MUTE GATE: drop silently when muted ──
+        if (ttsMute.isMuted) {
+            console.debug('[TTSStreamer] Muted — dropping enqueue:', text.substring(0, 40));
+            return;
+        }
         this._sentenceQueue.push(text.trim());
         this._advanceSentenceQueue();
     }
 
     flush() {
         this._flushed = true;
+        // ── v3.4 MUTE GATE: if muted, signal done immediately ──
+        if (ttsMute.isMuted) {
+            this._signalAllDone();
+            return;
+        }
         if (!this._isSentenceActive && this._sentenceQueue.length === 0) {
             this._signalAllDone();
         }
@@ -120,9 +105,6 @@ export class TTSStreamer {
         this._clearBufferWaitTimer();
         this._stopTurnWatchdog();
         this._isPlaying = false;
-
-        // Reset turn flag but do NOT fire onPlaybackEnd — the hook handles
-        // interrupts via ACTION.INTERRUPT, not TTS_PLAYBACK_END
         this._turnPlaying = false;
     }
 
@@ -158,9 +140,15 @@ export class TTSStreamer {
     async _streamSentence(text) {
         const capturedSession = this._sessionId;
 
+        // ── v3.4 MUTE GATE: skip synthesis entirely ──
+        if (ttsMute.isMuted) {
+            this._isSentenceActive = false;
+            this._advanceSentenceQueue();
+            return;
+        }
+
         this._ensureAudioContext();
 
-        // Reset per-sentence state (NOT _turnPlaying)
         this._activeSources = [];
         this._chunksDecoded = 0;
         this._pendingSourceCount = 0;
@@ -169,10 +157,8 @@ export class TTSStreamer {
         this._nextScheduleTime = this._audioContext.currentTime + 0.1;
         this._abortController = new AbortController();
 
-        // Start turn-level watchdog (idempotent)
         this._startTurnWatchdog(capturedSession);
 
-        // Buffer wait timer: start playback even if threshold not met
         this._clearBufferWaitTimer();
         this._bufferWaitTimer = setTimeout(() => {
             this._bufferWaitTimer = null;
@@ -260,7 +246,6 @@ export class TTSStreamer {
             try {
                 audioBuffer = await this._audioContext.decodeAudioData(bytes.buffer.slice(0));
             } catch (_) {
-                // Retry with fresh buffer copy (some browsers corrupt the original)
                 try {
                     audioBuffer = await this._audioContext.decodeAudioData(bytes.buffer.slice(0));
                 } catch (e2) {
@@ -295,7 +280,6 @@ export class TTSStreamer {
         this._activeSources.push(source);
         this._pendingSourceCount++;
 
-        // Signal turn-level playback start (fires ONCE per turn)
         if (!this._playbackStarted && this._chunksDecoded >= BUFFER_THRESHOLD) {
             this._playbackStarted = true;
             this._isPlaying = true;
@@ -321,7 +305,6 @@ export class TTSStreamer {
 
         this._clearBufferWaitTimer();
         this._isSentenceActive = false;
-        // Do NOT set _turnPlaying = false — more sentences may follow
 
         if (this._sentenceQueue.length > 0) {
             this._advanceSentenceQueue();
@@ -331,10 +314,17 @@ export class TTSStreamer {
     }
 
     // =========================================================================
-    // FALLBACK — blob-based playback when streaming fails
+    // FALLBACK
     // =========================================================================
 
     async _fallbackBlobPlay(text, capturedSession) {
+        // ── v3.4 MUTE GATE ──
+        if (ttsMute.isMuted) {
+            this._isSentenceActive = false;
+            this._advanceSentenceQueue();
+            return;
+        }
+
         try {
             const response = await fetch(TTS_FALLBACK_ENDPOINT, {
                 method: 'POST',
