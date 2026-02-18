@@ -16,6 +16,7 @@
 const fetch = require('node-fetch');
 
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || '';
+const DEEPGRAM_PROJECT_ID = process.env.DEEPGRAM_PROJECT_ID || '';
 const TOKEN_TTL_SECONDS = 120; // 2 minutes — enough for a conversation turn
 
 module.exports = async function handler(req, res) {
@@ -32,6 +33,11 @@ module.exports = async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
+    // --- Diagnostic logging (remove after confirming fix) ---
+    console.log('[STT-Token] Route hit. Method:', req.method);
+    console.log('[STT-Token] DG KEY exists:', !!DEEPGRAM_API_KEY);
+    console.log('[STT-Token] DG PROJECT_ID exists:', !!DEEPGRAM_PROJECT_ID);
+
     // If no Deepgram key, signal client to use fallback
     if (!DEEPGRAM_API_KEY) {
         console.warn('[STT-Token] DEEPGRAM_API_KEY not configured — client should use Web Speech API fallback');
@@ -44,9 +50,30 @@ module.exports = async function handler(req, res) {
         });
     }
 
+    // If no project ID, we cannot mint temporary keys.
+    // Fall back to using the master key directly for the WebSocket.
+    if (!DEEPGRAM_PROJECT_ID) {
+        console.warn('[STT-Token] DEEPGRAM_PROJECT_ID not configured — using direct key approach');
+        const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
+        return res.status(200).json({
+            provider: 'deepgram',
+            token: DEEPGRAM_API_KEY,
+            ws_url: 'wss://api.deepgram.com/v1/listen',
+            expires_at: expiresAt,
+        });
+    }
+
     try {
-        // Mint a temporary key via Deepgram's API
-        const response = await fetch('https://api.deepgram.com/v1/manage/keys', {
+        // =====================================================================
+        // FIX: The correct Deepgram key minting endpoint is:
+        //   POST https://api.deepgram.com/v1/projects/{PROJECT_ID}/keys
+        //
+        // The old code used /v1/manage/keys which does NOT exist → 404.
+        // =====================================================================
+        const mintUrl = `https://api.deepgram.com/v1/projects/${DEEPGRAM_PROJECT_ID}/keys`;
+        console.log('[STT-Token] Minting temp key at:', mintUrl);
+
+        const response = await fetch(mintUrl, {
             method: 'POST',
             headers: {
                 'Authorization': `Token ${DEEPGRAM_API_KEY}`,
@@ -61,27 +88,13 @@ module.exports = async function handler(req, res) {
 
         if (!response.ok) {
             const errBody = await response.text().catch(() => 'Unknown error');
-            console.error(`[STT-Token] Deepgram key minting failed (${response.status}): ${errBody}`);
+            console.error(`[STT-Token] Deepgram key minting failed (${response.status}):`, errBody);
+            console.error(`[STT-Token] Request URL was: ${mintUrl}`);
+            console.error(`[STT-Token] PROJECT_ID defined: ${!!DEEPGRAM_PROJECT_ID} (length: ${DEEPGRAM_PROJECT_ID.length})`);
 
-            // If Deepgram key creation fails, we can still provide the master key
-            // approach as fallback (direct key usage) or signal webspeech fallback.
-            // For security, we prefer signaling fallback:
-            return res.status(200).json({
-                provider: 'webspeech_fallback',
-                token: null,
-                ws_url: null,
-                expires_at: null,
-                message: 'Deepgram token minting failed. Use Web Speech API.',
-            });
-        }
-
-        const data = await response.json();
-        const tempKey = data.key;
-
-        if (!tempKey) {
-            // Some Deepgram plans don't support temporary key minting.
-            // Fall back to direct key usage (less secure but functional).
-            console.warn('[STT-Token] Deepgram returned no key object — using direct key approach');
+            // Graceful degradation: use master key directly
+            // (less secure but keeps voice working)
+            console.warn('[STT-Token] Falling back to direct key approach');
             const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
             return res.status(200).json({
                 provider: 'deepgram',
@@ -91,6 +104,26 @@ module.exports = async function handler(req, res) {
             });
         }
 
+        const data = await response.json();
+        console.log('[STT-Token] Deepgram response keys:', Object.keys(data));
+
+        // Deepgram returns: { api_key_id, key, ... }
+        // The actual temporary API key string is in data.key
+        const tempKey = data.key;
+
+        if (!tempKey) {
+            console.warn('[STT-Token] Deepgram response has no "key" field. Full response:', JSON.stringify(data).slice(0, 500));
+            // Fall back to direct key usage
+            const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
+            return res.status(200).json({
+                provider: 'deepgram',
+                token: DEEPGRAM_API_KEY,
+                ws_url: 'wss://api.deepgram.com/v1/listen',
+                expires_at: expiresAt,
+            });
+        }
+
+        console.log('[STT-Token] Temp key minted successfully (key_id:', data.api_key_id || 'n/a', ')');
         const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
 
         return res.status(200).json({
@@ -101,7 +134,7 @@ module.exports = async function handler(req, res) {
         });
 
     } catch (err) {
-        console.error('[STT-Token] Handler error:', err);
+        console.error('[STT-Token] Handler error:', err.message, err.stack);
         // Graceful degradation — never block the voice experience
         return res.status(200).json({
             provider: 'webspeech_fallback',
