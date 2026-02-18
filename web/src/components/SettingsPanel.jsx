@@ -1,9 +1,14 @@
 // web/src/components/SettingsPanel.jsx
-// [V3.2] Removed "Failed Ingredients" toggle and "Edit Profile" button per user request
-// [V3.1] Added Product Match Trace toggle following exact pattern of Macro Debug Log
-// Updated AI model selector with usage descriptions and correct model IDs.
-// Removed "System" option from Appearance (#5).
-// "Default Store" was already removed in a prior update.
+// =============================================================================
+// [V3.3] Added "Disable Cheffy TTS" debug toggle under new Voice Cooking section
+//   - Mutes all Cheffy TTS output for debugging secondary voice overlap
+//   - Uses same Eye/EyeOff toggle pattern as Developer Logs
+//   - Persists via ttsMute singleton (localStorage)
+//   - VolumeX icon differentiates it from log toggles
+//
+// [V3.2] Removed "Failed Ingredients" toggle and "Edit Profile" button
+// [V3.1] Added Product Match Trace toggle
+// =============================================================================
 import React from 'react';
 import {
   X,
@@ -17,11 +22,13 @@ import {
   Palette,
   Ruler,
   Search,
+  VolumeX,
+  Volume2,
 } from 'lucide-react';
 import { COLORS, Z_INDEX } from '../constants';
 import { useTheme } from '../contexts/ThemeContext';
 
-// --- AI Model definitions (single source of truth for the selector) ---
+// --- AI Model definitions ---
 const AI_MODELS = [
   {
     value: 'gpt-5.1',
@@ -49,9 +56,6 @@ const AI_MODELS = [
   },
 ];
 
-/**
- * Settings panel/modal for app preferences.
- */
 const SettingsPanel = ({
   isOpen,
   onClose,
@@ -69,6 +73,9 @@ const SettingsPanel = ({
   // AI Model
   selectedModel = 'gpt-5.1',
   onModelChange = () => {},
+  // ── NEW v3.3: Cheffy TTS Debug Toggle ──
+  cheffyTTSDisabled = false,
+  onToggleCheffyTTS = () => {},
 }) => {
   const { theme, setTheme, isDark } = useTheme();
 
@@ -161,20 +168,34 @@ const SettingsPanel = ({
                 Measurement Units
               </h3>
             </div>
-
-            <select
-              value={measurementUnits}
-              onChange={(e) => onMeasurementUnitsChange?.(e.target.value)}
-              className="w-full p-3 border rounded-lg"
-              style={{
-                borderColor: isDark ? '#2d3148' : COLORS.gray[300],
-                color: isDark ? '#f0f1f5' : COLORS.gray[900],
-                backgroundColor: isDark ? '#1e2130' : '#ffffff',
-              }}
-            >
-              <option value="metric">Metric (kg, cm)</option>
-              <option value="imperial">Imperial (lb, ft/in)</option>
-            </select>
+            <div className="flex gap-3">
+              {[
+                { key: 'metric', label: 'Metric (kg, cm)' },
+                { key: 'imperial', label: 'Imperial (lb, ft)' },
+              ].map((opt) => {
+                const isActive = measurementUnits === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    onClick={() => onMeasurementUnitsChange?.(opt.key)}
+                    className="flex-1 py-2.5 px-3 rounded-lg text-sm font-semibold transition-all"
+                    style={{
+                      backgroundColor: isActive
+                        ? isDark ? 'rgba(99,102,241,0.2)' : COLORS.primary[50]
+                        : isDark ? '#1e2130' : COLORS.gray[100],
+                      color: isActive
+                        ? COLORS.primary[600]
+                        : isDark ? '#9ca3b0' : COLORS.gray[600],
+                      border: isActive
+                        ? `2px solid ${COLORS.primary[500]}`
+                        : `2px solid transparent`,
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* ─── AI Model Section ─── */}
@@ -196,7 +217,7 @@ const SettingsPanel = ({
                     className="w-full text-left p-3 rounded-lg transition-all"
                     style={{
                       backgroundColor: isActive
-                        ? isDark ? 'rgba(99,102,241,0.2)' : COLORS.primary[50]
+                        ? isDark ? 'rgba(99,102,241,0.15)' : COLORS.primary[50]
                         : isDark ? '#1e2130' : COLORS.gray[50],
                       border: isActive
                         ? `2px solid ${COLORS.primary[500]}`
@@ -232,15 +253,76 @@ const SettingsPanel = ({
                     </div>
                     <p
                       className="text-xs"
-                      style={{
-                        color: isDark ? '#9ca3b0' : COLORS.gray[500],
-                      }}
+                      style={{ color: isDark ? '#9ca3b0' : COLORS.gray[500] }}
                     >
                       {model.description}
                     </p>
                   </button>
                 );
               })}
+            </div>
+          </div>
+
+          {/* ─── Voice Cooking Debug Section ─── */}
+          <div>
+            <div className="flex items-center mb-4">
+              <VolumeX size={20} className="mr-2" style={{ color: '#f59e0b' }} />
+              <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
+                Voice Cooking
+              </h3>
+            </div>
+
+            <div
+              className="flex items-center justify-between p-3 rounded-lg mb-2"
+              style={{
+                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
+                border: `1px solid ${
+                  cheffyTTSDisabled
+                    ? isDark ? 'rgba(245,158,11,0.4)' : 'rgba(245,158,11,0.3)'
+                    : isDark ? '#2d3148' : COLORS.gray[200]
+                }`,
+              }}
+            >
+              <div className="flex-1 mr-3">
+                <div className="flex items-center">
+                  <span className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[500] }}>
+                    {cheffyTTSDisabled
+                      ? <VolumeX size={14} style={{ color: '#f59e0b' }} />
+                      : <Volume2 size={14} />
+                    }
+                  </span>
+                  <span
+                    className="text-sm font-medium"
+                    style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
+                  >
+                    Disable Cheffy TTS
+                  </span>
+                </div>
+                <p
+                  className="text-xs mt-1 ml-6"
+                  style={{ color: isDark ? '#6b7280' : COLORS.gray[400] }}
+                >
+                  {cheffyTTSDisabled
+                    ? 'TTS silenced — listening for secondary voice'
+                    : 'Mutes Cheffy to isolate overlapping audio'
+                  }
+                </p>
+              </div>
+              <button
+                onClick={() => onToggleCheffyTTS(!cheffyTTSDisabled)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all flex-shrink-0"
+                style={{
+                  backgroundColor: cheffyTTSDisabled
+                    ? isDark ? 'rgba(245,158,11,0.15)' : '#fef3c7'
+                    : isDark ? 'rgba(16,185,129,0.15)' : '#d1fae5',
+                  color: cheffyTTSDisabled
+                    ? isDark ? '#fbbf24' : '#d97706'
+                    : isDark ? '#34d399' : '#059669',
+                }}
+              >
+                {cheffyTTSDisabled ? <EyeOff size={13} /> : <Eye size={13} />}
+                {cheffyTTSDisabled ? 'Muted' : 'Active'}
+              </button>
             </div>
           </div>
 
