@@ -1,20 +1,19 @@
 // web/src/hooks/useNaturalVoice.js
 // =============================================================================
-// Natural Voice Mode Hook — Cheffy Voice Cooking v3.1
+// Natural Voice Mode Hook — Cheffy Voice Cooking v3.2
 //
-// v3.1 fix: Greeting-gated startup
-//   OLD: overlay opens → TTS reads intro+step1 → STT starts at 500ms → loop active
-//   NEW: overlay opens → TTS speaks greeting prompt → STT starts AFTER greeting ends
-//        → user says "yes" / affirmative → THEN loop activates with step 1
+// v3.2 fixes: TTS continuity + optional mic + second-voice elimination
+//   - ProactiveAssistant messages deferred when TTS is active (no second voice)
+//   - PROCESSING state preserved during TTS playback (no premature LISTENING)
+//   - LLM_DONE + TTS_PLAYBACK_END work together for correct state transitions
+//   - STT strictly off during SPEAKING/PROCESSING/GREETING (no echo loop)
+//   - Mic permission deferred until STT actually needed (greeting plays without mic)
+//   - Deferred proactive messages flushed when entering LISTENING
 //
-// State machine (updated):
+// State machine:
 //   IDLE → GREETING → WAITING_FOR_READY → LISTENING → PROCESSING → SPEAKING → LISTENING
 //   SPEAKING → INTERRUPTED → PROCESSING
 //   Any → PAUSED → LISTENING / Any → IDLE
-//
-// GREETING:          Cheffy speaks greeting. STT is OFF. No listening.
-// WAITING_FOR_READY: Greeting TTS done. STT is ON. Waiting for affirmative.
-// LISTENING:         Normal voice loop. STT is ON. User utterances go to LLM.
 // =============================================================================
 
 import { useReducer, useRef, useCallback, useEffect, useMemo } from 'react';
@@ -199,9 +198,23 @@ function voiceReducer(state, action) {
 
         case ACTION.LLM_DONE: {
             const clean = action.fullText?.replace(/\[ACTION:[A-Z_]+(?::\d+)?\]/g, '').trim();
+            let nextVoiceState = state.voiceState;
+
+            if (state.voiceState === VOICE_STATE.PROCESSING) {
+                if (state.isTTSPlaying) {
+                    // LLM done, TTS still playing → move to SPEAKING
+                    // TTS_PLAYBACK_END will then → LISTENING
+                    nextVoiceState = VOICE_STATE.SPEAKING;
+                } else {
+                    // LLM done AND TTS done → go straight to LISTENING
+                    nextVoiceState = VOICE_STATE.LISTENING;
+                }
+            }
+
             return {
                 ...state,
                 isLLMStreaming: false,
+                voiceState: nextVoiceState,
                 conversationLog: clean
                     ? [...state.conversationLog, { role: 'assistant', content: clean, timestamp: Date.now() }]
                     : state.conversationLog,
@@ -210,22 +223,35 @@ function voiceReducer(state, action) {
 
         case ACTION.TTS_PLAYBACK_START:
             return { ...state, isTTSPlaying: true,
-                // ── FIX 2: Preserve ALL pre-loop states during TTS playback ──
-                // Without this, WAITING_FOR_READY leaks → SPEAKING → LISTENING,
-                // bypassing the affirmative gate entirely.
+                // ── Preserve pre-loop and active-processing states ──
+                // GREETING/WAITING_FOR_READY: don't leak to SPEAKING
+                // PROCESSING: LLM is still streaming; first sentence TTS started
+                //   but we need to stay PROCESSING so more sentences can enqueue.
+                //   The LLM_DONE + TTS_PLAYBACK_END combo handles the transition.
                 voiceState: (state.voiceState === VOICE_STATE.GREETING ||
-                             state.voiceState === VOICE_STATE.WAITING_FOR_READY)
+                             state.voiceState === VOICE_STATE.WAITING_FOR_READY ||
+                             state.voiceState === VOICE_STATE.PROCESSING)
                     ? state.voiceState
                     : VOICE_STATE.SPEAKING,
             };
 
-        case ACTION.TTS_PLAYBACK_END:
-            return { ...state, isTTSPlaying: false,
-                voiceState: state.voiceState === VOICE_STATE.SPEAKING
-                    ? VOICE_STATE.LISTENING
-                    : state.voiceState,
-                // Note: GREETING → GREETING stays; GREETING_DONE is dispatched separately
-            };
+        case ACTION.TTS_PLAYBACK_END: {
+            let nextVoiceState = state.voiceState;
+
+            if (state.voiceState === VOICE_STATE.SPEAKING) {
+                // Normal case: TTS done → go listen
+                nextVoiceState = VOICE_STATE.LISTENING;
+            } else if (state.voiceState === VOICE_STATE.PROCESSING && !state.isLLMStreaming) {
+                // Edge case: LLM finished while TTS was playing last sentence,
+                // but LLM_DONE saw isTTSPlaying=true and stayed PROCESSING.
+                // Now TTS is done too → go listen.
+                nextVoiceState = VOICE_STATE.LISTENING;
+            }
+            // GREETING stays GREETING (GREETING_DONE is dispatched separately)
+            // WAITING_FOR_READY stays (nudge TTS finished)
+
+            return { ...state, isTTSPlaying: false, voiceState: nextVoiceState };
+        }
 
         case ACTION.INTERRUPT:
             return { ...state, voiceState: VOICE_STATE.INTERRUPTED, turnId: state.turnId + 1 };
@@ -428,6 +454,23 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             proactiveRef.current = new ProactiveAssistant({
                 onProactiveMessage: (msg) => {
                     if (!isActiveRef.current) return;
+
+                    // ── FIX: Only inject proactive messages when Cheffy is idle ──
+                    // Without this guard, proactive messages fire while TTS is
+                    // mid-sentence (SPEAKING), creating a second competing voice.
+                    // They can also fire during GREETING/WAITING before the user
+                    // has started cooking.
+                    const vs = stateRef.current.voiceState;
+                    if (vs !== VOICE_STATE.LISTENING) {
+                        console.debug('[NaturalVoice] Proactive message deferred — state:', vs);
+                        // Queue it for next LISTENING state
+                        if (!proactiveRef.current._pendingMessages) {
+                            proactiveRef.current._pendingMessages = [];
+                        }
+                        proactiveRef.current._pendingMessages.push(msg);
+                        return;
+                    }
+
                     getConversation().addAssistantMessage(msg);
                     dispatch({ type: ACTION.LLM_DONE, fullText: msg });
                     getTTS().enqueue(msg);
@@ -733,15 +776,27 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         const shouldListen = (vs === VOICE_STATE.LISTENING || vs === VOICE_STATE.WAITING_FOR_READY) && !ttsPlaying;
 
         if (shouldListen && isActiveRef.current) {
+            // ── Flush any deferred proactive messages ──
+            // These were queued while TTS was playing / state was SPEAKING.
+            if (vs === VOICE_STATE.LISTENING && proactiveRef.current?._pendingMessages?.length > 0) {
+                const pending = proactiveRef.current._pendingMessages.splice(0);
+                const tts = getTTS();
+                for (const msg of pending) {
+                    getConversation().addAssistantMessage(msg);
+                    dispatch({ type: ACTION.LLM_DONE, fullText: msg });
+                    tts.enqueue(msg);
+                }
+                tts.flush();
+                // TTS will start → isTTSPlaying=true → this effect re-runs → STT stays off
+                return;
+            }
+
             // ── Lazy start: STT.start() internally calls getUserMedia ──
-            // If mic is denied, STT fires onError with fatal=true → ERROR state.
-            // But TTS/greeting will have already played successfully.
             const stt = sttRef.current || getSTT();
             if (!stt.isListening) {
                 console.debug('[NaturalVoice] Starting STT — state:', vs);
                 stt.start().catch((err) => {
                     console.warn('[NaturalVoice] STT start failed:', err);
-                    // Set mic permission state so UI can show a "Tap to enable mic" button
                     dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'denied' });
                 });
             }
@@ -749,7 +804,7 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             // ── TTS just started: stop STT to prevent echo pickup ──
             console.debug('[NaturalVoice] Stopping STT — TTS playing');
             sttRef.current.stop();
-        } else if ((vs === VOICE_STATE.PAUSED || vs === VOICE_STATE.IDLE || vs === VOICE_STATE.GREETING) && sttRef.current?.isListening) {
+        } else if ((vs === VOICE_STATE.PAUSED || vs === VOICE_STATE.IDLE || vs === VOICE_STATE.GREETING || vs === VOICE_STATE.PROCESSING || vs === VOICE_STATE.SPEAKING) && sttRef.current?.isListening) {
             // ── Non-listening state: ensure STT is off ──
             console.debug('[NaturalVoice] Stopping STT — state:', vs);
             sttRef.current.stop();
