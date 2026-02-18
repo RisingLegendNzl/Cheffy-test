@@ -565,16 +565,15 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             return;
         }
 
-        // Request mic permission
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            stream.getTracks().forEach(t => t.stop());
-            dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'granted' });
-        } catch (err) {
-            dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'denied' });
-            dispatch({ type: ACTION.ERROR, error: 'Microphone access required.' });
-            return;
-        }
+        // ── FIX Bug E: Do NOT request mic permission here. ──
+        // The old code called getUserMedia() immediately, which:
+        //   1. Showed the browser permission dialog before Cheffy even speaks
+        //   2. Blocked the greeting if user denied
+        //   3. Made mic mandatory even for listen-only mode
+        //
+        // Mic is now requested lazily when STT actually starts (in the
+        // WAITING_FOR_READY effect or the LISTENING effect).
+        // The greeting plays without any mic access.
 
         isActiveRef.current = true;
         userReadyRef.current = false;
@@ -590,7 +589,7 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         // Pause wake word while session is active
         wakeWordRef.current?.pause();
 
-        // ── Speak ONLY the greeting. Do NOT speak step 1 yet. ──
+        // ── Speak ONLY the greeting. No mic required for TTS output. ──
         const tts = getTTS();
         const greeting = `Hi! I'm Cheffy, and today we're making ${mealName}. ` +
                          `It's ${steps.length} steps. Just say yes when you're ready to start cooking!`;
@@ -599,8 +598,8 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         tts.enqueue(greeting);
         tts.flush();
 
-        // ── STT is NOT started here. It starts when greeting TTS finishes ──
-        // (see the WAITING_FOR_READY effect below)
+        // STT is NOT started here. It starts when greeting TTS finishes
+        // AND the user's mic permission is requested at that point.
 
     }, [mealName, steps, ingredients, getConversation, getTTS]);
 
@@ -718,34 +717,41 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     // EFFECTS
     // ===========================================================================
 
-    // ── FIX 1: Strict STT lifecycle — stop mic during Cheffy's output ──
-    // This is the PRIMARY fix for the choppy loop. Without it, STT picks
-    // up Cheffy's own TTS audio through speakers → false final → interrupt
-    // → new LLM call → new TTS → echo picked up again → infinite cycle.
+    // ── STT lifecycle: controls when mic is on/off ──
+    // Rule: STT runs only when (LISTENING or WAITING_FOR_READY) AND TTS is silent.
     //
-    // Rule: STT is ON only when (LISTENING or WAITING_FOR_READY) AND TTS is silent.
+    // FIX Bug A: We no longer stop+restart STT on every isTTSPlaying toggle.
+    // Instead, we stop STT when TTS starts, and only restart when TTS ends
+    // AND we're in a listening state. This prevents AudioContext churn.
+    //
+    // FIX Bug E: Mic permission is requested here (lazy), not in startSession.
+    // If denied, we dispatch an error but don't block the TTS-only experience.
     useEffect(() => {
         const vs = state.voiceState;
         const ttsPlaying = state.isTTSPlaying;
 
-        // States where STT should be ACTIVE — but ONLY if TTS is silent.
-        // If TTS is playing, we MUST keep STT off to prevent echo feedback.
         const shouldListen = (vs === VOICE_STATE.LISTENING || vs === VOICE_STATE.WAITING_FOR_READY) && !ttsPlaying;
 
         if (shouldListen && isActiveRef.current) {
+            // ── Lazy start: STT.start() internally calls getUserMedia ──
+            // If mic is denied, STT fires onError with fatal=true → ERROR state.
+            // But TTS/greeting will have already played successfully.
             const stt = sttRef.current || getSTT();
             if (!stt.isListening) {
-                console.debug('[NaturalVoice] Starting STT — state:', vs, 'tts:', ttsPlaying ? 'playing' : 'silent');
+                console.debug('[NaturalVoice] Starting STT — state:', vs);
                 stt.start().catch((err) => {
                     console.warn('[NaturalVoice] STT start failed:', err);
+                    // Set mic permission state so UI can show a "Tap to enable mic" button
+                    dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'denied' });
                 });
             }
-            return;
-        }
-
-        // Everything else: STT must be OFF
-        if (sttRef.current?.isListening) {
-            console.debug('[NaturalVoice] Stopping STT — state:', vs, 'tts:', ttsPlaying ? 'playing' : 'silent');
+        } else if (ttsPlaying && sttRef.current?.isListening) {
+            // ── TTS just started: stop STT to prevent echo pickup ──
+            console.debug('[NaturalVoice] Stopping STT — TTS playing');
+            sttRef.current.stop();
+        } else if ((vs === VOICE_STATE.PAUSED || vs === VOICE_STATE.IDLE || vs === VOICE_STATE.GREETING) && sttRef.current?.isListening) {
+            // ── Non-listening state: ensure STT is off ──
+            console.debug('[NaturalVoice] Stopping STT — state:', vs);
             sttRef.current.stop();
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -822,6 +828,18 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
         startWakeWord,
         stopWakeWord,
         setWakeWordSensitivity,
+        // ── FIX Bug E: Manual mic activation for users who denied initially ──
+        startMic: () => {
+            if (!isActiveRef.current) return;
+            const stt = getSTT();
+            if (!stt.isListening) {
+                stt.start().then(() => {
+                    dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'granted' });
+                }).catch(() => {
+                    dispatch({ type: ACTION.SET_MIC_PERMISSION, permission: 'denied' });
+                });
+            }
+        },
 
         VOICE_STATE,
     }), [state, steps.length, startSession, stopSession, pauseSession, resumeSession, nextStep, prevStep, goToStep, setLanguage, startWakeWord, stopWakeWord, setWakeWordSensitivity]);
