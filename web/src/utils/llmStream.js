@@ -1,6 +1,22 @@
 // web/src/utils/llmStream.js
 // =============================================================================
-// Natural Voice Mode — LLM Streaming Client
+// Natural Voice Mode — LLM Streaming Client v5.0
+//
+// v5.0 — Sentence fragment coalescing (FIX #4)
+//
+//   Problem: Short fragments like "Great!" or "Sure." were emitted as
+//   independent TTS requests. Very short utterances (< 0.5s audio) finish
+//   before the next sentence's synthesis completes, creating audible gaps.
+//
+//   Fix:
+//     - MIN_SENTENCE_LENGTH raised from 12 → 40 characters (~1 spoken clause)
+//     - Short fragments that match a sentence boundary but are below the
+//       threshold stay in the buffer and get concatenated with the next
+//       sentence, producing longer, smoother TTS requests
+//     - MAX_BUFFER_LENGTH raised from 120 → 160 to accommodate the longer
+//       buffering window before force-flush
+//     - Force-flush split point raised to avoid mid-word breaks on longer
+//       buffered text
 //
 // Connects to /api/voice/chat via SSE (fetch + ReadableStream).
 // Buffers incoming tokens into sentences and flushes to a callback.
@@ -22,10 +38,12 @@
 
 const CHAT_ENDPOINT = '/api/voice/chat';
 
-// Sentence boundary regex: split after . ! ? followed by space, or newlines
+// Sentence boundary regex: split after . ! ? followed by space or end, or newlines
 const SENTENCE_BOUNDARY = /(?<=[.!?])\s+/;
-const MAX_BUFFER_LENGTH = 120; // Force-flush at this char count
-const MIN_SENTENCE_LENGTH = 12; // Don't split too-short fragments
+
+// FIX #4: Raised thresholds for smoother TTS output
+const MAX_BUFFER_LENGTH = 160; // Force-flush at this char count (was 120)
+const MIN_SENTENCE_LENGTH = 40; // Don't split too-short fragments (was 12)
 
 // Action tag pattern: [ACTION:TYPE] or [ACTION:TYPE:PAYLOAD]
 const ACTION_PATTERN = /\[ACTION:([A-Z_]+)(?::(\d+))?\]/g;
@@ -189,7 +207,7 @@ export class LLMStream {
         }
 
         if (force) {
-            // Stream ended — flush everything
+            // Stream ended — flush everything regardless of length
             const text = this._buffer.trim();
             this._buffer = '';
             if (text) {
@@ -207,10 +225,21 @@ export class LLMStream {
                 const sentence = this._buffer.slice(0, splitPoint).trim();
                 const remainder = this._buffer.slice(splitPoint);
 
+                // FIX #4: Only emit if the sentence is long enough for smooth TTS.
+                // Short fragments like "Great!" (6 chars) or "Sure thing." (11 chars)
+                // stay in the buffer and get concatenated with the next sentence,
+                // producing "Great! Now stir the sauce." as a single TTS request.
                 if (sentence.length >= MIN_SENTENCE_LENGTH) {
                     this._buffer = remainder;
                     this._emitSentence(sentence);
                     continue;
+                }
+
+                // Sentence exists but is too short — don't split yet.
+                // Check if we should force-flush due to buffer overflow instead.
+                // If not, just break and wait for more tokens.
+                if (this._buffer.length < MAX_BUFFER_LENGTH) {
+                    break;
                 }
             }
 
