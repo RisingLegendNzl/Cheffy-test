@@ -1,13 +1,20 @@
 // web/src/hooks/useNaturalVoice.js
 // =============================================================================
-// Natural Voice Mode Hook — Cheffy Voice Cooking v3.4
+// Natural Voice Mode Hook — Cheffy Voice Cooking v3.5
 //
-// v3.4 — ttsMute debug toggle integration
+// v3.5 — Proactive-message double-flush race condition fix
+//   - onProactiveMessage ALWAYS defers to _pendingMessages (no direct
+//     enqueue/flush path) — eliminates competing flush() calls that
+//     corrupted _flushed flag in TTSStreamer/TTSQueue mid-turn
+//   - New PROACTIVE_QUEUED action + proactiveVersion counter triggers
+//     STT-lifecycle effect re-run so deferred messages drain promptly
+//   - STT-lifecycle effect dep array now includes proactiveVersion
+//
+// v3.4 (preserved) — ttsMute debug toggle integration
 //   - Subscribes to ttsMute singleton; interrupts active TTS when muted
 //   - Gates onPlaybackStart dispatch with ttsMute.isMuted check
-//   - All v3.3 fixes preserved (turn-level TTS, exclusive audio lock, debounced STT)
 //
-// v3.3 — Secondary voice elimination + TTS continuity
+// v3.3 (preserved) — Secondary voice elimination + TTS continuity
 //   - ttsClient.claimExclusiveAudio() on session start
 //   - Turn-level _turnPlaying in TTSStreamer/TTSQueue
 //   - 150ms debounced STT restart after TTS ends
@@ -69,6 +76,7 @@ const ACTION = {
     SET_LANGUAGE: 'SET_LANGUAGE',
     UPDATE_TIMERS: 'UPDATE_TIMERS',
     SET_WAKE_WORD_STATE: 'SET_WAKE_WORD_STATE',
+    PROACTIVE_QUEUED: 'PROACTIVE_QUEUED',           // ← v3.5 addition
 };
 
 // =============================================================================
@@ -127,6 +135,7 @@ const initialState = {
     activeTimers: [],
     wakeWordState: 'idle',
     ttsMode: 'stream',
+    proactiveVersion: 0,                             // ← v3.5 addition
 };
 
 function voiceReducer(state, action) {
@@ -264,6 +273,11 @@ function voiceReducer(state, action) {
 
         case ACTION.SET_WAKE_WORD_STATE:
             return { ...state, wakeWordState: action.wakeState };
+
+        // ── v3.5: Proactive message queued — bump version to trigger
+        //    STT-lifecycle effect re-run so it can drain _pendingMessages ──
+        case ACTION.PROACTIVE_QUEUED:
+            return { ...state, proactiveVersion: state.proactiveVersion + 1 };
 
         default:
             return state;
@@ -417,22 +431,32 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     const getProactive = useCallback(() => {
         if (!proactiveRef.current) {
             proactiveRef.current = new ProactiveAssistant({
+                // ── v3.5 FIX: ALWAYS defer proactive messages ──────────────
+                // Never enqueue/flush directly from this callback.
+                // This eliminates the double-flush race condition where a
+                // proactive flush() collides with an in-progress LLM turn's
+                // flush(), corrupting the _flushed flag in TTSStreamer/TTSQueue
+                // and causing mid-sentence cutouts or state machine stalls.
+                //
+                // Messages are drained by the STT-lifecycle effect once the
+                // state machine is safely in LISTENING with TTS idle.
+                // ────────────────────────────────────────────────────────────
                 onProactiveMessage: (msg) => {
                     if (!isActiveRef.current) return;
 
-                    const vs = stateRef.current.voiceState;
-                    if (vs !== VOICE_STATE.LISTENING) {
-                        if (!proactiveRef.current._pendingMessages) {
-                            proactiveRef.current._pendingMessages = [];
-                        }
-                        proactiveRef.current._pendingMessages.push(msg);
-                        return;
+                    if (!proactiveRef.current._pendingMessages) {
+                        proactiveRef.current._pendingMessages = [];
                     }
+                    proactiveRef.current._pendingMessages.push(msg);
+                    console.debug('[NaturalVoice] Proactive message deferred:', msg.substring(0, 50));
 
-                    getConversation().addAssistantMessage(msg);
-                    dispatch({ type: ACTION.LLM_DONE, fullText: msg });
-                    getTTS().enqueue(msg);
-                    getTTS().flush();
+                    // Dispatch PROACTIVE_QUEUED to bump proactiveVersion in
+                    // state, which triggers the STT-lifecycle effect to re-run.
+                    // Without this, if we're already in LISTENING the effect
+                    // wouldn't fire again (no state change) and the message
+                    // would sit in the buffer until the next organic state
+                    // transition.
+                    dispatch({ type: ACTION.PROACTIVE_QUEUED });
                 },
                 onTimerStart: (timer) => { console.debug('[NaturalVoice] Timer started:', timer.label); },
                 onTimerComplete: (timer) => { console.debug('[NaturalVoice] Timer complete:', timer); },
@@ -692,6 +716,8 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
     }, []);
 
     // ── STT lifecycle ──
+    // v3.5: Added state.proactiveVersion to dep array so this effect re-fires
+    // when a proactive message is deferred via PROACTIVE_QUEUED dispatch.
     useEffect(() => {
         const vs = state.voiceState;
         const ttsPlaying = state.isTTSPlaying;
@@ -747,7 +773,7 @@ export function useNaturalVoice({ mealName = '', steps = [], ingredients = [] })
             sttRef.current.stop();
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [state.voiceState, state.isTTSPlaying]);
+    }, [state.voiceState, state.isTTSPlaying, state.proactiveVersion]);  // ← v3.5: added proactiveVersion
 
     // Auto-recover from errors
     useEffect(() => {
@@ -847,7 +873,7 @@ export function isNaturalVoiceSupported() {
     const hasSR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
     const hasAudio = typeof Audio !== 'undefined';
     const hasMD = typeof navigator?.mediaDevices?.getUserMedia === 'function';
-    return (!!hasSR || hasMD) && hasAudio;
+    return (!!hasSR || !!hasMD) && hasAudio;
 }
 
 export default useNaturalVoice;
