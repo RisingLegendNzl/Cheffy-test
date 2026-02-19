@@ -1,8 +1,7 @@
 // web/src/components/wizard/MealPreferencesStep.jsx
-import React from 'react';
-import FloatingInput from './FloatingInput';
 // No changes needed to this file — FloatingSelect and DayPicker handle dark mode.
 import React from 'react';
+import FloatingInput from './FloatingInput';
 import FloatingSelect from './FloatingSelect';
 import DayPicker from './DayPicker';
 
@@ -80,5 +79,4 @@ const MealPreferencesStep = ({ formData, onChange }) => {
   );
 };
 
-export default MealPreferencesStep;
 export default MealPreferencesStep;

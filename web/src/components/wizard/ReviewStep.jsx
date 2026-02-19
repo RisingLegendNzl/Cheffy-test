@@ -1,7 +1,4 @@
 // web/src/components/wizard/ReviewStep.jsx
-import React from 'react';
-import MacroPreviewCard from './MacroPreviewCard';
-import { COLORS } from '../../constants';
 // UPDATED: Full dark mode support — summary sections, items, cuisine text.
 import React from 'react';
 import MacroPreviewCard from './MacroPreviewCard';
@@ -25,12 +22,6 @@ const GOAL_LABELS = {
   bulk_aggressive: 'Aggressive Bulk',
 };
 
-const SummaryItem = ({ label, value }) => (
-  <div>
-    <div style={{ fontSize: '11px', color: COLORS.gray[400], marginBottom: '2px' }}>
-      {label}
-    </div>
-    <div style={{ fontSize: '14px', fontWeight: '600', color: COLORS.gray[900] }}>
 // ── Conversion helpers ──
 const formatHeight = (heightCm, units) => {
   if (!heightCm) return '—';
@@ -62,12 +53,6 @@ const SummaryItem = ({ label, value, isDark }) => (
   </div>
 );
 
-const SummarySection = ({ icon, title, children }) => (
-  <div
-    className="rounded-xl p-4"
-    style={{
-      background: COLORS.gray[50],
-      border: `1px solid ${COLORS.gray[200]}`,
 const SummarySection = ({ icon, title, children, isDark }) => (
   <div
     className="rounded-xl p-4"
@@ -83,7 +68,6 @@ const SummarySection = ({ icon, title, children, isDark }) => (
         style={{
           fontSize: '13px',
           letterSpacing: '0.05em',
-          color: COLORS.gray[600],
           color: isDark ? '#9ca3b0' : COLORS.gray[600],
         }}
       >
@@ -94,7 +78,6 @@ const SummarySection = ({ icon, title, children, isDark }) => (
   </div>
 );
 
-const ReviewStep = ({ formData }) => {
 const ReviewStep = ({ formData, measurementUnits = 'metric' }) => {
   const { isDark } = useTheme();
 
@@ -104,14 +87,6 @@ const ReviewStep = ({ formData, measurementUnits = 'metric' }) => {
       <MacroPreviewCard formData={formData} />
 
       {/* Profile summary */}
-      <SummarySection icon="👤" title="Profile">
-        <SummaryItem label="Name" value={formData.name || '—'} />
-        <SummaryItem label="Height" value={`${formData.height} cm`} />
-        <SummaryItem label="Weight" value={`${formData.weight} kg`} />
-        <SummaryItem label="Age" value={formData.age} />
-        <SummaryItem
-          label="Body Fat"
-          value={formData.bodyFat ? `${formData.bodyFat}%` : 'Not set'}
       <SummarySection icon="👤" title="Profile" isDark={isDark}>
         <SummaryItem label="Name" value={formData.name || '—'} isDark={isDark} />
         <SummaryItem label="Height" value={formatHeight(formData.height, measurementUnits)} isDark={isDark} />
@@ -130,10 +105,6 @@ const ReviewStep = ({ formData, measurementUnits = 'metric' }) => {
       </SummarySection>
 
       {/* Goals summary */}
-      <SummarySection icon="🎯" title="Goals">
-        <SummaryItem
-          label="Activity"
-          value={ACTIVITY_LABELS[formData.activityLevel] || formData.activityLevel}
       <SummarySection icon="🎯" title="Goals" isDark={isDark}>
         <SummaryItem
           label="Activity"
@@ -143,6 +114,7 @@ const ReviewStep = ({ formData, measurementUnits = 'metric' }) => {
         <SummaryItem
           label="Goal"
           value={GOAL_LABELS[formData.goal] || formData.goal}
+          isDark={isDark}
         />
         <SummaryItem
           label="Diet"
@@ -152,19 +124,6 @@ const ReviewStep = ({ formData, measurementUnits = 'metric' }) => {
       </SummarySection>
 
       {/* Plan summary */}
-      <SummarySection icon="🍳" title="Plan">
-        <SummaryItem
-          label="Duration"
-          value={`${formData.days} day${formData.days > 1 ? 's' : ''}`}
-        />
-        <SummaryItem label="Meals/Day" value={formData.eatingOccasions} />
-        <SummaryItem label="Store" value={formData.store} />
-        <SummaryItem label="Budget" value={formData.costPriority} />
-        <SummaryItem label="Variety" value={formData.mealVariety} />
-        {formData.cuisine && (
-          <SummaryItem label="Cuisine" value={formData.cuisine} />
-        )}
-      </SummarySection>
       <SummarySection icon="🍳" title="Plan" isDark={isDark}>
         <SummaryItem
           label="Duration"
@@ -196,5 +155,4 @@ const ReviewStep = ({ formData, measurementUnits = 'metric' }) => {
   );
 };
 
-export default ReviewStep;
 export default ReviewStep;
