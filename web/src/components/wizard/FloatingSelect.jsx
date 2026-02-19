@@ -2,6 +2,11 @@
 import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { COLORS } from '../../constants';
+// UPDATED: Full dark mode support — backgrounds, borders, text, chevron, option dropdown.
+import React, { useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { COLORS } from '../../constants';
+import { useTheme } from '../../contexts/ThemeContext';
 
 const FloatingSelect = ({
   label,
@@ -13,14 +18,27 @@ const FloatingSelect = ({
   required,
 }) => {
   const [focused, setFocused] = useState(false);
+  const { isDark } = useTheme();
 
   const borderColor = error
     ? COLORS.error.main
     : focused
     ? COLORS.primary[500]
+    : isDark
+    ? '#3d4158'
     : COLORS.gray[200];
 
   const glowColor = error ? COLORS.error.main : COLORS.primary[500];
+
+  const baseBg = isDark ? '#252839' : '#fff';
+  const focusBg = isDark ? '#2a2d42' : '#fefefe';
+  const textColor = isDark ? '#f0f1f5' : COLORS.gray[900];
+  const labelColor = error
+    ? COLORS.error.main
+    : focused
+    ? (isDark ? '#818cf8' : COLORS.primary[600])
+    : (isDark ? '#9ca3b0' : COLORS.gray[400]);
+  const chevronColor = isDark ? '#6b7280' : COLORS.gray[400];
 
   return (
     <div>
@@ -32,6 +50,11 @@ const FloatingSelect = ({
           background: focused ? '#fefefe' : '#fff',
           boxShadow: focused
             ? `0 0 0 3px ${glowColor}14, 0 0 20px ${glowColor}08`
+          background: focused ? focusBg : baseBg,
+          boxShadow: focused
+            ? `0 0 0 3px ${glowColor}14, 0 0 20px ${glowColor}08`
+            : isDark
+            ? '0 1px 2px rgba(0,0,0,0.2)'
             : '0 1px 2px rgba(0,0,0,0.04)',
           transitionDuration: '200ms',
           transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)',
@@ -49,6 +72,7 @@ const FloatingSelect = ({
               : focused
               ? COLORS.primary[600]
               : COLORS.gray[400],
+            color: labelColor,
             letterSpacing: '0.02em',
             textTransform: 'uppercase',
             transition: 'color 200ms ease',
@@ -69,6 +93,7 @@ const FloatingSelect = ({
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           className="w-full bg-transparent border-none outline-none rounded-xl cursor-pointer appearance-none"
+          className="w-full border-none outline-none rounded-xl cursor-pointer appearance-none"
           style={{
             padding: '24px 40px 8px 14px',
             fontSize: '15px',
@@ -79,6 +104,20 @@ const FloatingSelect = ({
         >
           {options.map((opt) => (
             <option key={opt.value} value={opt.value}>
+            color: textColor,
+            fontFamily: 'inherit',
+            backgroundColor: 'transparent',
+          }}
+        >
+          {options.map((opt) => (
+            <option
+              key={opt.value}
+              value={opt.value}
+              style={{
+                backgroundColor: isDark ? '#1e2130' : '#fff',
+                color: isDark ? '#f0f1f5' : COLORS.gray[900],
+              }}
+            >
               {opt.label}
             </option>
           ))}
@@ -87,6 +126,7 @@ const FloatingSelect = ({
         {/* Custom chevron */}
         <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
           <ChevronDown size={16} style={{ color: COLORS.gray[400] }} />
+          <ChevronDown size={16} style={{ color: chevronColor }} />
         </div>
       </div>
 
@@ -103,4 +143,5 @@ const FloatingSelect = ({
   );
 };
 
+export default FloatingSelect;
 export default FloatingSelect;

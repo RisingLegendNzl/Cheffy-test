@@ -1,0 +1,320 @@
+/* =============================================================================
+   dashboard-enhancements.css
+   Custom animations & styles for the Cheffy Dashboard UI enhancements.
+   Imported alongside animations.css in index.jsx.
+   ============================================================================= */
+
+
+/* =============================================================================
+   1. PROFILE CARD — Stat value stagger entrance
+   ============================================================================= */
+
+.profile-stat-box {
+  opacity: 0;
+  animation: profileStatEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes profileStatEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.profile-stat-box:nth-child(1) { animation-delay: 0.06s; }
+.profile-stat-box:nth-child(2) { animation-delay: 0.12s; }
+.profile-stat-box:nth-child(3) { animation-delay: 0.18s; }
+.profile-stat-box:nth-child(4) { animation-delay: 0.24s; }
+
+/* Profile card hover lift */
+.profile-card-enhanced {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.profile-card-enhanced:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 25px -5px rgba(99, 102, 241, 0.12),
+    0 0 20px rgba(99, 102, 241, 0.08);
+}
+
+
+/* =============================================================================
+   2. TABS — Sliding gradient underline
+   ============================================================================= */
+
+.enhanced-tabs-container {
+  position: relative;
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #e5e7eb; /* gray-200 */
+}
+
+.enhanced-tab-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #9ca3af; /* gray-400 */
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.25s ease, background-color 0.2s ease;
+  border-radius: 8px 8px 0 0;
+  white-space: nowrap;
+}
+
+.enhanced-tab-button:hover {
+  color: #6b7280; /* gray-500 */
+  background-color: #f9fafb; /* gray-50 */
+}
+
+.enhanced-tab-button--active {
+  color: #4f46e5; /* primary-600 */
+}
+
+.enhanced-tab-button--active:hover {
+  color: #4f46e5;
+  background-color: transparent;
+}
+
+/* Tab icon micro-animation on activation */
+.enhanced-tab-icon {
+  display: inline-flex;
+  margin-right: 8px;
+  transition: transform 0.3s ease;
+}
+
+.enhanced-tab-button--active .enhanced-tab-icon {
+  animation: tabIconPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes tabIconPop {
+  0%   { transform: scale(0.7); }
+  60%  { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+/* Sliding gradient underline indicator */
+.enhanced-tabs-indicator {
+  position: absolute;
+  bottom: -1px;
+  height: 3px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #6366f1, #a855f7);
+  transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 2;
+}
+
+/* Tab count badge */
+.tab-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 700;
+  background-color: #e0e7ff; /* primary-100 */
+  color: #4338ca;            /* primary-700 */
+  line-height: 1;
+}
+
+.enhanced-tab-button--active .tab-count-badge {
+  background-color: #6366f1; /* primary-500 */
+  color: #ffffff;
+}
+
+
+/* =============================================================================
+   3. DASHBOARD CARD — Living border breathing glow
+   ============================================================================= */
+
+.dashboard-card-wrapper {
+  position: relative;
+  border-radius: 16px;
+  transition: box-shadow 0.4s ease;
+  animation: dashboardBreathe 6s ease-in-out infinite;
+}
+
+@keyframes dashboardBreathe {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px rgba(99, 102, 241, 0.07),
+      0 0 12px rgba(99, 102, 241, 0.03),
+      0 1px 3px rgba(0, 0, 0, 0.06);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(168, 85, 247, 0.07),
+      0 0 18px rgba(168, 85, 247, 0.05),
+      0 1px 3px rgba(0, 0, 0, 0.06);
+  }
+}
+
+
+/* =============================================================================
+   4. CALORIE RING — Animated SVG stroke fill
+   ============================================================================= */
+
+.calorie-ring-fill {
+  animation: calorieRingDraw 1.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  stroke-dashoffset: var(--ring-circumference);
+}
+
+@keyframes calorieRingDraw {
+  from {
+    stroke-dashoffset: var(--ring-circumference);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Flame icon heartbeat */
+.flame-heartbeat {
+  animation: flameHeartbeat 1.6s ease-in-out infinite;
+}
+
+@keyframes flameHeartbeat {
+  0%, 100% { transform: scale(1); }
+  30%      { transform: scale(1.12); }
+  60%      { transform: scale(1); }
+}
+
+
+/* =============================================================================
+   5. MACRO PROGRESS BARS — Cascading fill animation
+   ============================================================================= */
+
+.macro-bar-fill {
+  width: 0%;
+  animation: macroBarFill 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes macroBarFill {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
+.macro-bar-fill--protein { animation-delay: 0.1s; }
+.macro-bar-fill--fat     { animation-delay: 0.3s; }
+.macro-bar-fill--carbs   { animation-delay: 0.5s; }
+
+/* Macro row entrance */
+.macro-row {
+  opacity: 0;
+  animation: macroRowEnter 0.5s ease forwards;
+}
+
+@keyframes macroRowEnter {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.macro-row:nth-child(1) { animation-delay: 0.05s; }
+.macro-row:nth-child(2) { animation-delay: 0.25s; }
+.macro-row:nth-child(3) { animation-delay: 0.45s; }
+
+
+/* =============================================================================
+   6. FOOTER — Chevron nudge animation
+   ============================================================================= */
+
+.footer-chevron-nudge {
+  display: inline-flex;
+  animation: footerChevronNudge 1.8s ease-in-out infinite;
+}
+
+@keyframes footerChevronNudge {
+  0%, 100% { transform: translateX(0); }
+  50%      { transform: translateX(4px); }
+}
+
+
+/* =============================================================================
+   7. GRADIENT SECTION DIVIDERS
+   ============================================================================= */
+
+.section-gradient-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #d1d5db, transparent);
+  border: none;
+  margin: 0;
+}
+
+
+/* =============================================================================
+   8. EMPTY STATE — Breathing icon pulse
+   ============================================================================= */
+
+.empty-state-icon-breathe {
+  animation: emptyStateIconBreathe 3s ease-in-out infinite;
+}
+
+@keyframes emptyStateIconBreathe {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.85;
+  }
+}
+
+.empty-state-zap {
+  animation: flameHeartbeat 1.6s ease-in-out infinite;
+}
+
+
+/* =============================================================================
+   9. ACCESSIBILITY — Respect reduced motion
+   ============================================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-stat-box,
+  .macro-row,
+  .macro-bar-fill,
+  .calorie-ring-fill {
+    animation: none !important;
+    opacity: 1 !important;
+    width: 100% !important;
+    stroke-dashoffset: 0 !important;
+  }
+
+  .dashboard-card-wrapper {
+    animation: none !important;
+    box-shadow:
+      0 0 0 1px rgba(99, 102, 241, 0.07),
+      0 1px 3px rgba(0, 0, 0, 0.06);
+  }
+
+  .flame-heartbeat,
+  .footer-chevron-nudge,
+  .empty-state-icon-breathe,
+  .empty-state-zap,
+  .enhanced-tab-button--active .enhanced-tab-icon {
+    animation: none !important;
+  }
+
+  .enhanced-tabs-indicator {
+    transition: none !important;
+  }
+}

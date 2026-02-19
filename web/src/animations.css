@@ -280,6 +280,50 @@
 }
 
 /* ============================================
+   WIZARD STEP TRANSITIONS
+   ============================================ */
+
+@keyframes wizardSlideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes wizardSlideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes wizardSlideOut {
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes wizardFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================
    UTILITY CLASSES
    ============================================ */
 
@@ -384,6 +428,23 @@
 
 .animate-wiggle {
   animation: wiggle 0.5s ease-in-out;
+}
+
+/* Wizard step transitions */
+.animate-wizardSlideInRight {
+  animation: wizardSlideInRight 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.animate-wizardSlideInLeft {
+  animation: wizardSlideInLeft 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.animate-wizardSlideOut {
+  animation: wizardSlideOut 0.2s ease forwards;
+}
+
+.animate-wizardFadeUp {
+  animation: wizardFadeUp 0.5s ease;
 }
 
 /* ============================================
@@ -515,3 +576,4 @@
 .stagger-item:nth-child(8) { animation-delay: 0.4s; }
 .stagger-item:nth-child(9) { animation-delay: 0.45s; }
 .stagger-item:nth-child(10) { animation-delay: 0.5s; }
+

@@ -2,6 +2,11 @@
 import React from 'react';
 import OptionCard from './OptionCard';
 import { COLORS } from '../../constants';
+// UPDATED: Full dark mode support — section labels use theme-aware colors.
+import React from 'react';
+import OptionCard from './OptionCard';
+import { COLORS } from '../../constants';
+import { useTheme } from '../../contexts/ThemeContext';
 
 const ACTIVITY_OPTIONS = [
   { value: 'sedentary', icon: '🪑', label: 'Sedentary', desc: 'Desk job, minimal exercise' },
@@ -20,12 +25,14 @@ const GOAL_OPTIONS = [
 ];
 
 const SectionLabel = ({ children, error }) => (
+const SectionLabel = ({ children, error, isDark }) => (
   <div
     className="font-semibold uppercase mb-2.5"
     style={{
       fontSize: '11px',
       letterSpacing: '0.05em',
       color: COLORS.gray[400],
+      color: isDark ? '#9ca3b0' : COLORS.gray[400],
     }}
   >
     {children}
@@ -38,6 +45,8 @@ const SectionLabel = ({ children, error }) => (
 );
 
 const FitnessGoalsStep = ({ formData, onChange, errors }) => {
+  const { isDark } = useTheme();
+
   const handleSelect = (name, value) => {
     onChange({ target: { name, value } });
   };
@@ -47,6 +56,7 @@ const FitnessGoalsStep = ({ formData, onChange, errors }) => {
       {/* Activity Level */}
       <div>
         <SectionLabel error={errors.activityLevel}>Activity Level</SectionLabel>
+        <SectionLabel error={errors.activityLevel} isDark={isDark}>Activity Level</SectionLabel>
         <div className="flex flex-col gap-2">
           {ACTIVITY_OPTIONS.map((opt) => (
             <OptionCard
@@ -65,6 +75,7 @@ const FitnessGoalsStep = ({ formData, onChange, errors }) => {
       {/* Fitness Goal */}
       <div>
         <SectionLabel error={errors.goal}>Fitness Goal</SectionLabel>
+        <SectionLabel error={errors.goal} isDark={isDark}>Fitness Goal</SectionLabel>
         <div className="flex flex-col gap-2">
           {GOAL_OPTIONS.map((opt) => (
             <OptionCard
@@ -83,4 +94,5 @@ const FitnessGoalsStep = ({ formData, onChange, errors }) => {
   );
 };
 
+export default FitnessGoalsStep;
 export default FitnessGoalsStep;

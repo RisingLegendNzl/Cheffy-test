@@ -1,10 +1,10 @@
 // --- Cheffy API: /api/plan/generate-full-plan.js ---
-// [NEW] Hybrid Batched Orchestrator (V14.0 - Ingredient-Centric Architecture)
+// [NEW] Hybrid Batched Orchestrator (V14.1 - Enhanced Grocery Matching)
 // Implements the "full plan" architecture:
 // 1. Compute Targets (passed in)
 // 2. Generate ALL meals
 // 3. Aggregate/Dedupe ALL ingredients
-// 4. Run ONE Market Run
+// 4. Run ONE Market Run (Enhanced with V13.1 Grocery Matching)
 // 5. [NEW] Separate Price Extraction (Mod Zone 3)
 // 6. [NEW] Run ONE Ingredient-Centric Nutrition Fetch (Mod Zone 1 & 2)
 // 7. Run Solver (V1) in SHADOW mode / Reconciler (V0) as LIVE path
@@ -12,6 +12,8 @@
 
 /// ===== IMPORTS-START ===== \\
 const fetch = require('node-fetch');
+// Ensure Response is available for the fix in Change 2.5
+const Response = fetch.Response || global.Response;
 const crypto = require('crypto');
 const { createClient } = require('@vercel/kv');
 
@@ -26,15 +28,30 @@ try {
     var { normalizeKey } = require('../scripts/normalize.js');
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
+    // Change 2.1: Import LLM provider (Primary path)
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../utils/llm-provider.js');
 } catch (e) {
     console.error("CRITICAL: Failed to import utils. Using local fallbacks.", e.message);
     var { normalizeKey } = require('../../scripts/normalize.js');
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
+    // Change 2.1: Import LLM provider (Fallback path)
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../../utils/llm-provider.js');
 }
 
 // --- [NEW] Import validation helper (Task 1) ---
 const { validateDayPlan } = require('../../utils/validation');
+
+// --- [NEW] Grocery Matching Integrations (V13.1) ---
+// Preserved generateFallbackQueries from old preprocessor
+const { generateFallbackQueries } = require('../../utils/ingredient-preprocessor');
+const { cleanIngredientBatch } = require('../../utils/ingredient-query-cleaner');
+const { runEnhancedChecklist } = require('../../utils/product-checker');
+const { GROCERY_OPTIMIZER_SYSTEM_PROMPT: ENHANCED_GROCERY_PROMPT } = require('../../utils/grocery-prompts');
+
+// --- [NEW] Match Tracing Integrations (V13.2) ---
+const { createMatchTrace } = require('../../utils/product-match-logger');
+const { tracedScoring } = require('../../utils/traced-scoring');
 
 /// ===== IMPORTS-END ===== ////
 
@@ -46,39 +63,48 @@ const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v13.3-hybrid';
 const USE_SOLVER_V1 = process.env.CHEFFY_USE_SOLVER === '1'; // Default to false (use legacy reconcile)
 const ALLOW_PROTEIN_SCALING = process.env.CHEFFY_SCALE_PROTEIN === '1'; // D3: New feature flag for protein scaling
 
-const PLAN_MODEL_NAME_PRIMARY = 'gemini-2.0-flash';
-const PLAN_MODEL_NAME_FALLBACK = 'gemini-2.5-flash';
-
-const getGeminiApiUrl = (modelName) => `https://generativelanguage
-.googleapis.com/v1beta/models/${modelName}:generateContent`;
+// Change 2.2: GPT-5.1 as primary, Gemini as fallback (from llm-provider.js)
+const PLAN_MODEL_NAME_PRIMARY = PRIMARY_MODEL;
+const PLAN_MODEL_NAME_FALLBACK = FALLBACK_MODEL;
 
 // --- Vercel KV Client ---
 const kv = createClient({
     url: process.env.UPSTASH_REDIS_REST_URL,
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
-const kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+
+// Change 6.2: Add health check
+let kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+(async () => {
+    if (kvReady) {
+        try {
+            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('KV Ping Timeout')), 3000));
+            await Promise.race([kv.ping(), timeout]);
+        } catch (e) {
+            console.warn(`KV Connection check failed: ${e.message}`);
+            kvReady = false;
+        }
+    }
+})();
+
 const CACHE_PREFIX = `cheffy:plan:v3:t:${TRANSFORM_CONFIG_VERSION}`;
 const TTL_PLAN_MS = 1000 * 60 * 60 * 24; // 24 hours
 
 // --- Performance & API Constants ---
-const MAX_LLM_RETRIES = 3;
-const LLM_REQUEST_TIMEOUT_MS = 90000; // 90 seconds
+const MAX_LLM_RETRIES = 2; // Change 2.3
+const LLM_REQUEST_TIMEOUT_MS = 45000; // Change 2.3: Increased for GPT-5.1 JSON mode latency
 const REQUIRED_WORD_SCORE_THRESHOLD = 0.60;
 const SKIP_STRONG_MATCH_THRESHOLD = 0.80;
-const MARKET_RUN_CONCURRENCY = 6;
-const NUTRITION_CONCURRENCY = 6;
+const MARKET_RUN_CONCURRENCY = 12; // [PERF V2] Increased from 6 — no 429s observed in logs
+const NUTRITION_CONCURRENCY = 10;  // [PERF V2] Increased from 6
 const TOKEN_BUCKET_CAPACITY = 10;
 const TOKEN_BUCKET_REFILL_PER_SEC = 10;
 const TOKEN_BUCKET_MAX_WAIT_MS = 250;
 const FAIL_FAST_CATEGORIES = ["produce", "meat", "dairy", "veg", "fruit", "seafood"];
 
-const BANNED_KEYWORDS = [
-    'cigarette', 'capsule', 'deodorant', 'pet', 'cat', 'dog', 'bird', 'toy',
-    'non-food', 'supplement', 'vitamin', 'tobacco', 'vape', 'roll-on', 'binder',
-    'folder', 'stationery', 'lighter', 'shampoo', 'conditioner', 'soap', 'lotion',
-    'cleaner', 'spray', 'polish', 'air freshener', 'mouthwash', 'toothpaste', 'floss', 'gum'
-];
+// [REMOVED] Local BANNED_KEYWORDS array replaced by SCORER_BANNED_KEYWORDS in utils/product-scorer
+// const BANNED_KEYWORDS = [ ... ];
+
 const PRICE_OUTLIER_Z_SCORE = 2.0;
 const PANTRY_CATEGORIES = ["pantry", "grains", "canned", "spreads", "condiments", "drinks"];
 const MAX_CALORIES_PER_ITEM = 1200; // Sanity check
@@ -120,6 +146,41 @@ async function cacheSet(key, val, ttl, log) {
 function hashString(str) {
   return crypto.createHash('sha256').update(str).digest('hex').substring(0, 16);
 }
+
+// CHANGE 4: Persist `lastPhase` to KV for polling progress
+async function setRunStatus(runId, status, payload, log, lastPhase = null) {
+    if (!kvReady) return;
+    const key = `cheffy:run:${runId}`;
+    const ttl = 1000 * 60 * 60; // 1 hour
+    try {
+        const record = {
+            status,
+            payload,
+            updatedAt: new Date().toISOString(),
+        };
+        // Include lastPhase and startedAt for running status
+        if (lastPhase) record.lastPhase = lastPhase;
+        if (status === 'running') record.startedAt = record.startedAt || new Date().toISOString();
+
+        await kv.set(key, JSON.stringify(record), { px: ttl });
+        log(`Run status SET: ${key} → ${status}${lastPhase ? ` (phase: ${lastPhase})` : ''}`, 'DEBUG', 'RUN_STATUS');
+    } catch (e) {
+        log(`Run status SET Error: ${e.message}`, 'ERROR', 'RUN_STATUS');
+    }
+}
+
+async function getRunStatus(runId, log) {
+    if (!kvReady) return null;
+    const key = `cheffy:run:${runId}`;
+    try {
+        const raw = await kv.get(key);
+        if (!raw) return null;
+        return typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (e) {
+        if (log) log(`Run status GET Error: ${e.message}`, 'ERROR', 'RUN_STATUS');
+        return null;
+    }
+}
 // --- End Cache Helpers ---
 
 
@@ -129,25 +190,27 @@ function createLogger(run_id, responseStream = null) {
     
     /**
      * Writes a Server-Sent Event (SSE) to the response stream.
+     * CHANGE 2: Make `writeSseEvent` resilient to disconnection
      * @param {string} eventType - The event type (e.g., 'message', 'finalData').
      * @param {object} data - The JSON-serializable data payload.
      */
     const writeSseEvent = (eventType, data) => {
+        // Skip writes if the client has disconnected or stream is ended.
+        // CRITICAL: Do NOT call responseStream.end() here — that would
+        // terminate the serverless function and prevent the pipeline from
+        // completing.
         if (!responseStream || responseStream.writableEnded) {
-            // console.warn(`[SSE Logger] Attempted to write event '${eventType}' but stream is null or ended.`); // Optional: Log attempts to write to closed stream
-            return; // Can't write to a closed or non-existent stream
+            return;
         }
         try {
-            // Ensure data is always an object, even if a simple string is passed
             const payload = (typeof data === 'string') ? { message: data } : data;
             const dataString = JSON.stringify(payload);
             responseStream.write(`event: ${eventType}\n`);
             responseStream.write(`data: ${dataString}\n\n`);
         } catch (e) {
-            // This might fail if the client disconnected
-            console.error(`[SSE Logger] Failed to write event ${eventType} to stream: ${e.message}`);
-            // Attempt to close the stream gracefully if write fails
-             try { if (!responseStream.writableEnded) responseStream.end(); } catch {}
+            // Client likely disconnected.  Log it but do NOT end the stream.
+            // The pipeline will continue and persist the result to KV.
+            console.warn(`[SSE Logger] Write failed for event '${eventType}' (client likely gone): ${e.message}`);
         }
     };
 
@@ -201,29 +264,38 @@ function createLogger(run_id, responseStream = null) {
 
     /**
      * Logs a critical error, sends an 'error' event, and closes the stream.
+     * CHANGE 7: Update `logErrorAndClose` similarly
      * @param {string} errorMessage - The final error message.
      * @param {string} [errorCode="SERVER_FAULT_PLAN"] - A machine-readable error code.
      */
     const logErrorAndClose = (errorMessage, errorCode = "SERVER_FAULT_PLAN") => {
-        log(errorMessage, 'CRITICAL', 'SYSTEM'); // Log it normally first
+        log(errorMessage, 'CRITICAL', 'SYSTEM');
         writeSseEvent('error', {
             code: errorCode,
             message: errorMessage
         });
         if (responseStream && !responseStream.writableEnded) {
-            try { responseStream.end(); } catch (e) { console.error("[SSE Logger] Error closing stream after error event:", e.message); }
+            try { responseStream.end(); } catch (e) {
+                console.warn("[SSE Logger] Error closing stream after error event:", e.message);
+            }
         }
     };
     
     /**
      * Sends the final 'plan:complete' event and closes the stream.
+     * CHANGE 6: Update `sendFinalDataAndClose` to handle disconnected client
      * @param {object} data - The final plan data payload.
      */
     const sendFinalDataAndClose = (data) => {
         log(`Generation complete, sending final payload and closing stream.`, 'INFO', 'SYSTEM');
+        // Attempt to send the final event — will no-op if client is gone
+        // (thanks to the updated writeSseEvent from Change 2).
         writeSseEvent('plan:complete', data);
+        // Now close the stream.  This is safe even if the client is gone.
         if (responseStream && !responseStream.writableEnded) {
-            try { responseStream.end(); } catch (e) { console.error("[SSE Logger] Error closing stream after final data:", e.message); }
+            try { responseStream.end(); } catch (e) {
+                console.warn("[SSE Logger] Error closing stream after final data:", e.message);
+            }
         }
     };
     
@@ -298,20 +370,17 @@ async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
                 // [FIX] Read as text first to check for non-JSON
                 const rawText = await response.text();
                 if (!rawText || rawText.trim() === "") {
-                    // This can happen. Treat as a retryable error.
                     throw new Error("Response was 200 OK but body was empty.");
                 }
                 
                 const trimmedText = rawText.trim();
-                // [FIX] Check if the text *looks* like JSON before parsing
+                // [FIX] Change 2.5: Reconstruct Response object
                 if (trimmedText.startsWith('{') || trimmedText.startsWith('[')) {
-                    // It looks like JSON, return a new response-like object
-                    return {
-                        ok: true,
-                        status: response.status,
-                        json: () => Promise.resolve(JSON.parse(trimmedText)), // Parse the text we already read
-                        text: () => Promise.resolve(trimmedText)
-                    };
+                    // It looks like JSON, return a new Response object
+                    return new Response(rawText, { 
+                        status: 200, 
+                        headers: { 'Content-Type': 'application/json' } 
+                    });
                 } else {
                     // This is a 200 OK with a non-JSON body (e.g., "I cannot..." safety refusal)
                     log(`${attemptPrefix} Attempt ${attempt}: 200 OK with non-JSON body. Retrying...`, 'WARN', 'HTTP', { body: trimmedText.substring(0, 100) });
@@ -349,7 +418,8 @@ async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
 
         // Wait before retrying
         if (attempt < MAX_LLM_RETRIES) {
-            const delayTime = Math.pow(2, attempt -1) * 3000 + Math.random() * 1000; // Exponential backoff
+            // Change 2.4: Reduced backoff
+            const delayTime = Math.pow(2, attempt -1) * 1000 + Math.random() * 500;
             log(`Waiting ${delayTime.toFixed(0)}ms before ${attemptPrefix} retry...`, 'DEBUG', 'HTTP');
             await delay(delayTime);
         }
@@ -470,64 +540,6 @@ function sizeOk(productSizeParsed, targetSize, allowedCategories = [], log, ingr
     // Fails size check
     log(`${checkLogPrefix}: FAIL (Size ${prodValue}${productSizeParsed.unit} outside ${lowerBound.toFixed(0)}-${upperBound.toFixed(0)}${targetSize.unit} for ${isPantry ? 'pantry' : 'perishable'})`, 'DEBUG', 'CHECKLIST');
     return false;
-}
-
-/**
- * Runs a comprehensive checklist against a single product.
- */
-function runSmarterChecklist(product, ingredientData, log) {
-    const productNameLower = product.product_name?.toLowerCase() || '';
-    if (!productNameLower) return { pass: false, score: 0 };
-    
-    if (!ingredientData || typeof ingredientData !== 'object' || !ingredientData.originalIngredient) {
-        log(`Checklist: Invalid/missing ingredientData for "${product.product_name}"`, 'ERROR', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-    
-    const { originalIngredient, requiredWords = [], negativeKeywords = [], targetSize, allowedCategories = [] } = ingredientData;
-    const checkLogPrefix = `Checklist [${originalIngredient}] for "${product.product_name}"`;
-
-    // 1. Global Banned List
-    const bannedWordFound = BANNED_KEYWORDS.find(kw => productNameLower.includes(kw));
-    if (bannedWordFound) {
-        log(`${checkLogPrefix}: FAIL (Global Banned: '${bannedWordFound}')`, 'DEBUG', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-    
-    // 2. Negative Keywords
-    if ((negativeKeywords ?? []).length > 0) {
-        const negativeWordFound = negativeKeywords.find(kw => kw && productNameLower.includes(kw.toLowerCase()));
-        if (negativeWordFound) {
-            log(`${checkLogPrefix}: FAIL (Negative Keyword: '${negativeWordFound}')`, 'DEBUG', 'CHECKLIST');
-            return { pass: false, score: 0 };
-        }
-    }
-    
-    // 3. Required Words
-    if (!passRequiredWords(productNameLower, requiredWords ?? [])) {
-        log(`${checkLogPrefix}: FAIL (Required words missing: [${(requiredWords ?? []).join(', ')}])`, 'DEBUG', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-
-    // 4. Category (Not yet implemented in API response - keeping day.js logic for now)
-    // In day.js, the LLM provides allowedCategories which we use here.
-    if (!passCategory(product, allowedCategories)) {
-         log(`${checkLogPrefix}: FAIL (Category Mismatch: "${product.product_category}" not in [${(allowedCategories || []).join(', ')}])`, 'DEBUG', 'CHECKLIST');
-         return { pass: false, score: 0 };
-    }
-    
-    // 5. Size Check (skip for produce/fruit/veg)
-    const isProduceOrFruit = (allowedCategories || []).some(c => c === 'fruit' || c === 'produce' || c === 'veg');
-    const productSizeParsed = parseSize(product.product_size);
-    
-    if (!isProduceOrFruit && !sizeOk(productSizeParsed, targetSize, allowedCategories, log, originalIngredient, checkLogPrefix)) {
-        return { pass: false, score: 0 }; // Failed size check
-    } else if (isProduceOrFruit) {
-         log(`${checkLogPrefix}: INFO (Bypassing size check for fruit/produce)`, 'DEBUG', 'CHECKLIST');
-    }
-
-    log(`${checkLogPrefix}: PASS`, 'DEBUG', 'CHECKLIST');
-    return { pass: true, score: 1.0 }; // Simple score
 }
 
 // --- State Hint Normalizer (New function for step 4) ---
@@ -680,43 +692,8 @@ JSON Structure:
 }
 `;
 
-// --- Grocery Optimizer Prompt ---
-const GROCERY_OPTIMIZER_SYSTEM_PROMPT = (store, australianTermNote) => `
-You are an expert grocery query optimizer for store: ${store}.
-Your SOLE task is to take a JSON array of ingredient names and generate the full query/validation JSON for each.
-RULES:
-1.  'originalIngredient' MUST match the input ingredient name exactly.
-2.  'normalQuery' (REQUIRED): 2-4 generic words, STORE-PREFIXED. CRITICAL: Use MOST COMMON GENERIC NAME. DO NOT include brands, sizes, fat content, specific forms (sliced/grated), or dryness unless ESSENTIAL.${australianTermNote}
-3.  'tightQuery' (OPTIONAL, string | null): Hyper-specific, STORE-PREFIXED. Return null if 'normalQuery' is sufficient.
-4.  'wideQuery' (OPTIONAL, string | null): 1-2 broad words, STORE-PREFIXED. Return null if 'normalQuery' is sufficient.
-5.  'requiredWords' (REQUIRED): Array[1-2] ESSENTIAL CORE NOUNS ONLY, lowercase singular. NO adjectives, forms, plurals. These words MUST exist in product names.
-6.  'negativeKeywords' (REQUIRED): Array[1-3] lowercase words for INCORRECT product. Be concise.
-7.  'targetSize' (REQUIRED): Object {value: NUM, unit: "g"|"ml"} | null. Null if N/A. Prefer common package sizes.
-8.  'totalGramsRequired' (REQUIRED): BEST ESTIMATE total g/ml for THIS DAY. **Since you only have the ingredient list, estimate a common portion (e.g., 200g for a meal protein, 100g for carbs).** This is a rough estimate.
-9.  'quantityUnits' (REQUIRED): A string describing the common purchase unit (e.g., "1kg Bag", "250g Punnet", "500ml Bottle").
-10. 'allowedCategories' (REQUIRED): Array[1-2] precise, lowercase categories from this exact set: ["produce","fruit","veg","dairy","bakery","meat","seafood","pantry","frozen","drinks","canned","grains","spreads","condiments","snacks"].
-
-Output ONLY the valid JSON object described below. ABSOLUTELY NO PROSE OR MARKDOWN.
-
-JSON Structure:
-{
-  "ingredients": [
-    {
-      "originalIngredient": "string",
-      "category": "string",
-      "tightQuery": "string|null",
-      "normalQuery": "string",
-      "wideQuery": "string|null",
-      "requiredWords": ["string"],
-      "negativeKeywords": ["string"],
-      "targetSize": { "value": number, "unit": "g"|"ml" }|null,
-      "totalGramsRequired": number,
-      "quantityUnits": "string",
-      "allowedCategories": ["string"]
-    }
-  ]
-}
-`;
+// --- Grocery Optimizer Prompt (REPLACED by ENHANCED_GROCERY_PROMPT from utils) ---
+// The prompt function definition has been removed in V13.0 and replaced by the imported version.
 
 // --- Chef AI Prompt (Consolidated Definition) ---
 const CHEF_SYSTEM_PROMPT = (store) => `
@@ -743,51 +720,36 @@ JSON Structure:
 
 /**
  * Tries to generate a plan from an LLM, retrying on failure.
- * Includes a guard against non-JSON responses.
+ * Change 2.4: Rewrite to use provider helpers
  */
 async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJsonShape) {
-    log(`${logPrefix}: Attempting model: ${modelName}`, 'INFO', 'LLM');
-    const apiUrl = getGeminiApiUrl(modelName);
+    log(`${logPrefix}: Attempting model: ${modelName} (${detectProvider(modelName)})`, 'INFO', 'LLM');
 
-    const response = await fetchLLMWithRetry(apiUrl, {
+    const req = buildLLMRequest(modelName, payload, { agentType: logPrefix.includes('Grocery') ? 'groceryQuery' : 'mealPlan' });
+
+    const response = await fetchLLMWithRetry(req.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-        body: JSON.stringify(payload)
-    }, log, logPrefix); // FIX: Passed logPrefix instead of undefined attemptPrefix
+        headers: req.headers,
+        body: req.body,
+    }, log, logPrefix);
 
-    const result = await response.json(); // Safe to call .json() because of the guard in fetchLLMWithRetry
-    const candidate = result.candidates?.[0];
-    const finishReason = candidate?.finishReason;
+    const result = await response.json();
+    const { text: jsonText, finishReason } = parseLLMResponse(modelName, result);
 
-    // These checks are now for *after* a successful, JSON-parsed response
     if (finishReason === 'MAX_TOKENS') {
-        log(`${logPrefix}: Model ${modelName} failed with finishReason: MAX_TOKENS.`, 'WARN', 'LLM'); // FIX: Used logPrefix
+        log(`${logPrefix}: Model ${modelName} failed with finishReason: MAX_TOKENS.`, 'WARN', 'LLM');
         throw new Error(`Model ${modelName} failed: MAX_TOKENS.`);
     }
     if (finishReason !== 'STOP') {
-         log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result }); // FIX: Used logPrefix
-         throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
+        log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result });
+        throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
     }
 
-    const content = candidate?.content;
-    if (!content || !content.parts || content.parts.length === 0 || !content.parts[0].text) {
-        log(`${logPrefix}: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM', { result }); // FIX: Used logPrefix
-        throw new Error(`Model ${modelName} failed: Response missing content.`);
-    }
-
-    // At this point, content.parts[0].text *is* the JSON string (already parsed once in fetchLLMWithRetry)
-    const jsonText = content.parts[0].text;
-    log(`${logPrefix} Raw JSON Text`, 'DEBUG', 'LLM', { raw: jsonText.substring(0, 300) + '...' }); // FIX: Used logPrefix
+    log(`${logPrefix} Raw JSON Text`, 'DEBUG', 'LLM', { raw: jsonText.substring(0, 300) + '...' });
 
     try {
-        // Re-parse (this is cheap) to validate shape
         const parsed = JSON.parse(jsonText.trim());
-        
-        if (!parsed || typeof parsed !== 'object') {
-            throw new Error("Parsed response is not a valid object.");
-        }
-        
-        // Check if the parsed object matches the expected structure
+        if (!parsed || typeof parsed !== 'object') throw new Error("Parsed response is not a valid object.");
         for (const key in expectedJsonShape) {
             if (!parsed.hasOwnProperty(key)) {
                 throw new Error(`Parsed JSON missing required top-level key: '${key}'.`);
@@ -796,12 +758,10 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
                 throw new Error(`Parsed JSON key '${key}' was not an array.`);
             }
         }
-        
-        log(`${logPrefix}: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM'); // FIX: Used logPrefix
-        return parsed; // Return the parsed object
-
+        log(`${logPrefix}: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM');
+        return parsed;
     } catch (parseError) {
-        log(`Failed to parse/validate ${logPrefix} JSON from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM', { jsonText: jsonText.substring(0, 300) }); // FIX: Used logPrefix
+        log(`Failed to parse/validate ${logPrefix} JSON from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM', { jsonText: jsonText.substring(0, 300) });
         throw new Error(`Model ${modelName} failed: Invalid JSON response. ${parseError.message}`);
     }
 }
@@ -811,7 +771,7 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
  * Generates a meal plan for a *single* day.
  * (Step A1, A4: Update signature and user query)
  */
-async function generateMealPlan_Single(day, formData, nutritionalTargets, log, perMealTargets) {
+async function generateMealPlan_Single(day, formData, nutritionalTargets, log, perMealTargets, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
     const { name, height, weight, age, gender, goal, dietary, store, eatingOccasions, costPriority, mealVariety, cuisine } = formData;
     const { calories, protein, fat, carbs } = nutritionalTargets;
     
@@ -820,14 +780,12 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
     const snackCal = Math.round(perMealTargets.snack.calories);
     const snackP = Math.round(perMealTargets.snack.protein);
 
-    // 1. Check Cache
-    const profileHash = hashString(JSON.stringify({ formData, nutritionalTargets, perMealTargets })); // Include targets in cache key
-    const cacheKey = `${CACHE_PREFIX}:meals:day${day}:${profileHash}`;
-    const cached = await cacheGet(cacheKey, log);
-    if (cached) {
-        return { dayNumber: day, meals: cached.meals }; // Return the full day object
-    }
-    log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
+    // Change 2.11: Removed plan caching
+    // const profileHash = hashString(JSON.stringify({ formData, nutritionalTargets, perMealTargets })); 
+    // const cacheKey = `${CACHE_PREFIX}:meals:day${day}:${profileHash}`;
+    // const cached = await cacheGet(cacheKey, log);
+    // if (cached) return { dayNumber: day, meals: cached.meals }; 
+    // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
 
     // 2. Prepare Prompt
     const mealTypesMap = {'3':['B','L','D'],'4':['B','L','D','S1'],'5':['B','L','D','S1','S2']};
@@ -855,24 +813,29 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
     };
     const expectedShape = { "meals": [] };
     
-    // 3. Execute LLM Call
+    // 3. Execute LLM Call (V3.1: GPT-5.1 primary with fallback)
     let parsedResult;
     try {
-        parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
+        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
     } catch (primaryError) {
-        log(`${logPrefix}: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM');
-        try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Meal Plan generation failed for Day ${day}: Both AI models failed. Last error: ${fallbackError.message}`);
+        if (fallbackModel) {
+            log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
+            try {
+                parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
+            } catch (fallbackError) {
+                log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+                throw new Error(`Grocery Query generation failed: All models failed. Last error: ${fallbackError.message}`);
+            }
+        } else {
+            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. No fallback configured.`, 'CRITICAL', 'LLM');
+            throw new Error(`Grocery Query generation failed: ${primaryModel} failed. ${primaryError.message}`);
         }
     }
     
-    // 4. Cache and Return
-    if (parsedResult && parsedResult.meals && parsedResult.meals.length > 0) {
-        await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
-    }
+    // Change 2.11: Removed plan caching
+    // if (parsedResult && parsedResult.meals && parsedResult.meals.length > 0) {
+    //     await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
+    // }
     return { dayNumber: day, meals: parsedResult.meals || [] };
 }
 
@@ -880,32 +843,40 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
 /**
  * Generates grocery query details for the *entire* aggregated list.
  */
-async function generateGroceryQueries_Batched(aggregatedIngredients, store, log) {
-// ... (omitted)
+// --- [MODIFIED V13.1] Added Preprocessing & Enhanced Prompt ---
+async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gpt-5.1', fallbackModel = 'gemini-2.0-flash') {
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
         log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
     }
 
     // 1. Check Cache
+    // Change 2.13: Keep ingredient-level caching
     const keysHash = hashString(JSON.stringify(aggregatedIngredients));
     const cacheKey = `${CACHE_PREFIX}:queries-batched:${store}:${keysHash}`;
     const cached = await cacheGet(cacheKey, log);
     if (cached) return cached;
     log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
     
+    // PREPROCESSING (V13.1)
+    const preprocessedIngredients = cleanIngredientBatch(aggregatedIngredients);
+    const llmInput = preprocessedIngredients.map(item => ({
+        originalIngredient: item.originalIngredient,
+        cleanName: item._cleanName,
+        requested_total_g: item.requested_total_g,
+        _autoNegatives: item._autoNegatives
+    }));
+
     // 2. Prepare Prompt
     const isAustralianStore = (store === 'Coles' || store === 'Woolworths');
     const australianTermNote = isAustralianStore ? " Use common Australian terms (e.g., 'spring onion', 'capsicum')." : "";
 
-    const systemPrompt = GROCERY_OPTIMIZER_SYSTEM_PROMPT(store, australianTermNote);
+    // Use ENHANCED_GROCERY_PROMPT imported from utils
+    const systemPrompt = ENHANCED_GROCERY_PROMPT(store, australianTermNote);
     
-    // Map aggregated list to the format the LLM needs
-    const llmInput = aggregatedIngredients.map(item => ({
-        originalIngredient: item.originalIngredient,
-        requested_total_g: item.requested_total_g
-    }));
-    let userQuery = `Generate query JSON for the following ingredients:\n${JSON.stringify(llmInput)}`;
+    let userQuery = `Generate query JSON for the following ingredients.
+Use "cleanName" for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
+${JSON.stringify(llmInput)}`;
 
     const logPrefix = `GroceryOptimizerFullPlan`;
     log(`Grocery Optimizer AI Prompt`, 'INFO', 'LLM_PROMPT', {
@@ -917,22 +888,26 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log)
         contents: [{ parts: [{ text: userQuery }] }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
         generationConfig: {
-            temperature: 0.1, topK: 32, topP: 0.9, responseMimeType: "application/json",
+            temperature: 0.05, topK: 20, topP: 0.85, responseMimeType: "application/json",
         }
     };
     const expectedShape = { "ingredients": [] };
 
-    // 3. Execute LLM Call
+    // 3. Execute LLM Call (Change 2.7: Added Fallback)
     let parsedResult;
     try {
-        parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
+        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
     } catch (primaryError) {
-        log(`${logPrefix}: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM');
-        try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Grocery Query generation failed: Both AI models failed. Last error: ${fallbackError.message}`);
+        if (fallbackModel) {
+            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
+            try {
+                parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
+            } catch (fallbackError) {
+                log(`${logPrefix}: Fallback ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+                throw new Error(`Grocery Query generation failed. Last error: ${fallbackError.message}`);
+            }
+        } else {
+            throw new Error(`Grocery Query generation failed: ${primaryError.message}`);
         }
     }
     
@@ -948,9 +923,31 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log)
                 log(`Grocery Optimizer mismatch for "${ing.originalIngredient}". LLM returned ${ing.totalGramsRequired}g, but plan needs ${requestedGrams}g. Overwriting.`, 'DEBUG', 'LLM');
                 ing.totalGramsRequired = requestedGrams;
             }
+
+            // ENHANCEMENT: Merge auto-negative keywords & attach preprocessed data (V13.1)
+            const preprocessedItem = preprocessedIngredients.find(
+                pi => pi.originalIngredient === ing.originalIngredient
+            );
+            if (preprocessedItem) {
+                 // Attach preprocessed data for later use in scoring (Checker needs cleanName and isWholeFood)
+                 ing._cleanName = preprocessedItem._cleanName;
+                 ing._isWholeFood = preprocessedItem._isWholeFood;
+
+                 // Merge auto-negative keywords
+                 if (preprocessedItem._autoNegatives && preprocessedItem._autoNegatives.length > 0) {
+                    const existingNeg = new Set((ing.negativeKeywords || []).map(k => k.toLowerCase()));
+                    const autoNeg = preprocessedItem._autoNegatives
+                        .filter(k => !existingNeg.has(k.toLowerCase()));
+                    if (autoNeg.length > 0) {
+                        ing.negativeKeywords = [...(ing.negativeKeywords || []), ...autoNeg];
+                        log(`Enhanced negativeKeywords for "${ing.originalIngredient}": added [${autoNeg.join(', ')}]`, 'DEBUG', 'PREPROCESS');
+                    }
+                }
+            }
         });
         // --- End Sanity Check ---
         
+        // Change 2.13: Keep ingredient-level caching
         await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
     }
     
@@ -959,45 +956,34 @@ async function generateGroceryQueries_Batched(aggregatedIngredients, store, log)
 
 /**
  * Tries to generate a recipe from an LLM, retrying on failure.
- * Includes a guard against non-JSON responses.
+ * Change 2.5: Rewrite to use provider helpers
  */
 async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
-    log(`Chef AI [${mealName}]: Attempting model: ${modelName}`, 'INFO', 'LLM_CHEF');
-    const apiUrl = getGeminiApiUrl(modelName);
+    log(`Chef AI [${mealName}]: Attempting model: ${modelName} (${detectProvider(modelName)})`, 'INFO', 'LLM_CHEF');
 
-    const response = await fetchLLMWithRetry(apiUrl, {
+    const req = buildLLMRequest(modelName, payload, { agentType: 'chefRecipe' });
+
+    const response = await fetchLLMWithRetry(req.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-        body: JSON.stringify(payload)
+        headers: req.headers,
+        body: req.body,
     }, log, `Chef-${mealName}`);
 
-    const result = await response.json(); // Safe due to guard
-    const candidate = result.candidates?.[0];
-    const finishReason = candidate?.finishReason;
+    const result = await response.json();
+    const { text: jsonText, finishReason } = parseLLMResponse(modelName, result);
 
     if (finishReason !== 'STOP') {
         log(`Chef AI [${mealName}]: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM_CHEF', { result });
         throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
     }
 
-    const content = candidate?.content;
-    if (!content || !content.parts || !content.parts.length === 0 || !content.parts[0].text) {
-        log(`Chef AI [${mealName}]: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM_CHEF', { result });
-        throw new Error(`Model ${modelName} failed: Response missing content.`);
-    }
-
-    const jsonText = content.parts[0].text;
     try {
-        // [FIX] Add JSON guard
         const trimmedText = jsonText.trim();
         if (!trimmedText.startsWith('{') || !trimmedText.endsWith('}')) {
-             throw new Error(`Response text was not a JSON object. (Likely a safety refusal)`);
+            throw new Error(`Response text was not a JSON object. (Likely a safety refusal)`);
         }
-        
-        const parsed = JSON.parse(trimmedText); 
-        if (!parsed || typeof parsed.description !== 'string' || !Array.isArray(parsed.instructions) || parsed.instructions.length === 0) {
-             throw new Error("Invalid JSON structure: 'description' (string) or 'instructions' (array) missing/empty.");
-        }
+        const parsed = JSON.parse(trimmedText);
+        validateChefRecipeShape(parsed);
         log(`Chef AI [${mealName}]: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM_CHEF');
         return parsed;
     } catch (parseError) {
@@ -1006,15 +992,15 @@ async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
     }
 }
 
-async function generateChefInstructions(meal, store, log) {
+async function generateChefInstructions(meal, store, log, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
     const mealName = meal.name || 'Unnamed Meal';
     try {
-        // 1. Check Cache
-        const mealHash = hashString(JSON.stringify(meal.items || []));
-        const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
-        const cached = await cacheGet(cacheKey, log);
-        if (cached) return { ...meal, ...cached }; // Return merged object
-        log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
+        // Change 2.12: Removed chef caching
+        // const mealHash = hashString(JSON.stringify(meal.items || []));
+        // const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
+        // const cached = await cacheGet(cacheKey, log);
+        // if (cached) return { ...meal, ...cached }; 
+        // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
 
         // 2. Prepare Prompt
         const systemPrompt = CHEF_SYSTEM_PROMPT(store);
@@ -1034,25 +1020,24 @@ async function generateChefInstructions(meal, store, log) {
             }
         };
 
-        // 3. Execute LLM Call
+        // 3. Execute LLM Call (Change 2.8: Added Fallback)
         let recipeResult;
         try {
-            recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_PRIMARY, payload, mealName, log);
+            recipeResult = await tryGenerateChefRecipe(primaryModel, payload, mealName, log);
         } catch (primaryError) {
-            log(`Chef AI [${mealName}]: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM_CHEF');
+            log(`Chef AI [${mealName}]: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
             try {
-                recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_FALLBACK, payload, mealName, log);
+                recipeResult = await tryGenerateChefRecipe(fallbackModel, payload, mealName, log);
             } catch (fallbackError) {
-                log(`Chef AI [${mealName}]: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM_CHEF');
-                // Don't throw; return mock data
+                log(`Chef AI [${mealName}]: Fallback model ${fallbackModel} also failed: ${fallbackError.message}. Using mock recipe.`, 'CRITICAL', 'LLM_CHEF');
                 recipeResult = MOCK_RECIPE_FALLBACK;
             }
         }
         
-        // 4. Cache and Return
-        if (recipeResult && recipeResult.description) {
-            await cacheSet(cacheKey, recipeResult, TTL_PLAN_MS, log);
-        }
+        // Change 2.12: Removed chef caching
+        // if (recipeResult && recipeResult.description) {
+        //     await cacheSet(cacheKey, recipeResult, TTL_PLAN_MS, log);
+        // }
         return { ...meal, ...recipeResult }; // Return the modified meal object
     } catch (error) {
         log(`CRITICAL Error in generateChefInstructions for [${mealName}]: ${error.message}`, 'CRITICAL', 'LLM_CHEF');
@@ -1080,7 +1065,28 @@ module.exports = async (request, response) => {
     
     const run_id = crypto.randomUUID();
 
-    // --- Setup SSE Stream ---
+    // --- FIX: Handle OPTIONS and method validation BEFORE setting headers ---
+    if (request.method === 'OPTIONS') {
+        response.setHeader('Access-Control-Allow-Origin', '*');
+        response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        response.status(200).end();
+        return;
+    }
+
+    if (request.method !== 'POST') {
+        response.setHeader('Access-Control-Allow-Origin', '*');
+        response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        response.setHeader('Allow', 'POST, OPTIONS');
+        response.status(405).json({
+            message: `Method ${request.method} Not Allowed.`,
+            code: "METHOD_NOT_ALLOWED"
+        });
+        return;
+    }
+
+    // --- Setup SSE Stream (AFTER method validation) ---
     response.setHeader('Content-Type', 'text/event-stream');
     response.setHeader('Cache-Control', 'no-cache');
     response.setHeader('Connection', 'keep-alive');
@@ -1088,31 +1094,72 @@ module.exports = async (request, response) => {
     response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS'); 
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); 
     
+    // ── PERSISTENCE FIX: Send run_id as a header so the frontend gets it
+    // even if the SSE stream hasn't been parsed yet (e.g. on slow connections
+    // or if the browser buffers the initial SSE frames). ──
+    response.setHeader('X-Cheffy-Run-Id', run_id);
+
+    // Expose this custom header to the browser (CORS)
+    response.setHeader('Access-Control-Expose-Headers', 'X-Cheffy-Run-Id');
+
     // [FIX] Pass `run_id` to logger
     const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, sendEvent } = createLogger(run_id, response);
+    
+    await setRunStatus(run_id, 'running', null, log);
+
+    // ── PERSISTENCE FIX: Detect client disconnect ──
+    // When the browser tab closes, refreshes, or the SSE connection drops,
+    // this fires.  We set a flag so the pipeline continues to run but
+    // SSE writes are skipped (they already are via the writableEnded check
+    // in writeSseEvent, but this avoids noisy error logs and lets us
+    // update the KV status).
+    let clientDisconnected = false;
+
+    response.on('close', () => {
+        if (!response.writableEnded) {
+            clientDisconnected = true;
+            console.log(`[SSE] Client disconnected for run ${run_id}. Pipeline will continue.`);
+            // Update KV so the poller can distinguish "still running, client left"
+            setRunStatus(run_id, 'running_detached', null, (...args) => {
+                // Use a no-op SSE logger since the stream is dead
+                console.log('[DETACHED]', args[0]);
+            }).catch(() => {});
+        }
+    });
+
     // --- End SSE Setup ---
 
-    if (request.method === 'OPTIONS') {
-        log("Handling OPTIONS pre-flight.", 'INFO', 'HTTP');
-        response.status(200).end(); 
-        return;
-    }
+    log(`Plan generation request received.`, 'INFO', 'HTTP');
 
-    if (request.method !== 'POST') {
-        log(`Method Not Allowed: ${request.method}`, 'WARN', 'HTTP');
-        response.setHeader('Allow', 'POST, OPTIONS');
-        logErrorAndClose(`Method ${request.method} Not Allowed.`, "METHOD_NOT_ALLOWED");
-        return;
-    }
+    // FIX (v2): Send run_id to the client immediately — before any processing.
+    // This ensures the frontend can persist it to localStorage for recovery
+    // even if the stream drops during the first few seconds.
+    sendEvent('plan:start', { run_id });
 
     let finalMealPlan = []; // This will hold the final, processed meals
     let store = ''; // Must be defined outside try block for market run logic scope
 
     try {
-        const { formData, nutritionalTargets } = request.body;
+        const { formData, nutritionalTargets, preferredModel } = request.body;
         const numDays = parseInt(formData.days, 10) || 7;
+
+        // --- Model Selection: honour user's preferred model if valid ---
+        let requestPrimary = PLAN_MODEL_NAME_PRIMARY;   // default from env / llm-provider
+        let requestFallback = PLAN_MODEL_NAME_FALLBACK;
+        if (preferredModel && typeof preferredModel === 'string') {
+            if (SUPPORTED_MODELS && SUPPORTED_MODELS[preferredModel]) {
+                requestPrimary = preferredModel;
+                // Set fallback to the "other" model
+                requestFallback = (preferredModel === PRIMARY_MODEL) ? FALLBACK_MODEL : PRIMARY_MODEL;
+                log(`User selected model: ${preferredModel} (fallback: ${requestFallback})`, 'INFO', 'MODEL_SELECT');
+            } else {
+                log(`Ignoring unknown preferredModel: "${preferredModel}". Using default: ${requestPrimary}`, 'WARN', 'MODEL_SELECT');
+            }
+        }
+
         log(`Plan generation starting for ${numDays} days.`, 'INFO', 'SYSTEM');
-        sendEvent('plan:start', { days: numDays, formData: getSanitizedFormData(formData) });
+        // REMOVED (v2): Old sendEvent call removed to prevent duplicate/delayed run_id
+        // sendEvent('plan:start', { run_id, days: numDays, formData: getSanitizedFormData(formData), model: requestPrimary });
 
         // --- Input Validation ---
         if (!formData || typeof formData !== 'object' || Object.keys(formData).length < 5) {
@@ -1168,38 +1215,67 @@ module.exports = async (request, response) => {
         };
 
 
-        // --- Phase 1: Generate ALL Meals (Sequentially) ---
+        // --- Phase 1: Generate ALL Meals (Parallelized - Change 2.10) ---
         sendEvent('phase:start', { name: 'meals', description: `Generating ${numDays}-day meal plan...` });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'meals');
+
         const dietitianStartTime = Date.now();
         const fullMealPlan = []; // This is the master list of day objects
         
+        sendEvent('plan:progress', { pct: 10, message: `Generating ${numDays} days in parallel...` });
+        const dayPromises = [];
+        
         for (let day = 1; day <= numDays; day++) {
-            try {
-                // Send progress *before* starting the call
-                sendEvent('plan:progress', { pct: (day / numDays) * 25, message: `Generating meal plan for Day ${day}...` });
-                // Step A1: Pass the new meal targets
-                const dayPlan = await generateMealPlan_Single(day, formData, nutritionalTargets, log, targetsPerMealType);
-                if (!dayPlan || !dayPlan.meals || dayPlan.meals.length === 0) {
-                    throw new Error(`Meal Planner AI returned no meals for Day ${day}.`);
-                }
-                fullMealPlan.push(dayPlan);
-            } catch (dayError) {
-                 log(`Failed to generate meals for Day ${day}: ${dayError.message}`, 'ERROR', 'LLM');
-                 // If one day fails, we can't continue.
-                 throw new Error(`Meal plan generation failed: ${dayError.message}`);
-            }
+            dayPromises.push(
+                generateMealPlan_Single(day, formData, nutritionalTargets, log, targetsPerMealType, requestPrimary, requestFallback)
+                .then(dayPlan => {
+                    sendEvent('plan:progress', { message: `Day ${day} generated.` });
+                    return dayPlan;
+                })
+                .catch(dayError => {
+                    log(`Failed to generate meals for Day ${day}: ${dayError.message}`, 'ERROR', 'LLM');
+                    throw new Error(`Meal plan generation failed for Day ${day}: ${dayError.message}`);
+                })
+            );
         }
         
+        const results = await Promise.all(dayPromises);
+        results.forEach(dayPlan => {
+            if (!dayPlan || !dayPlan.meals || dayPlan.meals.length === 0) {
+                 throw new Error(`Meal Planner AI returned no meals.`);
+            }
+            fullMealPlan.push(dayPlan);
+        });
+        // Sort by day number to ensure correct order
+        fullMealPlan.sort((a, b) => a.dayNumber - b.dayNumber);
+
         dietitian_ms = Date.now() - dietitianStartTime;
         sendEvent('phase:end', { name: 'meals', duration_ms: dietitian_ms, mealCount: fullMealPlan.reduce((acc, day) => acc + day.meals.length, 0) });
         
-        // This check is now robust
         if (fullMealPlan.length !== numDays) {
-            throw new Error(`Meal Planner AI failed: Expected ${numDays} days, but only received ${fullMealPlan.length}.`);
+            throw new Error(`Meal Planner AI failed: Expected ${numDays} days, but processed ${fullMealPlan.length}.`);
         }
+
+        // --- [PERF V2] Phase 1.5: Launch Chef AI early (parallel with market run) ---
+        // Chef AI only needs meal names + ingredient lists, NOT solved quantities.
+        // By starting it here, it runs in parallel with aggregation + market run + nutrition + solver.
+        // We await the promise later in Phase 6.
+        log('Phase 1.5: Launching Chef AI early (parallel with market run)...', 'INFO', 'PHASE');
+        const earlyChefStartTime = Date.now();
+        const allMealsForChef = fullMealPlan.flatMap(day => 
+            day.meals.map(meal => ({ ...meal, _dayNumber: day.dayNumber }))
+        );
+        const earlyChefPromise = concurrentlyMap(allMealsForChef, 6, (meal) => 
+            generateChefInstructions(meal, store, log, requestPrimary, requestFallback)
+                .then(result => ({ ...result, _dayNumber: meal._dayNumber, _originalName: meal.name }))
+        );
 
         // --- Phase 2: Aggregate Ingredients ---
         sendEvent('phase:start', { name: 'aggregate', description: 'Aggregating ingredient list...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'aggregate');
+
         const aggregateStartTime = Date.now();
         const ingredientMap = new Map(); // Use normalizedKey as the key
 
@@ -1240,11 +1316,14 @@ module.exports = async (request, response) => {
 
         // --- Phase 3: Generate Queries & Run Market (Batched) ---
         sendEvent('phase:start', { name: 'market', description: `Querying ${store} for ${aggregatedIngredients.length} items...` });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'market');
+
         sendEvent('plan:progress', { pct: 35, message: `Running market search...` });
         const marketStartTime = Date.now();
 
         // 3a. Generate Queries (LLM call)
-        const groceryQueryData = await generateGroceryQueries_Batched(aggregatedIngredients, store, log);
+        const groceryQueryData = await generateGroceryQueries_Batched(aggregatedIngredients, store, log, requestPrimary, requestFallback);
         const { ingredients: ingredientPlan } = groceryQueryData;
         if (!ingredientPlan || ingredientPlan.length === 0) {
              throw new Error(`Grocery Optimizer AI returned empty ingredients.`);
@@ -1272,7 +1351,9 @@ module.exports = async (request, response) => {
                 dayRefs: aggItem.dayRefs,
                 stateHint: aggItem.stateHint, // MOD ZONE 1.3: Pass stateHint
                 store: store, // Pass store name explicitly
-                category: planDetails.category || 'Uncategorized' // FIX: Ensure category always exists for FE grouping
+                category: planDetails.category || 'Uncategorized', // FIX: Ensure category always exists for FE grouping
+                // Ensure preprocessed data is carried over (V13.0)
+                _preprocessed: planDetails._preprocessed || null
             };
         });
         
@@ -1296,6 +1377,10 @@ module.exports = async (request, response) => {
                 }
                 
                 const result = { ...ingredient, allProducts: [], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url, source: 'failed', searchAttempts: [] };
+                
+                // --- MATCH TRACE ---
+                const trace = createMatchTrace(ingredientKey, ingredient);
+
                 const qn = ingredient.normalQuery;
                 const qt = (ingredient.tightQuery && ingredient.tightQuery.trim()) ? ingredient.tightQuery : synthTight(ingredient, ingredient.store); // Use ingredient.store (passed from LLM) or infer from outer scope
                 const qw = (ingredient.wideQuery && ingredient.wideQuery.trim()) ? ingredient.wideQuery : synthWide(ingredient, ingredient.store);
@@ -1321,6 +1406,7 @@ module.exports = async (request, response) => {
                     }
 
                     log(`[${ingredientKey}] Attempting "${type}" query: "${query}"`, 'DEBUG', 'HTTP');
+                    const attemptRecorder = trace.startAttempt(type, query);
                     result.searchAttempts.push({ queryType: type, query: query, status: 'pending', foundCount: 0});
                     const currentAttemptLog = result.searchAttempts.at(-1);
 
@@ -1329,6 +1415,7 @@ module.exports = async (request, response) => {
 
                     if (priceData.error) {
                         log(`[${ingredientKey}] Fetch failed (${type}): ${priceData.error.message}`, 'WARN', 'HTTP', { status: priceData.error.status });
+                        attemptRecorder.finalize('fetch_error', 0);
                         currentAttemptLog.status = 'fetch_error'; 
                         continue;
                     }
@@ -1340,7 +1427,8 @@ module.exports = async (request, response) => {
                     for (const rawProduct of rawProducts) {
                         if (!rawProduct || !rawProduct.product_name) continue;
                         // log is correctly scoped here
-                        const checklistResult = runSmarterChecklist(rawProduct, ingredient, log); 
+                        // [MODIFIED V13.1] Use Enhanced Checklist with Trace
+                        const checklistResult = tracedScoring(runEnhancedChecklist, rawProduct, ingredient, log, attemptRecorder);
                         if (checklistResult.pass) {
                             validProductsOnPage.push({ 
                                 product: { 
@@ -1363,18 +1451,34 @@ module.exports = async (request, response) => {
                     // Syntax Fix applied previously: (max, p => Math.max...) -> (max, p) => Math.max...
                     const currentBestScore = filteredProducts.length > 0 ? filteredProducts.reduce((max, p) => Math.max(max, p.score), 0) : 0;
                     currentAttemptLog.bestScore = currentBestScore;
+                    
+                    attemptRecorder.finalize(filteredProducts.length > 0 ? 'success' : 'no_match_post_filter', filteredProducts.length);
 
                     if (filteredProducts.length > 0) {
                         log(`[${ingredientKey}] Found ${filteredProducts.length} valid (${type}).`, 'INFO', 'DATA');
                         const currentUrls = new Set(result.allProducts.map(p => p.url));
+                        
+                        // [MODIFIED V13.0] Attach score to product before pushing to allProducts
                         filteredProducts.forEach(vp => { 
                             if (!currentUrls.has(vp.product.url)) { 
+                                vp.product._matchScore = vp.score;
                                 result.allProducts.push(vp.product); 
                             } 
                         });
 
                         if (result.allProducts.length > 0) {
-                            const foundProduct = result.allProducts.reduce((best, current) => (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best, result.allProducts[0]);
+                            // [MODIFIED V13.0] Sort by score first (prefer better matches), then by price
+                            const foundProduct = result.allProducts.reduce((best, current) => {
+                                const bestScore = best._matchScore ?? 0;
+                                const currentScore = current._matchScore ?? 0;
+                                // If scores differ significantly (>0.1), prefer higher score
+                                if (Math.abs(currentScore - bestScore) > 0.1) {
+                                    return currentScore > bestScore ? current : best;
+                                }
+                                // Otherwise, prefer cheaper
+                                return (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best;
+                            }, result.allProducts[0]);
+
                             result.currentSelectionURL = foundProduct.url;
                             result.source = 'discovery';
                             currentAttemptLog.status = 'success';
@@ -1383,6 +1487,8 @@ module.exports = async (request, response) => {
                                 acceptedQueryType = type;
                                 bestScore = currentBestScore;
                             }
+                            
+                            trace.setSelection(foundProduct, 'discovery', acceptedQueryType);
 
                             if (type === 'tight' && currentBestScore >= SKIP_STRONG_MATCH_THRESHOLD) {
                                 log(`[${ingredientKey}] Skip heuristic hit (Strong tight match).`, 'INFO', 'MARKET_RUN');
@@ -1397,12 +1503,98 @@ module.exports = async (request, response) => {
                         }
                     } else { 
                         log(`[${ingredientKey}] No valid products (${type}).`, 'WARN', 'DATA'); 
-                        currentAttemptLog.status = 'no_match'; 
+                        currentAttemptLog.status = 'no_match';
+                        attemptRecorder.finalize('no_match', 0);
                     }
                 }
                 
                 if (result.source === 'failed') { 
-                    log(`[${ingredientKey}] Market Run failed after trying all queries.`, 'WARN', 'MARKET_RUN'); 
+                    // [MODIFIED V13.0] Progressive Fallback Logic
+                    log(`[${ingredientKey}] Market Run failed after trying all queries. Attempting fallbacks...`, 'WARN', 'MARKET_RUN');
+                    
+                    const fallbackQueries = generateFallbackQueries(ingredientKey, store);
+                    
+                    for (const fbQuery of fallbackQueries) {
+                        log(`[${ingredientKey}] Fallback query: "${fbQuery}"`, 'DEBUG', 'MARKET_RUN');
+                        const fbAttemptRecorder = trace.startAttempt('fallback', fbQuery);
+                        result.searchAttempts.push({ queryType: 'fallback', query: fbQuery, status: 'pending', foundCount: 0 });
+                        const fbAttemptLog = result.searchAttempts.at(-1);
+                        
+                        try {
+                            const { data: searchData } = await fetchPriceData(store, fbQuery, 1, log);
+                            const products = searchData?.results || [];
+                            fbAttemptLog.foundCount = products.length;
+                            
+                            if (products.length > 0) {
+                                const validProducts = products.map(p => {
+                                    const enrichedProduct = {
+                                        name: p.product_name || p.name,
+                                        brand: p.product_brand,
+                                        price: p.current_price,
+                                        size: p.product_size || p.size || '',
+                                        url: p.url,
+                                        barcode: p.barcode,
+                                        product_name: p.product_name || p.name, // Ensure product_name is set for scorer
+                                        product_category: p.product_category || p.category || '',
+                                        product_size: p.product_size || p.size || '',
+                                        unit_price_per_100: calculateUnitPrice(p.current_price, p.product_size || p.size || ''),
+                                    };
+                                    // [MODIFIED V13.1] Use Enhanced Checklist with Trace
+                                    const checkResult = tracedScoring(runEnhancedChecklist, enrichedProduct, ingredient, log, fbAttemptRecorder);
+                                    return checkResult.pass ? { product: enrichedProduct, score: checkResult.score } : null;
+                                }).filter(Boolean);
+                                
+                                fbAttemptRecorder.finalize(validProducts.length > 0 ? 'success' : 'no_match_post_filter', validProducts.length);
+
+                                if (validProducts.length > 0) {
+                                    // Sort by score descending, then by unit price ascending
+                                    validProducts.sort((a, b) => {
+                                        if (Math.abs(a.score - b.score) > 0.05) return b.score - a.score;
+                                        return (a.product.unit_price_per_100 ?? Infinity) - (b.product.unit_price_per_100 ?? Infinity);
+                                    });
+                                    
+                                    const currentUrls = new Set(result.allProducts.map(p => p.url));
+                                    validProducts.forEach(vp => { 
+                                        if (!currentUrls.has(vp.product.url)) { 
+                                            vp.product._matchScore = vp.score;
+                                            result.allProducts.push(vp.product); 
+                                        }
+                                    });
+                                    
+                                    if (result.allProducts.length > 0) {
+                                        const foundProduct = result.allProducts.reduce((best, current) => {
+                                            const bestScore = best._matchScore ?? 0;
+                                            const currentScore = current._matchScore ?? 0;
+                                            if (Math.abs(currentScore - bestScore) > 0.1) return currentScore > bestScore ? current : best;
+                                            return (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best;
+                                        }, result.allProducts[0]);
+                                        
+                                        result.currentSelectionURL = foundProduct.url;
+                                        result.source = 'discovery';
+                                        fbAttemptLog.status = 'success';
+                                        acceptedQueryType = 'fallback';
+                                        bestScore = foundProduct._matchScore || 0;
+                                        log(`[${ingredientKey}] Fallback matched: "${foundProduct.product_name || foundProduct.name}"`, 'INFO', 'MARKET_RUN');
+                                        
+                                        trace.setSelection(foundProduct, 'fallback', 'fallback');
+                                        break; // Stop trying more fallbacks
+                                    }
+                                }
+                            } else {
+                                fbAttemptRecorder.finalize('no_match', 0);
+                            }
+                            fbAttemptLog.status = fbAttemptLog.status === 'pending' ? 'no_match' : fbAttemptLog.status;
+                        } catch (fbErr) {
+                            log(`[${ingredientKey}] Fallback query error: ${fbErr.message}`, 'WARN', 'MARKET_RUN');
+                            fbAttemptLog.status = 'error';
+                            fbAttemptRecorder.finalize('fetch_error', 0);
+                        }
+                    }
+
+                    if (result.source === 'failed') { 
+                        log(`[${ingredientKey}] Market Run failed after trying all queries + fallbacks.`, 'WARN', 'MARKET_RUN'); 
+                        trace.setFailed('All queries exhausted without a match');
+                    }
                 } else { 
                     log(`[${ingredientKey}] Market Run success via '${acceptedQueryType}' query.`, 'DEBUG', 'MARKET_RUN'); 
                 }
@@ -1411,6 +1603,8 @@ module.exports = async (request, response) => {
                 telemetry.score = bestScore;
                 log(`[${ingredientKey}] Market Run Telemetry`, 'INFO', 'MARKET_RUN', telemetry);
 
+                // Attach match trace to result
+                result._matchTrace = trace.build();
                 return { [ingredientKey]: result };
 
             } catch(e) {
@@ -1445,6 +1639,14 @@ module.exports = async (request, response) => {
              if (resultData && typeof resultData === 'object' && planItem) {
                  // FIX 3: Merge resultData with the enriched planItem to carry over fields like 'category'
                  fullResultsMap.set(normalizedKey, { ...planItem, ...resultData, normalizedKey: planItem.normalizedKey });
+
+                 // Emit Trace Event if available
+                 if (resultData._matchTrace) {
+                     sendEvent('ingredient:match_trace', {
+                         key: ingredientKey,
+                         trace: resultData._matchTrace
+                     });
+                 }
              } else {
                   log(`Invalid market result structure or missing plan item for "${normalizedKey}"`, 'ERROR', 'SYSTEM', { resultData, planItemExists: !!planItem });
                   const baseData = planItem || { originalIngredient: ingredientKey, normalizedKey: normalizedKey };
@@ -1458,6 +1660,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 3.5: Price Extraction (Mod Zone 3) ---
         sendEvent('phase:start', { name: 'price_extract', description: 'Extracting price data...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'price_extract');
+
         const priceExtractStartTime = Date.now();
         const priceDataMap = new Map(); 
 
@@ -1490,6 +1695,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 4: Nutrition Fetch (Mod Zone 1 & 2: Ingredient-Centric) ---
         sendEvent('phase:start', { name: 'nutrition', description: 'Fetching ingredient nutrition data...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'nutrition');
+
         sendEvent('plan:progress', { pct: 75, message: `Fetching nutrition data...` });
         const nutritionStartTime = Date.now();
         const nutritionDataMap = new Map(); // Map<normalizedKey, nutritionData>
@@ -1536,6 +1744,9 @@ module.exports = async (request, response) => {
 
         // --- Phase 5: Solver (Calculate Final Macros) ---
         sendEvent('phase:start', { name: 'solver', description: 'Calculating final macros...' });
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'solver');
+
         sendEvent('plan:progress', { pct: 85, message: `Calculating final macros...` });
         const solverStartTime = Date.now();
         finalMealPlan = []; // Reset final plan, will be rebuilt here
@@ -1893,24 +2104,23 @@ module.exports = async (request, response) => {
         sendEvent('phase:end', { name: 'solver', duration_ms: solver_ms, using_solver_v1: USE_SOLVER_V1 });
 
 
-        // --- Phase 6: Chef AI (Writer) ---
-        // This phase runs *after* the solver, so it has the *final* scaled quantities
-        sendEvent('phase:start', { name: 'writer', description: 'Writing recipes...' });
-        sendEvent('plan:progress', { pct: 95, message: `Writing final recipes...` });
+        // --- Phase 6: Chef AI (Writer) — [PERF V2] Await early promise ---
+        // Chef AI was launched in Phase 1.5, running in parallel with market run + nutrition + solver.
+        // Here we just await the already-running promise and assemble results.
+        sendEvent('phase:start', { name: 'writer', description: 'Finalizing recipes...' });
+        await setRunStatus(run_id, 'running', null, log, 'writer');
+
+        sendEvent('plan:progress', { pct: 95, message: `Finalizing recipes...` });
         const writerStartTime = Date.now();
         
-        const allMeals = finalMealPlan.flatMap(day => day.meals);
-        // Run recipe generation in parallel for all meals across all days
-        const recipeResults = await concurrentlyMap(allMeals, 6, (meal) => generateChefInstructions(meal, store, log));
+        // Await the promise that was started in Phase 1.5
+        const recipeResults = await earlyChefPromise;
         
         // Create a map to re-assemble the plan
         const recipeMap = new Map();
-        recipeResults.forEach((result, index) => {
-            if (result && !result._error) {
-                const originalMeal = allMeals[index];
-                // Find which day this meal belonged to
-                const dayNumber = finalMealPlan.find(d => d.meals.includes(originalMeal))?.dayNumber;
-                recipeMap.set(`${dayNumber}:${originalMeal.name}`, result);
+        recipeResults.forEach((result) => {
+            if (result && !result._error && result._dayNumber != null && result._originalName) {
+                recipeMap.set(`${result._dayNumber}:${result._originalName}`, result);
             }
         });
 
@@ -1918,15 +2128,26 @@ module.exports = async (request, response) => {
         for (const day of finalMealPlan) {
             day.meals = day.meals.map(meal => {
                 const recipe = recipeMap.get(`${day.dayNumber}:${meal.name}`);
-                return recipe || { ...meal, ...MOCK_RECIPE_FALLBACK }; // Fallback if chef failed
+                if (recipe) {
+                    // Merge recipe data (description, instructions) onto the solver-adjusted meal
+                    // Keep the solver's adjusted quantities but use chef's description + instructions
+                    const { _dayNumber, _originalName, _error, ...recipeData } = recipe;
+                    return { ...meal, description: recipeData.description, instructions: recipeData.instructions };
+                }
+                return { ...meal, ...MOCK_RECIPE_FALLBACK };
             });
         }
         writer_ms = Date.now() - writerStartTime;
-        sendEvent('phase:end', { name: 'writer', duration_ms: writer_ms, recipesGenerated: recipeMap.size });
+        // Log total chef time including parallel execution
+        const totalChefMs = Date.now() - earlyChefStartTime;
+        log(`Chef AI total elapsed: ${totalChefMs}ms (${writerStartTime - earlyChefStartTime}ms hidden behind other phases)`, 'INFO', 'PERF');
+        sendEvent('phase:end', { name: 'writer', duration_ms: writer_ms, recipesGenerated: recipeMap.size, total_chef_ms: totalChefMs });
 
         // --- Phase 7: Finalize ---
         sendEvent('phase:start', { name: 'finalize', description: 'Assembling final plan...' });
-        
+        // CHANGE 4: Persist `lastPhase` to KV
+        await setRunStatus(run_id, 'running', null, log, 'finalize');
+
         // Clean up meal objects for the frontend
         let totalCalories = 0, totalProtein = 0, totalFat = 0, totalCarbs = 0;
         
@@ -2029,6 +2250,35 @@ module.exports = async (request, response) => {
             solver_path_live: USE_SOLVER_V1 ? 'SOLVER_V1' : 'RECONCILER_V0'
         });
 
+        // ── PERSISTENCE FIX: Guard against KV payload size limits ──
+        // Upstash KV has a ~1 MB value limit.  A full 7-day plan with recipes
+        // and macroDebug can exceed this.  If so, store a trimmed version.
+        const fullPayloadStr = JSON.stringify({ status: 'complete', payload: responseData, updatedAt: new Date().toISOString() });
+        const payloadSizeBytes = Buffer.byteLength(fullPayloadStr, 'utf-8');
+        const MAX_KV_PAYLOAD_BYTES = 900 * 1024; // 900 KB safety margin
+
+        if (payloadSizeBytes > MAX_KV_PAYLOAD_BYTES) {
+            log(`Payload too large for KV (${(payloadSizeBytes / 1024).toFixed(0)} KB). Storing trimmed version.`, 'WARN', 'RUN_STATUS');
+            
+            // Create a trimmed copy — strip macroDebug and truncate recipe instructions
+            const trimmedData = {
+                ...responseData,
+                macroDebug: { _trimmed: true, reason: 'payload_size_limit' },
+                mealPlan: responseData.mealPlan.map(day => ({
+                    ...day,
+                    meals: day.meals.map(meal => ({
+                        ...meal,
+                        instructions: meal.instructions
+                            ? [meal.instructions[0] || 'See full plan for instructions.']
+                            : ['See full plan for instructions.']
+                    }))
+                }))
+            };
+            await setRunStatus(run_id, 'complete', trimmedData, log);
+        } else {
+            await setRunStatus(run_id, 'complete', responseData, log);
+        }
+
         sendFinalDataAndClose(responseData);
 
     } catch (error) {
@@ -2038,6 +2288,7 @@ module.exports = async (request, response) => {
         const isPlanError = error.message.startsWith('Meal Planner AI failed');
         const errorCode = isPlanError ? "PLAN_INVALID" : "SERVER_FAULT_PLAN";
 
+        await setRunStatus(run_id, 'failed', { error: error.message, code: errorCode }, log).catch(() => {});
         logErrorAndClose(error.message, errorCode);
         return; 
     }
@@ -2049,6 +2300,8 @@ module.exports = async (request, response) => {
         }
     }
 };
+
+module.exports.getRunStatus = getRunStatus;
 
 /// ===== MAIN-HANDLER-END ===== ////
 

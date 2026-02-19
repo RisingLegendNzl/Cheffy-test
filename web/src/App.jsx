@@ -3,8 +3,9 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 
 // --- Firebase Imports ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore, setLogLevel } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 
 // --- Component Imports ---
 import LandingPage from './pages/LandingPage';
@@ -13,6 +14,9 @@ import MainApp from './components/MainApp';
 // --- Hook Imports ---
 import useAppLogic from './hooks/useAppLogic';
 import { useResponsive } from './hooks/useResponsive';
+
+// --- PERSISTENCE FIX: Import cache cleanup ---
+import { clearAll as clearLocalPlanCache } from './services/localPlanCache';
 
 // --- Firebase Config variables ---
 let firebaseConfig = null;
@@ -25,7 +29,6 @@ const App = () => {
     const [contentView, setContentView] = useState('profile');
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-    const [showLandingPage, setShowLandingPage] = useState(true);
     const [authLoading, setAuthLoading] = useState(false);
     const [authError, setAuthError] = useState(null);
 
@@ -36,13 +39,18 @@ const App = () => {
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [appId, setAppId] = useState('default-app-id');
 
+    // --- New User Onboarding State ---
+    const [isNewUser, setIsNewUser] = useState(false);
+    const [profileSetupComplete, setProfileSetupComplete] = useState(true); // default true so returning users aren't gated
+    const [profileSetupSaving, setProfileSetupSaving] = useState(false);
+
     // --- Form Data State (needed by hook and MainApp) ---
     const [formData, setFormData] = useState({ 
         name: '', height: '180', weight: '75', age: '30', gender: 'male', 
         activityLevel: 'moderate', goal: 'cut_moderate', dietary: 'None', 
         days: 7, store: 'Woolworths', eatingOccasions: '3', 
         costPriority: 'Best Value', mealVariety: 'Balanced Variety', 
-        cuisine: '', bodyFat: '' 
+        cuisine: '', bodyFat: '', measurementUnits: 'metric'
     });
     
     const [nutritionalTargets, setNutritionalTargets] = useState({ 
@@ -52,6 +60,9 @@ const App = () => {
     // --- Responsive ---
     const { isMobile, isDesktop } = useResponsive();
 
+    // --- Derive landing page visibility instead of using separate state ---
+    const showLandingPage = isAuthReady && !userId;
+
     // --- Firebase Initialization and Auth Effect ---
     useEffect(() => {
         const firebaseConfigStr = typeof __firebase_config !== 'undefined' 
@@ -60,46 +71,78 @@ const App = () => {
             
         const currentAppId = typeof __app_id !== 'undefined' 
             ? __app_id 
-            : (import.meta.env.VITE_APP_ID || 'default-app-id');
+            : import.meta.env.VITE_APP_ID || 'default-app-id';
         
         setAppId(currentAppId);
         globalAppId = currentAppId;
-        
-        try {
-            if (firebaseConfigStr && firebaseConfigStr.trim() !== '') {
-                firebaseConfig = JSON.parse(firebaseConfigStr);
-            } else {
-                console.warn("[FIREBASE] __firebase_config is not defined or is empty.");
-                firebaseInitializationError = 'Firebase config environment variable is missing.';
-            }
-        } catch (e) {
-            console.error("CRITICAL: Failed to parse Firebase config:", e);
-            firebaseInitializationError = `Failed to parse Firebase config: ${e.message}`;
-        }
-        
-        if (firebaseInitializationError) {
-            console.error("[FIREBASE] Firebase init failed:", firebaseInitializationError);
-            setIsAuthReady(true);
-            return;
-        }
 
-        if (firebaseConfig) {
+        if (firebaseConfigStr) {
             try {
-                const app = initializeApp(firebaseConfig);
+                const parsedConfig = typeof firebaseConfigStr === 'string' 
+                    ? JSON.parse(firebaseConfigStr) 
+                    : firebaseConfigStr;
+                firebaseConfig = parsedConfig;
+
+                const app = initializeApp(parsedConfig);
                 const authInstance = getAuth(app);
                 const dbInstance = getFirestore(app);
-                setDb(dbInstance);
+
+                // Suppress verbose Firestore logs in production
+                try { setLogLevel('error'); } catch (e) { /* ignore */ }
+
                 setAuth(authInstance);
-                setLogLevel('debug');
-                console.log("[FIREBASE] Initialized.");
+                setDb(dbInstance);
+
+                // Set persistence to local so sessions survive page reloads
+                setPersistence(authInstance, browserLocalPersistence).catch(err => {
+                    console.warn("[FIREBASE] Failed to set persistence:", err);
+                });
 
                 const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
                     if (user) {
-                        console.log("[FIREBASE] User is signed in:", user.uid);
+                        console.log("[FIREBASE] User authenticated:", user.uid);
                         setUserId(user.uid);
+
+                        // --- NEW USER DETECTION ---
+                        // Check the 'users' Firestore document to determine if profile setup is complete.
+                        try {
+                            const userDocRef = doc(dbInstance, 'users', user.uid);
+                            const userSnap = await getDoc(userDocRef);
+
+                            if (userSnap.exists()) {
+                                const userData = userSnap.data();
+                                const hasCompletedSetup = userData.profileSetupComplete === true;
+
+                                if (!hasCompletedSetup) {
+                                    // New user who hasn't completed profile setup yet
+                                    console.log("[ONBOARDING] New user detected — showing profile gate.");
+                                    setIsNewUser(true);
+                                    setProfileSetupComplete(false);
+                                } else {
+                                    // Returning user who already completed setup
+                                    console.log("[ONBOARDING] Returning user — profile setup already complete.");
+                                    setIsNewUser(false);
+                                    setProfileSetupComplete(true);
+                                }
+                            } else {
+                                // No user doc at all (edge case: legacy user or doc not created)
+                                // Treat as returning user — don't block them
+                                console.log("[ONBOARDING] No user doc found — treating as returning user.");
+                                setIsNewUser(false);
+                                setProfileSetupComplete(true);
+                            }
+                        } catch (err) {
+                            console.error("[ONBOARDING] Error checking user doc:", err);
+                            // On error, don't block the user
+                            setIsNewUser(false);
+                            setProfileSetupComplete(true);
+                        }
                     } else {
-                        console.log("[FIREBASE] User is signed out.");
+                        console.log("[FIREBASE] No user signed in.");
                         setUserId(null);
+                        // Reset onboarding state on sign-out
+                        setIsNewUser(false);
+                        setProfileSetupComplete(true);
                     }
                     if (!isAuthReady) {
                         setIsAuthReady(true);
@@ -113,15 +156,6 @@ const App = () => {
             }
         }
     }, []);
-
-    // --- Landing page visibility ---
-    useEffect(() => {
-        if (!userId) {
-            setShowLandingPage(true);
-        } else {
-            setShowLandingPage(false);
-        }
-    }, [userId]);
 
     // --- Business Logic Hook ---
     const logic = useAppLogic({
@@ -162,7 +196,11 @@ const App = () => {
         setAuthError(null);
         try {
             await logic.handleSignUp(credentials);
-            setShowLandingPage(false);
+            // After sign-up, the onAuthStateChanged callback will detect the new user
+            // via the 'users' doc (which handleSignUp creates WITHOUT profileSetupComplete).
+            // Force the profile gate to appear.
+            setIsNewUser(true);
+            setProfileSetupComplete(false);
             setContentView('profile');
         } catch (error) {
             setAuthError(error.message);
@@ -176,7 +214,7 @@ const App = () => {
         setAuthError(null);
         try {
             await logic.handleSignIn(credentials);
-            setShowLandingPage(false);
+            // The onAuthStateChanged callback handles new-user detection for sign-in too
             setContentView('profile');
         } catch (error) {
             setAuthError(error.message);
@@ -186,22 +224,72 @@ const App = () => {
     }, [logic]);
 
     const handleSignOut = useCallback(async () => {
+        // ── PERSISTENCE FIX: clear local caches on sign-out ──
+        // Prevents plan data from one user leaking to the next sign-in.
+        clearLocalPlanCache();
+
         await logic.handleSignOut();
-        setShowLandingPage(true);
         setContentView('profile');
         setAuthError(null);
+        // Reset onboarding state
+        setIsNewUser(false);
+        setProfileSetupComplete(true);
     }, [logic]);
 
-    // --- Edit Profile Handler (FIXED) ---
+    // --- Complete Profile Setup Handler (called from NewUserProfileGate) ---
+    const handleCompleteProfileSetup = useCallback(async () => {
+        if (!db || !userId) return;
+
+        setProfileSetupSaving(true);
+        try {
+            // 1. Save the name to the profile document
+            await logic.handleSaveProfile(true); // silent save
+
+            // 2. Mark profileSetupComplete in the 'users' document
+            const userDocRef = doc(db, 'users', userId);
+            await updateDoc(userDocRef, {
+                profileSetupComplete: true,
+                profileSetupCompletedAt: new Date().toISOString()
+            });
+
+            console.log("[ONBOARDING] Profile setup marked as complete.");
+
+            // 3. Update local state
+            setIsNewUser(false);
+            setProfileSetupComplete(true);
+
+            logic.showToast('Profile saved! Welcome to Cheffy!', 'success');
+        } catch (err) {
+            console.error("[ONBOARDING] Error completing profile setup:", err);
+            logic.showToast('Failed to save profile. Please try again.', 'error');
+        } finally {
+            setProfileSetupSaving(false);
+        }
+    }, [db, userId, logic]);
+
+    // --- Edit Profile Handler ---
     const handleEditProfile = useCallback(() => {
-        setIsSettingsOpen(false); // Close settings panel
-        setContentView('profile'); // Navigate to profile view (right panel)
+        setIsSettingsOpen(false);
+        setContentView('profile');
         setTimeout(() => {
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }, 100);
     }, []);
 
     // --- Render ---
+    // Gate rendering on isAuthReady. Before Firebase resolves the session,
+    // show a branded loading screen instead of flashing the landing page.
+    if (!isAuthReady) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-purple-50">
+                <div className="text-center">
+                    <div className="animate-pulse text-4xl mb-4">🍳</div>
+                    <p className="text-gray-500 text-sm">Loading Cheffy…</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <>
             {showLandingPage ? (
@@ -256,10 +344,10 @@ const App = () => {
                     logHeight={logic.logHeight}
                     setLogHeight={logic.setLogHeight}
                     isLogOpen={logic.isLogOpen}
-                    setIsLogOpen={logic.isLogOpen} 
+                    setIsLogOpen={logic.setIsLogOpen} 
                     latestLog={logic.latestLog}
                     
-                    // NEW: Macro Debug Log props (with defensive defaults)
+                    // Macro Debug Log props (with defensive defaults)
                     macroDebug={logic.macroDebug || {}}
                     showMacroDebugLog={logic.showMacroDebugLog ?? false}
                     setShowMacroDebugLog={logic.setShowMacroDebugLog || (() => {})}
@@ -283,8 +371,9 @@ const App = () => {
                     // Settings
                     isSettingsOpen={isSettingsOpen}
                     setIsSettingsOpen={setIsSettingsOpen}
-                    useBatchedMode={logic.useBatchedMode}
-                    setUseBatchedMode={logic.setUseBatchedMode}
+                    // AI Model
+                    selectedModel={logic.selectedModel}
+                    setSelectedModel={logic.setSelectedModel}
                     
                     // Toasts
                     toasts={logic.toasts}
@@ -292,12 +381,17 @@ const App = () => {
                     
                     // Handlers
                     handleGeneratePlan={logic.handleGeneratePlan}
-                    handleLoadProfile={logic.handleLoadProfile}
-                    handleSaveProfile={logic.handleSaveProfile}
+                    // handleLoadProfile/SaveProfile removed as UI triggers for them are gone
                     handleFetchNutrition={logic.handleFetchNutrition}
                     handleSubstituteSelection={logic.handleSubstituteSelection}
                     handleQuantityChange={logic.handleQuantityChange}
-                    handleDownloadFailedLogs={logic.handleDownloadFailedLogs}
+handleDownloadMatchTraceReport={logic.handleDownloadMatchTraceReport || (() => {})}
+matchTraces={logic.matchTraces || []}
+showMatchTraceLogs={logic.showMatchTraceLogs ?? false}
+setShowMatchTraceLogs={logic.setShowMatchTraceLogs || (() => {})}
+// ADDED: Pass the new Product Match Trace state
+showProductMatchTrace={logic.showProductMatchTrace || false}
+setShowProductMatchTrace={logic.setShowProductMatchTrace || (() => {})}
                     handleDownloadLogs={logic.handleDownloadLogs}
                     onToggleMealEaten={logic.onToggleMealEaten}
                     handleRefresh={logic.handleRefresh}
@@ -311,12 +405,19 @@ const App = () => {
                     handleSavePlan={logic.handleSavePlan}
                     handleLoadPlan={logic.handleLoadPlan}
                     handleDeletePlan={logic.handleDeletePlan}
+                     handleRenamePlan={logic.handleRenamePlan}
                     savingPlan={logic.savingPlan}
                     loadingPlan={logic.loadingPlan}
 
                     // Responsive
                     isMobile={isMobile}
                     isDesktop={isDesktop}
+
+                    // --- NEW: Onboarding / New User Props ---
+                    isNewUser={isNewUser}
+                    profileSetupComplete={profileSetupComplete}
+                    profileSetupSaving={profileSetupSaving}
+                    onCompleteProfileSetup={handleCompleteProfileSetup}
                 />
             )}
         </>

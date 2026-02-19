@@ -2,6 +2,12 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { RefreshCw, Zap, Save, FolderDown, X, ChevronRight, Check } from 'lucide-react';
 import { COLORS, SHADOWS } from '../../constants';
+// UPDATED: Full dark mode support across the entire Plan Setup flow.
+// Removed .wizard-form-exclude and .keep-light — wizard now respects dark theme.
+import React, { useState, useCallback, useMemo } from 'react';
+import { RefreshCw, Zap, X, ChevronRight, Check } from 'lucide-react';
+import { COLORS, SHADOWS } from '../../constants';
+import { useTheme } from '../../contexts/ThemeContext';
 
 // Wizard internals
 import { WIZARD_STEPS } from './wizardSteps';
@@ -23,6 +29,10 @@ import ReviewStep from './ReviewStep';
  */
 const PlanSetupWizard = ({
   // Form data (owned by App.jsx)
+import MealInspirationStep from './MealInspirationStep';
+import ReviewStep from './ReviewStep';
+
+const PlanSetupWizard = ({
   formData,
   onChange,
   onSliderChange,
@@ -44,10 +54,14 @@ const PlanSetupWizard = ({
   isMobile,
 }) => {
   // --- Internal wizard state ---
+  onClose,
+  isMobile,
+}) => {
   const [currentStep, setCurrentStep] = useState(0);
   const [errors, setErrors] = useState({});
   const [slideDirection, setSlideDirection] = useState('right');
   const [isAnimating, setIsAnimating] = useState(false);
+  const { isDark } = useTheme();
 
   const stepConfig = WIZARD_STEPS[currentStep];
   const isLastStep = currentStep === WIZARD_STEPS.length - 1;
@@ -83,6 +97,8 @@ const PlanSetupWizard = ({
     if (isAnimating) return;
 
     // Validate current step
+  const goForward = useCallback(() => {
+    if (isAnimating) return;
     const validator = STEP_VALIDATORS[stepConfig.id];
     if (validator) {
       const stepErrors = validator(formData);
@@ -113,6 +129,36 @@ const PlanSetupWizard = ({
   }, [isAnimating, isFirstStep]);
 
   // --- Form submission (only on last step) ---
+  const canReachStep = useCallback(
+    (targetIndex) => {
+      if (targetIndex < currentStep) return true;
+      if (targetIndex === currentStep) return false;
+      for (let i = 0; i < targetIndex; i++) {
+        const stepId = WIZARD_STEPS[i].id;
+        if (!isStepValid(stepId, formData)) return false;
+      }
+      return true;
+    },
+    [currentStep, formData]
+  );
+
+  const goToStep = useCallback(
+    (targetIndex) => {
+      if (isAnimating) return;
+      if (targetIndex === currentStep) return;
+      if (!canReachStep(targetIndex)) return;
+      const direction = targetIndex > currentStep ? 'right' : 'left';
+      setSlideDirection(direction);
+      setIsAnimating(true);
+      setTimeout(() => {
+        setCurrentStep(targetIndex);
+        setErrors({});
+        setTimeout(() => setIsAnimating(false), 50);
+      }, 200);
+    },
+    [isAnimating, currentStep, canReachStep]
+  );
+
   const handleFormSubmit = useCallback(
     (e) => {
       e.preventDefault();
@@ -156,12 +202,29 @@ const PlanSetupWizard = ({
         return (
           <MealPreferencesStep formData={formData} onChange={handleFieldChange} />
         );
+      case 'inspiration':
+        return (
+          <MealInspirationStep formData={formData} onChange={handleFieldChange} />
+        );
       case 'review':
         return <ReviewStep formData={formData} />;
       default:
         return null;
     }
   };
+
+  // ── Dark theme palette ──
+  const cardBg = isDark ? '#1e2130' : '#fff';
+  const cardBorder = isDark ? '#2d3148' : COLORS.gray[200];
+  const cardShadow = isDark
+    ? '0 2px 10px rgba(0,0,0,0.35), 0 0 0 1px rgba(99,102,241,0.06)'
+    : SHADOWS.lg;
+  const footerBorderTop = isDark ? '1px solid #2d3148' : 'none';
+  const backBtnColor = isDark ? '#9ca3b0' : COLORS.gray[600];
+  const backBtnBorder = isDark ? '#3d4158' : COLORS.gray[300];
+  const disabledBtnBg = isDark ? '#252839' : COLORS.gray[200];
+  const disabledBtnColor = isDark ? '#6b7280' : COLORS.gray[400];
+  const stepCounterColor = isDark ? '#6b7280' : COLORS.gray[400];
 
   return (
     <div>
@@ -170,6 +233,7 @@ const PlanSetupWizard = ({
         <h2
           className="text-2xl font-bold"
           style={{ color: COLORS.primary[600] }}
+          style={{ color: isDark ? '#ffffff' : COLORS.primary[600] }}
         >
           Plan Setup
         </h2>
@@ -206,6 +270,7 @@ const PlanSetupWizard = ({
               type="button"
               className="md:hidden p-1.5"
               onClick={onClose}
+              style={{ color: isDark ? '#9ca3b0' : undefined }}
             >
               <X size={20} />
             </button>
@@ -215,6 +280,12 @@ const PlanSetupWizard = ({
 
       {/* ===== PROGRESS BAR ===== */}
       <StepProgressBar currentStep={currentStep} steps={WIZARD_STEPS} />
+      <StepProgressBar
+        currentStep={currentStep}
+        steps={WIZARD_STEPS}
+        onStepClick={goToStep}
+        canReachStep={canReachStep}
+      />
 
       {/* ===== CARD CONTAINER ===== */}
       <form
@@ -224,6 +295,9 @@ const PlanSetupWizard = ({
           background: '#fff',
           border: `1px solid ${COLORS.gray[200]}`,
           boxShadow: SHADOWS.lg,
+          background: cardBg,
+          border: `1px solid ${cardBorder}`,
+          boxShadow: cardShadow,
         }}
       >
         {/* Step header */}
@@ -247,6 +321,11 @@ const PlanSetupWizard = ({
           style={{ padding: '16px 24px 24px' }}
         >
           {/* Back button */}
+          style={{
+            padding: '16px 24px 24px',
+            borderTop: footerBorderTop,
+          }}
+        >
           {!isFirstStep ? (
             <button
               type="button"
@@ -295,6 +374,27 @@ const PlanSetupWizard = ({
                     ? 'none'
                     : `0 4px 20px ${COLORS.primary[500]}40`,
                 letterSpacing: '0.01em',
+              className="flex items-center px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+              style={{
+                color: backBtnColor,
+                border: `1px solid ${backBtnBorder}`,
+                backgroundColor: 'transparent',
+              }}
+            >
+              Back
+            </button>
+          ) : (
+            <div />
+          )}
+
+          {isLastStep ? (
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold text-white transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                backgroundColor: COLORS.primary[500],
+                boxShadow: `0 4px 16px ${COLORS.primary[500]}30`,
               }}
             >
               {loading ? (
@@ -305,6 +405,12 @@ const PlanSetupWizard = ({
               ) : (
                 <>
                   <Zap size={18} />
+                  <RefreshCw size={16} className="animate-spin" />
+                  Generating…
+                </>
+              ) : (
+                <>
+                  <Zap size={16} />
                   Generate Plan
                 </>
               )}
@@ -321,6 +427,11 @@ const PlanSetupWizard = ({
                 border: 'none',
                 background: canProceed ? COLORS.primary[500] : COLORS.gray[200],
                 color: canProceed ? '#fff' : COLORS.gray[400],
+              disabled={!canProceed}
+              className="flex items-center gap-1.5 px-6 py-2.5 rounded-lg text-sm font-bold transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                backgroundColor: canProceed ? COLORS.primary[500] : disabledBtnBg,
+                color: canProceed ? '#fff' : disabledBtnColor,
                 cursor: canProceed ? 'pointer' : 'default',
                 boxShadow: canProceed
                   ? `0 4px 16px ${COLORS.primary[500]}30`
@@ -328,6 +439,7 @@ const PlanSetupWizard = ({
               }}
             >
               Continue
+              {stepConfig.id === 'inspiration' ? 'Continue' : 'Continue'}
               <ChevronRight size={16} />
             </button>
           )}
@@ -348,6 +460,7 @@ const PlanSetupWizard = ({
       <div
         className="text-center mt-4"
         style={{ fontSize: '12px', color: COLORS.gray[400], opacity: 0.6 }}
+        style={{ fontSize: '12px', color: stepCounterColor, opacity: 0.6 }}
       >
         Step {currentStep + 1} of {WIZARD_STEPS.length}
       </div>
@@ -355,4 +468,5 @@ const PlanSetupWizard = ({
   );
 };
 
+export default PlanSetupWizard;
 export default PlanSetupWizard;

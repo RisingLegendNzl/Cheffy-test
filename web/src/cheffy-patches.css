@@ -1,0 +1,75 @@
+/* =============================================================================
+   cheffy-patches.css
+   
+   Targeted fixes for:
+   1. AuthModal checkbox — always white background in dark mode
+   2. Sticky tabs content spacing adjustment
+   
+   Import in index.jsx AFTER theme-variables.css:
+     import './cheffy-patches.css';
+   ============================================================================= */
+
+
+/* ── 1. CHECKBOX FIX — AuthModal "I agree to Terms" ─────────────────────── */
+/*
+ * Problem: In dark mode, the global surface overrides in theme-variables.css
+ * can cause checkbox backgrounds to inherit dark colours even inside .keep-light.
+ * The checkbox also relies on browser-default rendering which varies.
+ *
+ * Fix: Force checkbox background to white in both themes using appearance + 
+ * explicit background. The accent-color (already set inline) handles the
+ * checked state fill. We use multiple selector strategies for maximum
+ * browser coverage.
+ */
+
+/* Ensure checkboxes inside .keep-light containers are always white */
+.keep-light input[type="checkbox"] {
+  -webkit-appearance: checkbox !important;
+  appearance: checkbox !important;
+  background-color: #ffffff !important;
+  border: 1.5px solid #d1d5db !important;
+  border-radius: 3px;
+  color-scheme: light !important;
+}
+
+/* Global dark mode: any checkbox that ISN'T inside .keep-light or .wizard-form-exclude */
+[data-theme="dark"] input[type="checkbox"]:not(.keep-light *):not(.wizard-form-exclude *) {
+  background-color: #ffffff !important;
+  border-color: #6b7280 !important;
+  -webkit-appearance: checkbox !important;
+  appearance: checkbox !important;
+  color-scheme: light !important;
+}
+
+/*
+ * color-scheme: light forces the browser's native form controls into
+ * light-mode rendering. This is the most reliable cross-browser method
+ * to prevent the OS/browser dark theme from tinting checkbox backgrounds.
+ */
+
+/* Ensure the checked state remains accessible with proper contrast */
+[data-theme="dark"] input[type="checkbox"]:checked {
+  accent-color: #4f46e5;
+}
+
+[data-theme="light"] input[type="checkbox"]:checked {
+  accent-color: #4f46e5;
+}
+
+/* ── EXPLICIT: AuthModal Terms checkbox — nuclear override ────────────── */
+/*
+ * Belt-and-suspenders: target the checkbox by its name attribute
+ * so it's white regardless of ANY ancestor theme class.
+ */
+input[type="checkbox"][name="agreeToTerms"] {
+  -webkit-appearance: checkbox !important;
+  appearance: checkbox !important;
+  background-color: #ffffff !important;
+  border: 1.5px solid #d1d5db !important;
+  border-radius: 3px;
+  color-scheme: light !important;
+  accent-color: #4f46e5 !important;
+}
+
+/* ── 2. STICKY TABS SPACING ─────────────────────────────────────────────── */
+/* (no changes needed — paddingTop in MainApp handles this) */

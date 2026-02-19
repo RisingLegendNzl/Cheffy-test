@@ -107,6 +107,16 @@ export const COLORS = {
     secondary: '#f9fafb',
     tertiary: '#f3f4f6',
   },
+
+  // Wizard step colors
+  wizard: {
+    steps: {
+      complete: '#10b981',  // same as success.main
+      active: '#6366f1',    // same as primary[500]
+      upcoming: '#d1d5db',  // same as gray[300]
+    },
+    accents: ['#6366f1', '#f59e0b', '#10b981', '#f43f5e'],
+  },
 };
 
 // ============================================
@@ -425,3 +435,4 @@ export default {
   GOAL_LABELS,
   ACTIVITY_LABELS,
 };
+

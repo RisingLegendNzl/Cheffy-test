@@ -2,6 +2,8 @@
 // Per-step validation for the Plan Setup Wizard.
 // Each validator returns an object of { fieldName: 'Error message' }.
 // Empty object {} = step is valid.
+//
+// UPDATED: Added mandatory name validation to the 'personal' step.
 
 const VALID_ACTIVITY_LEVELS = ['sedentary', 'light', 'moderate', 'active', 'veryActive'];
 const VALID_GOALS = ['maintain', 'cut_moderate', 'cut_aggressive', 'bulk_lean', 'bulk_aggressive'];
@@ -9,6 +11,12 @@ const VALID_GOALS = ['maintain', 'cut_moderate', 'cut_aggressive', 'bulk_lean', 
 export const STEP_VALIDATORS = {
   personal: (formData) => {
     const errors = {};
+
+    // ── Name is now mandatory ──
+    if (!formData.name || formData.name.trim().length === 0) {
+      errors.name = 'Name is required';
+    }
+
     const height = parseFloat(formData.height);
     const weight = parseFloat(formData.weight);
     const age = parseInt(formData.age, 10);
@@ -47,6 +55,9 @@ export const STEP_VALIDATORS = {
 
   preferences: () => ({}),
 
+  // Inspiration step is always valid — users can skip it
+  inspiration: () => ({}),
+
   review: () => ({}),
 };
 
@@ -58,4 +69,5 @@ export const isStepValid = (stepId, formData) => {
   const validator = STEP_VALIDATORS[stepId];
   if (!validator) return true;
   return Object.keys(validator(formData)).length === 0;
+};
 };

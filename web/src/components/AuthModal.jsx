@@ -1,14 +1,20 @@
 // web/src/components/AuthModal.jsx
+// THEME EXCEPTION: This modal always renders in light mode.
+// The .keep-light class tells theme-variables.css to skip all
+// dark-mode overrides on this component and its children.
+
 import React, { useState } from 'react';
 import { X, Mail, Lock, User, Eye, EyeOff, Loader } from 'lucide-react';
 import { COLORS, SHADOWS, Z_INDEX } from '../constants';
 
 /**
  * Authentication Modal Component
- * Handles both sign up and sign in with 7-day free trial
+ * Handles both sign up and sign in with 7-day free trial.
+ *
+ * INTENTIONALLY EXCLUDED from dark mode — always white.
  */
 const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => {
-  const [mode, setMode] = useState('signup'); // 'signup' or 'signin'
+  const [mode, setMode] = useState('signup');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -49,7 +55,6 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
     if (!validateForm()) return;
 
     if (mode === 'signup') {
@@ -72,7 +77,6 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
       ...prev,
       [name]: type === 'checkbox' ? checked : value
     }));
-    // Clear error when user types
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
     }
@@ -83,7 +87,7 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
     setErrors({});
     setFormData({
       name: '',
-      email: formData.email, // Keep email
+      email: formData.email,
       password: '',
       agreeToTerms: false
     });
@@ -98,21 +102,30 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
         onClick={onClose}
       />
 
-      {/* Modal */}
+      {/* Modal — .keep-light prevents ALL dark-mode CSS overrides */}
       <div
         className="fixed inset-0 flex items-center justify-center p-4 animate-scaleIn"
         style={{ zIndex: Z_INDEX.modal }}
       >
         <div
-          className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
-          style={{ boxShadow: SHADOWS['2xl'] }}
+          className="keep-light rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
+          style={{
+            backgroundColor: '#ffffff',
+            boxShadow: SHADOWS['2xl'],
+          }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
-          <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between rounded-t-2xl">
-            <h2 
+          {/* Header — always white */}
+          <div
+            className="keep-light sticky top-0 border-b px-6 py-4 flex items-center justify-between rounded-t-2xl"
+            style={{
+              backgroundColor: '#ffffff',
+              borderBottomColor: '#e5e7eb',
+            }}
+          >
+            <h2
               className="text-2xl font-bold"
-              style={{ color: COLORS.gray[900] }}
+              style={{ color: '#111827' }}
             >
               {mode === 'signup' ? 'Start Your Free Trial' : 'Welcome Back'}
             </h2>
@@ -121,17 +134,17 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
               className="p-2 rounded-full hover:bg-gray-100 transition-colors"
               disabled={loading}
             >
-              <X size={24} style={{ color: COLORS.gray[600] }} />
+              <X size={24} style={{ color: '#4b5563' }} />
             </button>
           </div>
 
           {/* Content */}
-          <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          <form onSubmit={handleSubmit} className="keep-light p-6 space-y-6">
             {/* Trial Badge (Sign Up Only) */}
             {mode === 'signup' && (
-              <div 
+              <div
                 className="text-center py-3 px-4 rounded-lg"
-                style={{ 
+                style={{
                   backgroundColor: COLORS.success.light,
                   color: COLORS.success.dark
                 }}
@@ -143,18 +156,18 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
             {/* Name Field (Sign Up Only) */}
             {mode === 'signup' && (
               <div>
-                <label 
+                <label
                   htmlFor="name"
                   className="block text-sm font-semibold mb-2"
-                  style={{ color: COLORS.gray[700] }}
+                  style={{ color: '#374151' }}
                 >
                   Name
                 </label>
                 <div className="relative">
-                  <User 
-                    size={20} 
+                  <User
+                    size={20}
                     className="absolute left-3 top-1/2 transform -translate-y-1/2"
-                    style={{ color: errors.name ? COLORS.error.main : COLORS.gray[400] }}
+                    style={{ color: errors.name ? COLORS.error.main : '#9ca3af' }}
                   />
                   <input
                     id="name"
@@ -164,11 +177,12 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
                     onChange={handleInputChange}
                     placeholder="John Doe"
                     disabled={loading}
-                    className={`w-full pl-12 pr-4 py-3 rounded-lg border-2 transition-all focus:outline-none ${
+                    className={`keep-light w-full pl-12 pr-4 py-3 rounded-lg border-2 transition-all focus:outline-none ${
                       errors.name ? 'border-red-500' : 'border-gray-300 focus:border-indigo-500'
                     }`}
                     style={{
-                      backgroundColor: loading ? COLORS.gray[50] : 'white'
+                      backgroundColor: loading ? '#f9fafb' : '#ffffff',
+                      color: '#111827',
                     }}
                   />
                 </div>
@@ -182,18 +196,18 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
 
             {/* Email Field */}
             <div>
-              <label 
+              <label
                 htmlFor="email"
                 className="block text-sm font-semibold mb-2"
-                style={{ color: COLORS.gray[700] }}
+                style={{ color: '#374151' }}
               >
                 Email
               </label>
               <div className="relative">
-                <Mail 
-                  size={20} 
+                <Mail
+                  size={20}
                   className="absolute left-3 top-1/2 transform -translate-y-1/2"
-                  style={{ color: errors.email ? COLORS.error.main : COLORS.gray[400] }}
+                  style={{ color: errors.email ? COLORS.error.main : '#9ca3af' }}
                 />
                 <input
                   id="email"
@@ -203,11 +217,12 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
                   onChange={handleInputChange}
                   placeholder="you@example.com"
                   disabled={loading}
-                  className={`w-full pl-12 pr-4 py-3 rounded-lg border-2 transition-all focus:outline-none ${
+                  className={`keep-light w-full pl-12 pr-4 py-3 rounded-lg border-2 transition-all focus:outline-none ${
                     errors.email ? 'border-red-500' : 'border-gray-300 focus:border-indigo-500'
                   }`}
                   style={{
-                    backgroundColor: loading ? COLORS.gray[50] : 'white'
+                    backgroundColor: loading ? '#f9fafb' : '#ffffff',
+                    color: '#111827',
                   }}
                 />
               </div>
@@ -220,18 +235,18 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
 
             {/* Password Field */}
             <div>
-              <label 
+              <label
                 htmlFor="password"
                 className="block text-sm font-semibold mb-2"
-                style={{ color: COLORS.gray[700] }}
+                style={{ color: '#374151' }}
               >
                 Password
               </label>
               <div className="relative">
-                <Lock 
-                  size={20} 
+                <Lock
+                  size={20}
                   className="absolute left-3 top-1/2 transform -translate-y-1/2"
-                  style={{ color: errors.password ? COLORS.error.main : COLORS.gray[400] }}
+                  style={{ color: errors.password ? COLORS.error.main : '#9ca3af' }}
                 />
                 <input
                   id="password"
@@ -239,13 +254,14 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
                   type={showPassword ? 'text' : 'password'}
                   value={formData.password}
                   onChange={handleInputChange}
-                  placeholder="••••••••"
+                  placeholder="Min 6 characters"
                   disabled={loading}
-                  className={`w-full pl-12 pr-12 py-3 rounded-lg border-2 transition-all focus:outline-none ${
+                  className={`keep-light w-full pl-12 pr-12 py-3 rounded-lg border-2 transition-all focus:outline-none ${
                     errors.password ? 'border-red-500' : 'border-gray-300 focus:border-indigo-500'
                   }`}
                   style={{
-                    backgroundColor: loading ? COLORS.gray[50] : 'white'
+                    backgroundColor: loading ? '#f9fafb' : '#ffffff',
+                    color: '#111827',
                   }}
                 />
                 <button
@@ -255,9 +271,9 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
                   disabled={loading}
                 >
                   {showPassword ? (
-                    <EyeOff size={20} style={{ color: COLORS.gray[400] }} />
+                    <EyeOff size={20} style={{ color: '#9ca3af' }} />
                   ) : (
-                    <Eye size={20} style={{ color: COLORS.gray[400] }} />
+                    <Eye size={20} style={{ color: '#9ca3af' }} />
                   )}
                 </button>
               </div>
@@ -281,21 +297,21 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
                     className="mt-1 w-4 h-4 rounded"
                     style={{ accentColor: COLORS.primary[600] }}
                   />
-                  <span 
+                  <span
                     className="text-sm"
-                    style={{ color: COLORS.gray[600] }}
+                    style={{ color: '#4b5563' }}
                   >
                     I agree to the{' '}
-                    <a 
-                      href="#terms" 
+                    <a
+                      href="#terms"
                       className="underline"
                       style={{ color: COLORS.primary[600] }}
                     >
                       Terms of Service
                     </a>
                     {' '}and{' '}
-                    <a 
-                      href="#privacy" 
+                    <a
+                      href="#privacy"
                       className="underline"
                       style={{ color: COLORS.primary[600] }}
                     >
@@ -316,7 +332,7 @@ const AuthModal = ({ isOpen, onClose, onSignUp, onSignIn, loading = false }) => 
               type="submit"
               disabled={loading}
               className="w-full py-3 rounded-lg font-semibold text-white transition-all hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
-              style={{ 
+              style={{
                 backgroundColor: COLORS.primary[600]
               }}
             >

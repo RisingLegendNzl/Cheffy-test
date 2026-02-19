@@ -1,5 +1,5 @@
 // --- Cheffy API: /api/plan/day.js ---
-// [MODIFIED V12.2] Switched all imports to CommonJS (require) to fix module errors.
+// [MODIFIED V13.1] Integration of Enhanced Grocery Matching (Query Cleaner, Checker, Prompts)
 // Implements a "Four-Agent" AI system + Deterministic Calorie Calculation
 
 /// ===== IMPORTS-START ===== \\\\
@@ -21,41 +21,64 @@ const { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = re
 // --- [NEW] Import validation helper (Task 1) ---
 const { validateDayPlan } = require('../../utils/validation');
 
+// --- [NEW] Import LLM provider abstraction ---
+const { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../../utils/llm-provider.js');
+
+// --- [NEW] Grocery Matching Integrations (V13.1) ---
+// Preserved generateFallbackQueries from old preprocessor as it is still used in market run
+const { generateFallbackQueries } = require('../../utils/ingredient-preprocessor');
+const { cleanIngredientBatch } = require('../../utils/ingredient-query-cleaner');
+const { runEnhancedChecklist } = require('../../utils/product-checker');
+const { GROCERY_OPTIMIZER_SYSTEM_PROMPT: ENHANCED_GROCERY_PROMPT } = require('../../utils/grocery-prompts');
+
+// --- [NEW] Match Tracing Integrations (V13.2) ---
+const { createMatchTrace } = require('../../utils/product-match-logger');
+const { tracedScoring } = require('../../utils/traced-scoring');
+
 /// ===== IMPORTS-END ===== ////
 
 // --- CONFIGURATION ---
 /// ===== CONFIG-START ===== \\\\
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 // Use TRANSFORM_VERSION imported from transforms.js
-const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v12.2-commonjs'; // Use updated version
+const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v13.0-commonjs'; // Use updated version
 
-// --- Using gemini-2.5-flash as the primary model ---
-const PLAN_MODEL_NAME_PRIMARY = 'gemini-2.5-flash';
-// --- Using gemini-2.5-pro as the fallback ---
-const PLAN_MODEL_NAME_FALLBACK = 'gemini-2.5-pro'; // Fallback model
-
-// --- Create a function to get the URL ---
-const getGeminiApiUrl = (modelName) => `https://generativelanguage
-.googleapis.com/v1beta/models/${modelName}:generateContent`;
+// --- GPT-5.1 as primary, Gemini as fallback (from llm-provider.js) ---
+const PLAN_MODEL_NAME_PRIMARY = PRIMARY_MODEL;    // defaults to 'gpt-5.1'
+const PLAN_MODEL_NAME_FALLBACK = FALLBACK_MODEL;  // defaults to 'gemini-2.0-flash'
 
 // --- [NEW] Vercel KV Client ---
 const kv = createClient({
     url: process.env.UPSTASH_REDIS_REST_URL,
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
-const kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+
+// --- [Change 6.2] Add startup health check ---
+let kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+(async () => {
+    if (kvReady) {
+        try {
+            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('KV Ping Timeout')), 3000));
+            await Promise.race([kv.ping(), timeout]);
+        } catch (e) {
+            console.warn(`KV Connection check failed: ${e.message}`);
+            kvReady = false;
+        }
+    }
+})();
+
 // [MODIFIED] Bump cache version to account for new transforms
 const CACHE_PREFIX = `cheffy:plan:v2:t:${TRANSFORM_CONFIG_VERSION}`;
 const TTL_PLAN_MS = 1000 * 60 * 60 * 24; // 24 hours
 
-const MAX_LLM_RETRIES = 3; // Retries specifically for the LLM call
-const LLM_REQUEST_TIMEOUT_MS = 90000; // 90 seconds
+const MAX_LLM_RETRIES = 2; // (Change 1.3) Retries specifically for the LLM call
+const LLM_REQUEST_TIMEOUT_MS = 45000; // Increased for GPT-5.1 JSON mode latency
 
 // --- [PERF] Add new performance constants ---
 const REQUIRED_WORD_SCORE_THRESHOLD = 0.60;
 const SKIP_STRONG_MATCH_THRESHOLD = 0.80;
-const MARKET_RUN_CONCURRENCY = 6;
-const NUTRITION_CONCURRENCY = 6;
+const MARKET_RUN_CONCURRENCY = 12; // [PERF V2] Increased from 6
+const NUTRITION_CONCURRENCY = 10;  // [PERF V2] Increased from 6
 const TOKEN_BUCKET_CAPACITY = 10;
 const TOKEN_BUCKET_REFILL_PER_SEC = 10;
 const TOKEN_BUCKET_MAX_WAIT_MS = 250;
@@ -66,12 +89,6 @@ const MAX_NUTRITION_CONCURRENCY = NUTRITION_CONCURRENCY;
 const MAX_MARKET_RUN_CONCURRENCY = MARKET_RUN_CONCURRENCY;
 // --- [END PERF] ---
 
-const BANNED_KEYWORDS = [
-    'cigarette', 'capsule', 'deodorant', 'pet', 'cat', 'dog', 'bird', 'toy',
-    'non-food', 'supplement', 'vitamin', 'tobacco', 'vape', 'roll-on', 'binder',
-    'folder', 'stationery', 'lighter', 'shampoo', 'conditioner', 'soap', 'lotion',
-    'cleaner', 'spray', 'polish', 'air freshener', 'mouthwash', 'toothpaste', 'floss', 'gum'
-];
 // --- [PERF] Use new constant for score threshold ---
 const SKIP_HEURISTIC_SCORE_THRESHOLD = SKIP_STRONG_MATCH_THRESHOLD;
 // --- [END PERF] ---
@@ -272,7 +289,7 @@ async function concurrentlyMap(array, limit, asyncMapper) {
     return Promise.all(results).then(res => res.filter(r => r != null));
 }
 
-// --- fetchLLMWithRetry (Unchanged) ---
+// --- fetchLLMWithRetry (Modified V12.2) ---
 async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
     for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
         const controller = new AbortController();
@@ -304,7 +321,8 @@ async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
         }
 
         if (attempt < MAX_LLM_RETRIES) {
-            const delayTime = Math.pow(2, attempt -1) * 3000 + Math.random() * 1000;
+            // (Change 1.4) Reduce backoff
+            const delayTime = Math.pow(2, attempt -1) * 1000 + Math.random() * 500;
             log(`Waiting ${delayTime.toFixed(0)}ms before ${attemptPrefix} retry...`, 'DEBUG', 'HTTP');
             await delay(delayTime);
         }
@@ -410,53 +428,6 @@ function sizeOk(productSizeParsed, targetSize, allowedCategories = [], log, ingr
     log(`${checkLogPrefix}: FAIL (Size ${prodValue}${productSizeParsed.unit} outside ${lowerBound.toFixed(0)}-${upperBound.toFixed(0)}${targetSize.unit} for ${isPantry ? 'pantry' : 'perishable'})`, 'DEBUG', 'CHECKLIST');
     return false;
 }
-
-// --- [PERF] Modified runSmarterChecklist to return a score ---
-// We'll keep the logic simple: pass = 1.0, fail = 0.
-// The ladder logic will handle the thresholds.
-function runSmarterChecklist(product, ingredientData, log) {
-    const productNameLower = product.product_name?.toLowerCase() || '';
-    if (!productNameLower) return { pass: false, score: 0 };
-    if (!ingredientData || typeof ingredientData !== 'object' || !ingredientData.originalIngredient) {
-        log(`Checklist: Invalid/missing ingredientData for "${product.product_name}"`, 'ERROR', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-    const { originalIngredient, requiredWords = [], negativeKeywords = [], targetSize, allowedCategories = [] } = ingredientData;
-    const checkLogPrefix = `Checklist [${originalIngredient}] for "${product.product_name}"`;
-
-    const bannedWordFound = BANNED_KEYWORDS.find(kw => productNameLower.includes(kw));
-    if (bannedWordFound) {
-        log(`${checkLogPrefix}: FAIL (Global Banned: '${bannedWordFound}')`, 'DEBUG', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-    if ((negativeKeywords ?? []).length > 0) {
-        const negativeWordFound = negativeKeywords.find(kw => kw && productNameLower.includes(kw.toLowerCase()));
-        if (negativeWordFound) {
-            log(`${checkLogPrefix}: FAIL (Negative Keyword: '${negativeWordFound}')`, 'DEBUG', 'CHECKLIST');
-            return { pass: false, score: 0 };
-        }
-    }
-    if (!passRequiredWords(productNameLower, requiredWords ?? [])) {
-        log(`${checkLogPrefix}: FAIL (Required words missing: [${(requiredWords ?? []).join(', ')}])`, 'DEBUG', 'CHECKLIST');
-        return { pass: false, score: 0 };
-    }
-    if (!passCategory(product, allowedCategories)) {
-         log(`${checkLogPrefix}: FAIL (Category Mismatch: "${product.product_category}" not in [${(allowedCategories || []).join(', ')}])`, 'DEBUG', 'CHECKLIST');
-         return { pass: false, score: 0 };
-    }
-    const isProduceOrFruit = (allowedCategories || []).some(c => c === 'fruit' || c === 'produce' || c === 'veg');
-    const productSizeParsed = parseSize(product.product_size);
-    if (!isProduceOrFruit && !sizeOk(productSizeParsed, targetSize, allowedCategories, log, originalIngredient, checkLogPrefix)) {
-        return { pass: false, score: 0 };
-    } else if (isProduceOrFruit) {
-         log(`${checkLogPrefix}: INFO (Bypassing size check for fruit/produce)`, 'DEBUG', 'CHECKLIST');
-    }
-
-    log(`${checkLogPrefix}: PASS`, 'DEBUG', 'CHECKLIST');
-    // --- [PERF] Return 1.0 on pass to work with ladder logic ---
-    return { pass: true, score: 1.0 };
-}
-// --- [END PERF] ---
 
 // --- Synthesis functions (Unchanged) ---
 function synthTight(ing, store) {
@@ -599,79 +570,37 @@ JSON Structure:
 `;
 // --- [END MODIFICATION] ---
 
-// --- Grocery Optimizer Prompt (Unchanged) ---
-const GROCERY_OPTIMIZER_SYSTEM_PROMPT = (store, australianTermNote) => `
-You are an expert grocery query optimizer for store: ${store}.
-Your SOLE task is to take a JSON array of ingredient names and generate the full query/validation JSON for each.
-RULES:
-1.  'originalIngredient' MUST match the input ingredient name exactly.
-2.  'normalQuery' (REQUIRED): 2-4 generic words, STORE-PREFIXED. CRITICAL: Use MOST COMMON GENERIC NAME. DO NOT include brands, sizes, fat content, specific forms (sliced/grated), or dryness unless ESSENTIAL.${australianTermNote}
-3.  'tightQuery' (OPTIONAL, string | null): Hyper-specific, STORE-PREFIXED. Return null if 'normalQuery' is sufficient.
-4.  'wideQuery' (OPTIONAL, string | null): 1-2 broad words, STORE-PREFIXED. Return null if 'normalQuery' is sufficient.
-5.  'requiredWords' (REQUIRED): Array[1-2] ESSENTIAL CORE NOUNS ONLY, lowercase singular. NO adjectives, forms, plurals. These words MUST exist in product names.
-6.  'negativeKeywords' (REQUIRED): Array[1-3] lowercase words for INCORRECT product. Be concise.
-7.  'targetSize' (REQUIRED): Object {value: NUM, unit: "g"|"ml"} | null. Null if N/A. Prefer common package sizes.
-8.  'totalGramsRequired' (REQUIRED): BEST ESTIMATE total g/ml for THIS DAY. **Since you only have the ingredient list, estimate a common portion (e.g., 200g for a meal protein, 100g for carbs).** This is a rough estimate.
-9.  'quantityUnits' (REQUIRED): A string describing the common purchase unit (e.g., "1kg Bag", "250g Punnet", "500ml Bottle").
-10. 'allowedCategories' (REQUIRED): Array[1-2] precise, lowercase categories from this exact set: ["produce","fruit","veg","dairy","bakery","meat","seafood","pantry","frozen","drinks","canned","grains","spreads","condiments","snacks"].
+// --- Grocery Optimizer Prompt (REPLACED by ENHANCED_GROCERY_PROMPT from utils) ---
+// The prompt function definition has been removed in V13.0 and replaced by the imported version.
 
-Output ONLY the valid JSON object described below. ABSOLUTELY NO PROSE OR MARKDOWN.
-
-JSON Structure:
-{
-  "ingredients": [
-    {
-      "originalIngredient": "string",
-      "category": "string",
-      "tightQuery": "string|null",
-      "normalQuery": "string",
-      "wideQuery": "string|null",
-      "requiredWords": ["string"],
-      "negativeKeywords": ["string"],
-      "targetSize": { "value": number, "unit": "g"|"ml" }|null,
-      "totalGramsRequired": number,
-      "quantityUnits": "string",
-      "allowedCategories": ["string"]
-    }
-  ]
-}
-`;
-
-// --- tryGenerateLLMPlan (Unchanged) ---
+// --- tryGenerateLLMPlan (Rewritten V4) ---
 async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJsonShape) {
-    log(`${logPrefix}: Attempting model: ${modelName}`, 'INFO', 'LLM');
-    const apiUrl = getGeminiApiUrl(modelName);
+    log(`${logPrefix}: Attempting model: ${modelName} (${detectProvider(modelName)})`, 'INFO', 'LLM');
 
-    const response = await fetchLLMWithRetry(apiUrl, {
+    const req = buildLLMRequest(modelName, payload, { agentType: logPrefix.includes('Grocery') ? 'groceryQuery' : 'mealPlan' });
+
+    const response = await fetchLLMWithRetry(req.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-        body: JSON.stringify(payload)
+        headers: req.headers,
+        body: req.body,
     }, log, logPrefix);
 
     const result = await response.json();
-    const candidate = result.candidates?.[0];
-    const finishReason = candidate?.finishReason;
+    const { text: jsonText, finishReason } = parseLLMResponse(modelName, result);
 
     if (finishReason === 'MAX_TOKENS') {
         log(`${logPrefix}: Model ${modelName} failed with finishReason: MAX_TOKENS.`, 'WARN', 'LLM');
         throw new Error(`Model ${modelName} failed: MAX_TOKENS.`);
     }
     if (finishReason !== 'STOP') {
-         log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result });
-         throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
+        log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result });
+        throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
     }
 
-    const content = candidate?.content;
-    if (!content || !content.parts || content.parts.length === 0 || !content.parts[0].text) {
-        log(`${logPrefix}: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM', { result });
-        throw new Error(`Model ${modelName} failed: Response missing content.`);
-    }
-
-    const jsonText = content.parts[0].text;
     log(`${logPrefix} Raw JSON Text`, 'DEBUG', 'LLM', { raw: jsonText.substring(0, 300) + '...' });
 
     try {
-        const parsed = JSON.parse(jsonText);
+        const parsed = JSON.parse(jsonText.trim());
         if (!parsed || typeof parsed !== 'object') throw new Error("Parsed response is not a valid object.");
         for (const key in expectedJsonShape) {
             if (!parsed.hasOwnProperty(key)) {
@@ -689,23 +618,17 @@ async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJs
     }
 }
 
-// --- generateMealPlan (MODIFIED to call stateHint normalization) ---
-async function generateMealPlan(day, formData, nutritionalTargets, log) {
+// --- generateMealPlan (MODIFIED V4: Added Fallback) ---
+async function generateMealPlan(day, formData, nutritionalTargets, log, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
     const { name, height, weight, age, gender, goal, dietary, store, eatingOccasions, costPriority, mealVariety, cuisine } = formData;
     const { calories, protein, fat, carbs } = nutritionalTargets;
 
     if (!day || isNaN(parseInt(day)) || parseInt(day) < 1 || parseInt(day) > 7) {
         throw new Error("Invalid 'day' parameter provided.");
     }
-    if (!nutritionalTargets || typeof nutritionalTargets !== 'object' || !calories || !protein || !fat || !carbs) {
+    if (!nutritionalTargets || typeof nutritionalTargets !== 'object' || !nutritionalTargets.calories) {
         throw new Error("Invalid or missing 'nutritionalTargets' provided.");
     }
-
-    const profileHash = hashString(JSON.stringify({ formData, nutritionalTargets }));
-    const cacheKey = `${CACHE_PREFIX}:meals:day${day}:${profileHash}`;
-    const cached = await cacheGet(cacheKey, log);
-    if (cached) return cached;
-    log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
 
     const mealTypesMap = {'3':['B','L','D'],'4':['B','L','D','S1'],'5':['B','L','D','S1','S2']};
     const requiredMeals = mealTypesMap[eatingOccasions]||mealTypesMap['3'];
@@ -735,14 +658,14 @@ async function generateMealPlan(day, formData, nutritionalTargets, log) {
     const expectedShape = { "meals": [] };
     let parsedResult;
     try {
-        parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
+        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
     } catch (primaryError) {
-        log(`${logPrefix}: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM');
+        log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
         try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
+            parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
         } catch (fallbackError) {
-            log(`${logPrefix}: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Meal Plan generation failed for Day ${day}: Both AI models failed. Last error: ${fallbackError.message}`);
+            log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+            throw new Error(`Meal Plan generation failed for Day ${day}: All models failed. Last error: ${fallbackError.message}`);
         }
     }
     
@@ -759,30 +682,44 @@ async function generateMealPlan(day, formData, nutritionalTargets, log) {
     }
     // --- [END NEW] ---
 
-    if (parsedResult && parsedResult.meals && parsedResult.meals.length > 0) {
-        await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
-    }
     return parsedResult;
 }
 
-// --- generateGroceryQueries (Unchanged) ---
-async function generateGroceryQueries(uniqueIngredientKeys, store, log) {
+// --- generateGroceryQueries (MODIFIED V13.0: Added Preprocessing & Enhanced Prompt) ---
+async function generateGroceryQueries(uniqueIngredientKeys, store, log, primaryModel = 'gpt-5.1', fallbackModel = 'gemini-2.0-flash') {
     if (!uniqueIngredientKeys || uniqueIngredientKeys.length === 0) {
         log("generateGroceryQueries called with no ingredients. Returning empty.", 'WARN', 'LLM');
         return { ingredients: [] };
     }
 
+    // (Change 1.11) Keep ingredient-level caching
     const keysHash = hashString(JSON.stringify(uniqueIngredientKeys));
     const cacheKey = `${CACHE_PREFIX}:queries:${store}:${keysHash}`;
     const cached = await cacheGet(cacheKey, log);
     if (cached) return cached;
     log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
     
+    // PREPROCESSING: Clean ingredient names before LLM sees them (V13.1)
+    // Convert strings to objects for the cleaner
+    const ingredientObjects = uniqueIngredientKeys.map(k => ({ originalIngredient: k }));
+    const preprocessedIngredients = cleanIngredientBatch(ingredientObjects);
+    
+    const llmInput = preprocessedIngredients.map(item => ({
+        originalIngredient: item.originalIngredient,
+        cleanName: item._cleanName,
+        _autoNegatives: item._autoNegatives
+    }));
+
     const isAustralianStore = (store === 'Coles' || store === 'Woolworths');
     const australianTermNote = isAustralianStore ? " Use common Australian terms (e.g., 'spring onion', 'capsicum')." : "";
 
-    const systemPrompt = GROCERY_OPTIMIZER_SYSTEM_PROMPT(store, australianTermNote);
-    let userQuery = `Generate query JSON for the following ingredients:\n${JSON.stringify(uniqueIngredientKeys)}`;
+    // Use ENHANCED_GROCERY_PROMPT imported from utils
+    const systemPrompt = ENHANCED_GROCERY_PROMPT(store, australianTermNote);
+    
+    // Update userQuery to tell LLM to use cleanName
+    let userQuery = `Generate query JSON for the following ingredients.
+Use "cleanName" for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
+${JSON.stringify(llmInput)}`;
 
     const logPrefix = `GroceryOptimizerDay`;
     log(`Grocery Optimizer AI Prompt`, 'INFO', 'LLM_PROMPT', {
@@ -800,17 +737,45 @@ async function generateGroceryQueries(uniqueIngredientKeys, store, log) {
     const expectedShape = { "ingredients": [] };
     let parsedResult;
     try {
-        parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_PRIMARY, payload, log, logPrefix, expectedShape);
+        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
     } catch (primaryError) {
-        log(`${logPrefix}: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM');
-        try {
-            parsedResult = await tryGenerateLLMPlan(PLAN_MODEL_NAME_FALLBACK, payload, log, logPrefix, expectedShape);
-        } catch (fallbackError) {
-            log(`${logPrefix}: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-            throw new Error(`Grocery Query generation failed: Both AI models failed. Last error: ${fallbackError.message}`);
+        if (fallbackModel) {
+            log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
+            try {
+                parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
+            } catch (fallbackError) {
+                log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
+                throw new Error(`Grocery Query generation failed: All models failed. Last error: ${fallbackError.message}`);
+            }
+        } else {
+            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. No fallback configured.`, 'CRITICAL', 'LLM');
+            throw new Error(`Grocery Query generation failed: ${primaryModel} failed. ${primaryError.message}`);
         }
     }
+    
+    // ENHANCEMENT: Merge auto-negative-keywords & attach preprocessed data (V13.1)
     if (parsedResult && parsedResult.ingredients && parsedResult.ingredients.length > 0) {
+        parsedResult.ingredients.forEach(ing => {
+            const preprocessedItem = preprocessedIngredients.find(
+                pi => pi.originalIngredient === ing.originalIngredient
+            );
+            if (preprocessedItem) {
+                 // Attach preprocessed data for later use in scoring (Checker needs cleanName and isWholeFood)
+                 ing._cleanName = preprocessedItem._cleanName;
+                 ing._isWholeFood = preprocessedItem._isWholeFood;
+
+                 // Merge auto-negative keywords
+                 if (preprocessedItem._autoNegatives && preprocessedItem._autoNegatives.length > 0) {
+                    const existingNeg = new Set((ing.negativeKeywords || []).map(k => k.toLowerCase()));
+                    const autoNeg = preprocessedItem._autoNegatives
+                        .filter(k => !existingNeg.has(k.toLowerCase()));
+                    if (autoNeg.length > 0) {
+                        ing.negativeKeywords = [...(ing.negativeKeywords || []), ...autoNeg];
+                        log(`Enhanced negativeKeywords for "${ing.originalIngredient}": added [${autoNeg.join(', ')}]`, 'DEBUG', 'PREPROCESS');
+                    }
+                }
+            }
+        });
         await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
     }
     return parsedResult;
@@ -839,38 +804,33 @@ JSON Structure:
 }
 `;
 
-// --- tryGenerateChefRecipe (Unchanged) ---
+// --- tryGenerateChefRecipe (Rewritten V4) ---
 async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
-    log(`Chef AI [${mealName}]: Attempting model: ${modelName}`, 'INFO', 'LLM_CHEF');
-    const apiUrl = getGeminiApiUrl(modelName);
+    log(`Chef AI [${mealName}]: Attempting model: ${modelName} (${detectProvider(modelName)})`, 'INFO', 'LLM_CHEF');
 
-    const response = await fetchLLMWithRetry(apiUrl, {
+    const req = buildLLMRequest(modelName, payload, { agentType: 'chefRecipe' });
+
+    const response = await fetchLLMWithRetry(req.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
-        body: JSON.stringify(payload)
+        headers: req.headers,
+        body: req.body,
     }, log, `Chef-${mealName}`);
 
     const result = await response.json();
-    const candidate = result.candidates?.[0];
-    const finishReason = candidate?.finishReason;
+    const { text: jsonText, finishReason } = parseLLMResponse(modelName, result);
 
     if (finishReason !== 'STOP') {
         log(`Chef AI [${mealName}]: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM_CHEF', { result });
         throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
     }
 
-    const content = candidate?.content;
-    if (!content || !content.parts || content.parts.length === 0 || !content.parts[0].text) {
-        log(`Chef AI [${mealName}]: Model ${modelName} response missing content or text part.`, 'CRITICAL', 'LLM_CHEF', { result });
-        throw new Error(`Model ${modelName} failed: Response missing content.`);
-    }
-
-    const jsonText = content.parts[0].text;
     try {
-        const parsed = JSON.parse(jsonText);
-        if (!parsed || typeof parsed.description !== 'string' || !Array.isArray(parsed.instructions) || parsed.instructions.length === 0) {
-             throw new Error("Invalid JSON structure: 'description' (string) or 'instructions' (array) missing/empty.");
+        const trimmedText = jsonText.trim();
+        if (!trimmedText.startsWith('{') || !trimmedText.endsWith('}')) {
+            throw new Error(`Response text was not a JSON object. (Likely a safety refusal)`);
         }
+        const parsed = JSON.parse(trimmedText);
+        validateChefRecipeShape(parsed);
         log(`Chef AI [${mealName}]: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM_CHEF');
         return parsed;
     } catch (parseError) {
@@ -879,15 +839,16 @@ async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
     }
 }
 
-// --- generateChefInstructions (Unchanged) ---
-async function generateChefInstructions(meal, store, log) {
+// --- generateChefInstructions (MODIFIED V4: Added Fallback) ---
+async function generateChefInstructions(meal, store, log, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
     const mealName = meal.name || 'Unnamed Meal';
     try {
-        const mealHash = hashString(JSON.stringify(meal.items || []));
-        const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
-        const cached = await cacheGet(cacheKey, log);
-        if (cached) return cached;
-        log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
+        // (Change 1.10) Removed chef caching
+        // const mealHash = hashString(JSON.stringify(meal.items || []));
+        // const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
+        // const cached = await cacheGet(cacheKey, log);
+        // if (cached) return cached;
+        // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
 
         const systemPrompt = CHEF_SYSTEM_PROMPT(store);
         const ingredientList = meal.items.map(item => `- ${item.qty_value}${item.qty_unit} ${item.key}`).join('\n');
@@ -908,19 +869,17 @@ async function generateChefInstructions(meal, store, log) {
 
         let recipeResult;
         try {
-            recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_PRIMARY, payload, mealName, log);
+            recipeResult = await tryGenerateChefRecipe(primaryModel, payload, mealName, log);
         } catch (primaryError) {
-            log(`Chef AI [${mealName}]: PRIMARY Model ${PLAN_MODEL_NAME_PRIMARY} failed: ${primaryError.message}. Attempting FALLBACK.`, 'WARN', 'LLM_CHEF');
+            log(`Chef AI [${mealName}]: Primary model failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
             try {
-                recipeResult = await tryGenerateChefRecipe(PLAN_MODEL_NAME_FALLBACK, payload, mealName, log);
+                recipeResult = await tryGenerateChefRecipe(fallbackModel, payload, mealName, log);
             } catch (fallbackError) {
-                log(`Chef AI [${mealName}]: FALLBACK Model ${PLAN_MODEL_NAME_FALLBACK} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM_CHEF');
-                throw new Error(`Recipe generation failed for [${mealName}]: Both AI models failed. Last error: ${fallbackError.message}`);
+                log(`Chef AI [${mealName}]: Fallback model also failed: ${fallbackError.message}. Using mock recipe.`, 'CRITICAL', 'LLM_CHEF');
+                recipeResult = MOCK_RECIPE_FALLBACK;
             }
         }
-        if (recipeResult && recipeResult.description) {
-            await cacheSet(cacheKey, recipeResult, TTL_PLAN_MS, log);
-        }
+        
         return recipeResult;
     } catch (error) {
         log(`CRITICAL Error in generateChefInstructions for [${mealName}]: ${error.message}`, 'CRITICAL', 'LLM_CHEF');
@@ -967,7 +926,7 @@ module.exports = async (request, response) => {
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); 
     
     // [MODIFIED] Destructure new logger functions
-    const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, addWarning, getWarnings } = createLogger(run_id, day || 'unknown', response);
+    const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, writeSseEvent, addWarning, getWarnings } = createLogger(run_id, day || 'unknown', response);
     // --- End SSE Setup ---
 
     if (request.method === 'OPTIONS') {
@@ -994,7 +953,17 @@ module.exports = async (request, response) => {
         if (!day || day < 1 || day > 7) {
              throw new Error("Invalid or missing 'day' parameter in query string.");
         }
-        const { formData, nutritionalTargets } = request.body;
+        const { formData, nutritionalTargets, preferredModel } = request.body; // Added preferredModel
+
+        // --- Model Selection ---
+        let requestPrimary = PLAN_MODEL_NAME_PRIMARY;
+        let requestFallback = PLAN_MODEL_NAME_FALLBACK;
+        if (preferredModel && typeof preferredModel === 'string' && SUPPORTED_MODELS[preferredModel]) {
+            requestPrimary = preferredModel;
+            requestFallback = (preferredModel === PRIMARY_MODEL) ? FALLBACK_MODEL : PRIMARY_MODEL;
+            log(`User selected model: ${preferredModel}`, 'INFO', 'MODEL_SELECT');
+        }
+
         if (!formData || typeof formData !== 'object' || Object.keys(formData).length < 5) {
             throw new Error("Missing or invalid 'formData' in request body.");
         }
@@ -1007,7 +976,8 @@ module.exports = async (request, response) => {
         // --- Phase 1a: Generate Day Plan ---
         log("Phase 1: Generating Day Plan (Meal Planner AI)...", 'INFO', 'PHASE');
         const dietitianStartTime = Date.now();
-        const mealPlanResult = await generateMealPlan(day, formData, nutritionalTargets, log);
+        // Pass model preferences to generateMealPlan
+        const mealPlanResult = await generateMealPlan(day, formData, nutritionalTargets, log, requestPrimary, requestFallback);
         dietitian_ms = Date.now() - dietitianStartTime; // [PERF] Log time
         
         const { meals: dayMeals = [] } = mealPlanResult;
@@ -1022,16 +992,17 @@ module.exports = async (request, response) => {
         // --- [PERF] Phase 1.5: Run Chef AI and Market Run in parallel ---
         log("Phase 1.5: Starting parallel Chef AI and Market Run...", 'INFO', 'PHASE');
 
-        // Start Chef AI promise
+        // Start Chef AI promise with model preferences
         const recipePromise = Promise.allSettled(
-            dayMeals.map(meal => generateChefInstructions(meal, store, log))
+            dayMeals.map(meal => generateChefInstructions(meal, store, log, requestPrimary, requestFallback))
         );
 
         // Start Market Run promise (which itself contains the grocery query generation)
         const marketRunPromise = (async () => {
             const marketStartTime = Date.now();
             log("Phase 1.5b: Generating Grocery Queries (for Market Run)...", 'INFO', 'PHASE');
-            const groceryResult = await generateGroceryQueries(mealKeys, store, log);
+            // Pass model preferences to generateGroceryQueries
+            const groceryResult = await generateGroceryQueries(mealKeys, store, log, requestPrimary, requestFallback);
             const { ingredients: rawDayIngredients = [] } = groceryResult;
             
             if (rawDayIngredients.length === 0) {
@@ -1060,9 +1031,13 @@ module.exports = async (request, response) => {
                     const ingredientKey = ingredient.originalIngredient;
                      if (!ingredient.normalQuery || !Array.isArray(ingredient.requiredWords) || !Array.isArray(ingredient.negativeKeywords) || !Array.isArray(ingredient.allowedCategories) || ingredient.allowedCategories.length === 0) {
                          log(`[${ingredientKey}] Skipping: Missing critical fields (normalQuery/validation)`, 'ERROR', 'MARKET_RUN', ingredient);
-                         return { [ingredientKey]: { ...ingredient, source: 'error', error: 'Missing critical query/validation fields', allProducts:[], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url } };
+                         return { [ingredientKey]: { ...ingredient, source: 'error', error: 'Missing critical query/validation fields', allProducts:[], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url }};
                      }
                     const result = { ...ingredient, allProducts: [], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url, source: 'failed', searchAttempts: [] };
+                    
+                    // --- MATCH TRACE ---
+                    const trace = createMatchTrace(ingredientKey, ingredient);
+
                     const qn = ingredient.normalQuery;
                     const qt = (ingredient.tightQuery && ingredient.tightQuery.trim()) ? ingredient.tightQuery : synthTight(ingredient, store);
                     const qw = (ingredient.wideQuery && ingredient.wideQuery.trim()) ? ingredient.wideQuery : synthWide(ingredient, store);
@@ -1095,6 +1070,7 @@ module.exports = async (request, response) => {
                         // --- [END PERF] ---
 
                         log(`[${ingredientKey}] Attempting "${type}" query: "${query}"`, 'DEBUG', 'HTTP');
+                        const attemptRecorder = trace.startAttempt(type, query);
                         result.searchAttempts.push({ queryType: type, query: query, status: 'pending', foundCount: 0});
                         const currentAttemptLog = result.searchAttempts.at(-1);
 
@@ -1103,6 +1079,7 @@ module.exports = async (request, response) => {
 
                         if (priceData.error) {
                             log(`[${ingredientKey}] Fetch failed (${type}): ${priceData.error.message}`, 'WARN', 'HTTP', { status: priceData.error.status });
+                            attemptRecorder.finalize('fetch_error', 0);
                             currentAttemptLog.status = 'fetch_error'; continue;
                         }
                         
@@ -1112,7 +1089,9 @@ module.exports = async (request, response) => {
                         
                         for (const rawProduct of rawProducts) {
                             if (!rawProduct || !rawProduct.product_name) continue;
-                            const checklistResult = runSmarterChecklist(rawProduct, ingredient, log);
+                            // [MODIFIED V13.1] Use Enhanced Checklist with Trace
+                            const checklistResult = tracedScoring(runEnhancedChecklist, rawProduct, ingredient, log, attemptRecorder);
+                            
                             if (checklistResult.pass) {
                                 validProductsOnPage.push({ 
                                     product: { 
@@ -1127,17 +1106,36 @@ module.exports = async (request, response) => {
                         
                         const filteredProducts = applyPriceOutlierGuard(validProductsOnPage, log, ingredientKey);
                         currentAttemptLog.foundCount = filteredProducts.length;
+                        attemptRecorder.finalize(filteredProducts.length > 0 ? 'success' : 'no_match_post_filter', filteredProducts.length);
+
                         const currentBestScore = filteredProducts.length > 0 ? filteredProducts.reduce((max, p) => Math.max(max, p.score), 0) : 0;
                         currentAttemptLog.bestScore = currentBestScore;
 
                         if (filteredProducts.length > 0) {
                             log(`[${ingredientKey}] Found ${filteredProducts.length} valid (${type}).`, 'INFO', 'DATA');
                             const currentUrls = new Set(result.allProducts.map(p => p.url));
-                            filteredProducts.forEach(vp => { if (!currentUrls.has(vp.product.url)) { result.allProducts.push(vp.product); } });
+                            
+                            // [MODIFIED V13.0] Attach score to product before pushing to allProducts
+                            filteredProducts.forEach(vp => { 
+                                if (!currentUrls.has(vp.product.url)) { 
+                                    vp.product._matchScore = vp.score;
+                                    result.allProducts.push(vp.product); 
+                                } 
+                            });
 
                             if (result.allProducts.length > 0) {
-                                 // Always update to the best-priced product from all found so far
-                                 const foundProduct = result.allProducts.reduce((best, current) => (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best, result.allProducts[0]);
+                                 // [MODIFIED V13.0] Sort by score first (prefer better matches), then by price
+                                 const foundProduct = result.allProducts.reduce((best, current) => {
+                                    const bestScore = best._matchScore ?? 0;
+                                    const currentScore = current._matchScore ?? 0;
+                                    // If scores differ significantly (>0.1), prefer higher score
+                                    if (Math.abs(currentScore - bestScore) > 0.1) {
+                                        return currentScore > bestScore ? current : best;
+                                    }
+                                    // Otherwise, prefer cheaper
+                                    return (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best;
+                                 }, result.allProducts[0]);
+                                 
                                  result.currentSelectionURL = foundProduct.url;
                                  result.source = 'discovery';
                                  currentAttemptLog.status = 'success';
@@ -1147,6 +1145,8 @@ module.exports = async (request, response) => {
                                      acceptedQueryType = type;
                                      bestScore = currentBestScore;
                                  }
+                                 
+                                 trace.setSelection(foundProduct, 'discovery', acceptedQueryType);
 
                                  // --- [PERF] Ladder Logic Stop Conditions ---
                                  // 1. Strong tight match
@@ -1161,11 +1161,100 @@ module.exports = async (request, response) => {
                                  }
                                  // --- [END PERF] ---
                             } else { currentAttemptLog.status = 'no_match_post_filter'; }
-                        } else { log(`[${ingredientKey}] No valid products (${type}).`, 'WARN', 'DATA'); currentAttemptLog.status = 'no_match'; }
+                        } else { 
+                            log(`[${ingredientKey}] No valid products (${type}).`, 'WARN', 'DATA'); 
+                            currentAttemptLog.status = 'no_match';
+                            attemptRecorder.finalize('no_match', 0);
+                        }
                     } // end query loop
                     
                     if (result.source === 'failed') { 
-                        log(`[${ingredientKey}] Market Run failed after trying all queries.`, 'WARN', 'MARKET_RUN'); 
+                        // [MODIFIED V13.0] Progressive Fallback Logic
+                        log(`[${ingredientKey}] Market Run failed after trying all queries. Attempting fallbacks...`, 'WARN', 'MARKET_RUN');
+                        
+                        const fallbackQueries = generateFallbackQueries(ingredientKey, store);
+                        
+                        for (const fbQuery of fallbackQueries) {
+                            log(`[${ingredientKey}] Fallback query: "${fbQuery}"`, 'DEBUG', 'MARKET_RUN');
+                            const fbAttemptRecorder = trace.startAttempt('fallback', fbQuery);
+                            result.searchAttempts.push({ queryType: 'fallback', query: fbQuery, status: 'pending', foundCount: 0 });
+                            const fbAttemptLog = result.searchAttempts.at(-1);
+                            
+                            try {
+                                const { data: searchData } = await fetchPriceData(store, fbQuery, 1, log);
+                                const products = searchData?.results || [];
+                                fbAttemptLog.foundCount = products.length;
+                                
+                                if (products.length > 0) {
+                                    const validProducts = products.map(p => {
+                                        const enrichedProduct = {
+                                            name: p.product_name || p.name,
+                                            brand: p.product_brand,
+                                            price: p.current_price,
+                                            size: p.product_size || p.size || '',
+                                            url: p.url,
+                                            barcode: p.barcode,
+                                            product_name: p.product_name || p.name, // Ensure product_name is set for scorer
+                                            product_category: p.product_category || p.category || '',
+                                            product_size: p.product_size || p.size || '',
+                                            unit_price_per_100: calculateUnitPrice(p.current_price, p.product_size || p.size || ''),
+                                        };
+                                        // [MODIFIED V13.1] Use Enhanced Checklist with Trace
+                                        const checkResult = tracedScoring(runEnhancedChecklist, enrichedProduct, ingredient, log, fbAttemptRecorder);
+                                        return checkResult.pass ? { product: enrichedProduct, score: checkResult.score } : null;
+                                    }).filter(Boolean);
+                                    
+                                    fbAttemptRecorder.finalize(validProducts.length > 0 ? 'success' : 'no_match_post_filter', validProducts.length);
+
+                                    if (validProducts.length > 0) {
+                                        // Sort by score descending, then by unit price ascending
+                                        validProducts.sort((a, b) => {
+                                            if (Math.abs(a.score - b.score) > 0.05) return b.score - a.score;
+                                            return (a.product.unit_price_per_100 ?? Infinity) - (b.product.unit_price_per_100 ?? Infinity);
+                                        });
+                                        
+                                        const currentUrls = new Set(result.allProducts.map(p => p.url));
+                                        validProducts.forEach(vp => { 
+                                            if (!currentUrls.has(vp.product.url)) { 
+                                                vp.product._matchScore = vp.score;
+                                                result.allProducts.push(vp.product); 
+                                            }
+                                        });
+                                        
+                                        if (result.allProducts.length > 0) {
+                                            const foundProduct = result.allProducts.reduce((best, current) => {
+                                                const bestScore = best._matchScore ?? 0;
+                                                const currentScore = current._matchScore ?? 0;
+                                                if (Math.abs(currentScore - bestScore) > 0.1) return currentScore > bestScore ? current : best;
+                                                return (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best;
+                                            }, result.allProducts[0]);
+                                            
+                                            result.currentSelectionURL = foundProduct.url;
+                                            result.source = 'discovery';
+                                            fbAttemptLog.status = 'success';
+                                            acceptedQueryType = 'fallback';
+                                            bestScore = foundProduct._matchScore || 0;
+                                            log(`[${ingredientKey}] Fallback matched: "${foundProduct.product_name || foundProduct.name}"`, 'INFO', 'MARKET_RUN');
+                                            
+                                            trace.setSelection(foundProduct, 'fallback', 'fallback');
+                                            break; // Stop trying more fallbacks
+                                        }
+                                    }
+                                } else {
+                                    fbAttemptRecorder.finalize('no_match', 0);
+                                }
+                                fbAttemptLog.status = fbAttemptLog.status === 'pending' ? 'no_match' : fbAttemptLog.status;
+                            } catch (fbErr) {
+                                log(`[${ingredientKey}] Fallback query error: ${fbErr.message}`, 'WARN', 'MARKET_RUN');
+                                fbAttemptLog.status = 'error';
+                                fbAttemptRecorder.finalize('fetch_error', 0);
+                            }
+                        }
+                    } 
+                    
+                    if (result.source === 'failed') { 
+                        log(`[${ingredientKey}] Market Run failed after all queries + fallbacks.`, 'WARN', 'MARKET_RUN'); 
+                        trace.setFailed('All queries exhausted without a match');
                     } else { 
                         log(`[${ingredientKey}] Market Run success via '${acceptedQueryType}' query.`, 'DEBUG', 'MARKET_RUN'); 
                     }
@@ -1176,10 +1265,15 @@ module.exports = async (request, response) => {
                     log(`[${ingredientKey}] Market Run Telemetry`, 'INFO', 'MARKET_RUN', telemetry);
                     // --- [END PERF] ---
 
+                    // Attach match trace to result
+                    result._matchTrace = trace.build();
                     return { [ingredientKey]: result };
 
                 } catch(e) {
                     log(`CRITICAL Error in processSingleIngredient "${ingredient?.originalIngredient}": ${e.message}`, 'CRITICAL', 'MARKET_RUN', { stack: e.stack?.substring(0, 300) });
+                     // Use trace logic if available in scope? No, because trace const might not be init if error happens very early.
+                     // But if initialized, we can try.
+                     // Safe approach: just return error.
                      return { _error: true, itemKey: ingredient?.originalIngredient || 'unknown_error', message: `Internal Market Run Error: ${e.message}` };
                 }
             };
@@ -1211,6 +1305,14 @@ module.exports = async (request, response) => {
 
                  if (resultData && typeof resultData === 'object') {
                      dayResultsMap.set(normalizedKey, { ...planItem, ...resultData, normalizedKey: planItem.normalizedKey });
+                     
+                     // Emit Trace Event if available
+                     if (resultData._matchTrace) {
+                         writeSseEvent('ingredient:match_trace', {
+                             key: ingredientKey,
+                             trace: resultData._matchTrace
+                         });
+                     }
                  } else {
                       log(`Invalid market result structure for "${ingredientKey}"`, 'ERROR', 'SYSTEM', { resultData });
                       dayResultsMap.set(normalizedKey, { ...planItem, source: 'error', error: 'Invalid market result structure', allProducts:[], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url });
@@ -1288,7 +1390,7 @@ module.exports = async (request, response) => {
                  } else { log(`Invalid item in nutrition results loop (Day ${day})`, 'WARN', 'CALC', {item}); }
             });
         } else { 
-            nutrition_ms = Date.Now() - nutritionStartTime; // [PERF] Log time
+            nutrition_ms = Date.now() - nutritionStartTime; // [PERF] Log time
             log(`No items require nutrition fetching for Day ${day}.`, 'INFO', 'CALC'); 
         }
 
@@ -1357,7 +1459,7 @@ module.exports = async (request, response) => {
                  // Use real data
                  const proteinPer100 = Number(nutritionData.protein || nutritionData.protein_g_per_100g) || 0;
                  const fatPer100 = Number(nutritionData.fat || nutritionData.fat_g_per_100g) || 0;
-                 const carbsPer100 = Number(nutritionData.carbs || nutritionData.carb_g_per_100g) || 0;
+                 const carbsPer100 = Number(nutritionData.carbs || nutritionData.carbs_g_per_100g || nutritionData.carb_g_per_100g) || 0;
                  p = (proteinPer100 / 100) * grams;
                  f = (fatPer100 / 100) * grams;
                  c = (carbsPer100 / 100) * grams;

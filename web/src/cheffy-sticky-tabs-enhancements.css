@@ -1,0 +1,132 @@
+/* =============================================================================
+   cheffy-sticky-tabs-enhancements.css
+
+   Styles for the WELDED SEGMENTED TABS embedded inside Header.jsx (Concept 2).
+
+   The tabs now live inside the <header> element itself, so all the old
+   .sticky-tabs-container positioning hacks are gone. What remains:
+   - GPU-accelerated pill and button transitions
+   - Focus-visible accessibility styles
+   - Responsive adjustments for the segmented track
+   - Backdrop-filter fallbacks
+   - iOS flicker prevention
+   - Reduced-motion and print overrides
+   - Scrollbar styling
+
+   Import in index.jsx AFTER cheffy-patches.css:
+     import './cheffy-sticky-tabs-enhancements.css';
+   ============================================================================= */
+
+/* ── PERFORMANCE: GPU ACCELERATION ──────────────────────────────────────── */
+
+.welded-tabs-pill,
+.welded-tabs-button {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.welded-tabs-area {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── PREVENT HORIZONTAL SCROLL ──────────────────────────────────────────── */
+
+body {
+  overflow-x: hidden;
+}
+
+/* ── ACCESSIBILITY: FOCUS-VISIBLE ───────────────────────────────────────── */
+
+.welded-tabs-button:focus-visible {
+  outline: 2px solid #818cf8;
+  outline-offset: -2px;
+  border-radius: 11px;
+}
+
+/* ── DARK MODE: PILL GLOW ───────────────────────────────────────────────── */
+
+[data-theme="dark"] .welded-tabs-pill {
+  box-shadow:
+    0 1px 4px rgba(0,0,0,0.3),
+    0 0.5px 1px rgba(0,0,0,0.2),
+    0 0 0 1px rgba(129, 140, 248, 0.08);
+}
+
+[data-theme="light"] .welded-tabs-pill {
+  box-shadow:
+    0 1px 4px rgba(0,0,0,0.08),
+    0 0.5px 1px rgba(0,0,0,0.06);
+}
+
+/* ── RESPONSIVE ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  .welded-tabs-button {
+    gap: 5px !important;
+    font-size: 12px !important;
+  }
+}
+
+/* ── BACKDROP-FILTER FALLBACK ───────────────────────────────────────────── */
+
+@supports not (backdrop-filter: blur(20px)) {
+  [data-theme="dark"] header {
+    background-color: rgba(15, 17, 23, 1) !important;
+  }
+  [data-theme="light"] header {
+    background-color: rgba(255, 255, 255, 1) !important;
+  }
+}
+
+/* ── iOS FLICKER FIX ────────────────────────────────────────────────────── */
+
+@supports (-webkit-touch-callout: none) {
+  .welded-tabs-area {
+    -webkit-transform: translateZ(0);
+    -webkit-backface-visibility: hidden;
+    -webkit-perspective: 1000;
+  }
+}
+
+/* ── REDUCED MOTION ─────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .welded-tabs-pill,
+  .welded-tabs-button,
+  .welded-tabs-area {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── PRINT: HIDE TABS ───────────────────────────────────────────────────── */
+
+@media print {
+  .welded-tabs-area {
+    display: none !important;
+  }
+}
+
+/* ── SCROLLBAR STYLING ──────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.5);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.7);
+}
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(75, 85, 99, 0.5);
+}
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(75, 85, 99, 0.7);
+}

@@ -3,6 +3,14 @@ import React from 'react';
 import { COLORS } from '../../constants';
 
 const WizardStepHeader = ({ step }) => {
+// UPDATED: Full dark mode support — title, subtitle, icon container background.
+import React from 'react';
+import { COLORS } from '../../constants';
+import { useTheme } from '../../contexts/ThemeContext';
+
+const WizardStepHeader = ({ step }) => {
+  const { isDark } = useTheme();
+
   return (
     <div className="flex items-center gap-3.5 px-6 pt-6 pb-0">
       {/* Icon container */}
@@ -13,6 +21,7 @@ const WizardStepHeader = ({ step }) => {
           height: '48px',
           fontSize: '24px',
           backgroundColor: `${step.accentColor}14`,
+          backgroundColor: `${step.accentColor}${isDark ? '1a' : '14'}`,
         }}
       >
         {step.icon}
@@ -23,12 +32,21 @@ const WizardStepHeader = ({ step }) => {
         <h2
           className="text-xl font-bold"
           style={{ color: COLORS.gray[900], letterSpacing: '-0.01em', margin: 0 }}
+          style={{
+            color: isDark ? '#f0f1f5' : COLORS.gray[900],
+            letterSpacing: '-0.01em',
+            margin: 0,
+          }}
         >
           {step.title}
         </h2>
         <p
           className="text-sm mt-0.5"
           style={{ color: COLORS.gray[500], margin: 0 }}
+          style={{
+            color: isDark ? '#9ca3b0' : COLORS.gray[500],
+            margin: 0,
+          }}
         >
           {step.subtitle}
         </p>
@@ -37,4 +55,5 @@ const WizardStepHeader = ({ step }) => {
   );
 };
 
+export default WizardStepHeader;
 export default WizardStepHeader;

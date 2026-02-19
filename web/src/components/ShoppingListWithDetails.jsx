@@ -1,23 +1,57 @@
 // web/src/components/ShoppingListWithDetails.jsx
-// FIXED VERSION - Enhanced store name detection
+// =============================================================================
+// ShoppingListWithDetails — Shopping list with product cards and detail modal
+//
+// REDESIGN v2: Category selector now lives INSIDE the Shopping List section
+// card as a native sub-section, exactly mirroring how the CalendarStripSelector
+// lives inside the mpd-section-card in MealPlanDisplay.
+//
+// Structure:
+//   .sld-section-card               ← mirrors .mpd-section-card
+//     .sld-header                   ← gradient header area
+//     .sld-cat-strip-wrapper        ← mirrors .mpd-cal-strip-wrapper (bleed trick)
+//       .sld-cat-strip              ← mirrors .mpd-cal-strip
+//         .sld-cat-cell             ← mirrors .mpd-cal-day
+//           .sld-cat-count          ← mirrors .mpd-cal-num
+//           .sld-cat-label          ← mirrors .mpd-cal-dow
+//   Product list (outside card)
+//
+// FIXES:
+//   - handleSelectSubstitute NO LONGER closes the modal so users can
+//     swap products inline.
+//   - Both `products` and `modalProductData` memos now honour
+//     `currentSelectionURL` (set by useAppLogic.handleSubstituteSelection)
+//     falling back to `selectedIndex → 0` when not set.
+// =============================================================================
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   ShoppingBag, 
-  Check,
-  ChevronDown, 
-  ChevronUp,
   Copy,
   Printer,
   Share2
 } from 'lucide-react';
-import { COLORS, SHADOWS } from '../constants';
-import { formatGrams, copyToClipboard, groupBy } from '../helpers';
-import IngredientResultBlock from './IngredientResultBlock';
+import IngredientCard from './IngredientCard';
+import ProductDetailModal from './ProductDetailModal';
 
-/**
- * Shopping list with summary card AND detailed product information
- */
+// ── Helper: resolve the "selected" product from a result object ──────────
+// Priority: currentSelectionURL match → selectedIndex → first product
+const resolveSelectedProduct = (result) => {
+  const allProducts = result?.allProducts || result?.products || [];
+  if (allProducts.length === 0) return { allProducts, selectedProduct: null };
+
+  // 1. Match by currentSelectionURL (set after a substitute swap)
+  if (result?.currentSelectionURL) {
+    const match = allProducts.find(p => p?.url === result.currentSelectionURL);
+    if (match) return { allProducts, selectedProduct: match };
+  }
+
+  // 2. Fall back to selectedIndex (initial backend selection)
+  const idx = result?.selectedIndex ?? 0;
+  return { allProducts, selectedProduct: allProducts[idx] || allProducts[0] };
+};
+
+
 const ShoppingListWithDetails = ({ 
   ingredients = [],
   results = {},
@@ -31,401 +65,738 @@ const ShoppingListWithDetails = ({
   loadingNutritionFor = null,
   categorizedResults = {}
 }) => {
-  const [checkedItems, setCheckedItems] = useState({});
-  const [expandedCategories, setExpandedCategories] = useState({});
+  const [activeCategory, setActiveCategory] = useState('all');
+  const [selectedProductModal, setSelectedProductModal] = useState(null);
+  const stripRef = useRef(null);
 
-  // Initialize all items as checked when results change
+  // Auto-scroll active category into view
   useEffect(() => {
-    const initialCheckedState = {};
-    Object.keys(results).forEach(normalizedKey => {
-      initialCheckedState[normalizedKey] = true;
-    });
-    setCheckedItems(initialCheckedState);
-  }, [results]);
+    if (!stripRef.current) return;
+    const activeEl = stripRef.current.querySelector('[data-active="true"]');
+    if (activeEl) {
+      activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [activeCategory]);
 
-  const totalItems = Object.keys(results).length;
-  const checkedCount = Object.values(checkedItems).filter(Boolean).length;
-
-  // Detect actual store from products - ENHANCED
+  // Store name detection
   const actualStoreName = useMemo(() => {
-    // Strategy 1: Try to extract from product URLs or data
     for (const [key, result] of Object.entries(results)) {
-      // Check allProducts array
       const products = result.allProducts || result.products || [];
-      
       for (const product of products) {
         if (!product) continue;
-        
-        // Check if product has a store field
-        if (product.store) {
-          return product.store;
-        }
-        
-        // Check if URL contains store name
+        if (product.store) return product.store;
         if (product.url) {
-          if (product.url.includes('coles.com')) return 'Coles';
-          if (product.url.includes('woolworths.com')) return 'Woolworths';
-        }
-        
-        // Check product name for store prefix
-        if (product.product_name || product.name) {
-          const name = product.product_name || product.name;
-          if (name.toLowerCase().startsWith('coles')) return 'Coles';
-          if (name.toLowerCase().startsWith('woolworths')) return 'Woolworths';
+          if (product.url.includes('woolworths')) return 'Woolworths';
+          if (product.url.includes('coles')) return 'Coles';
+          if (product.url.includes('aldi')) return 'ALDI';
         }
       }
     }
-    
-    // Strategy 2: Check if ingredients have store info
-    for (const ingredient of ingredients) {
-      if (ingredient.store) {
-        return ingredient.store;
-      }
-    }
-    
-    // Strategy 3: Use provided storeName (should be correct from formData)
-    return storeName;
-  }, [results, ingredients, storeName]);
+    return storeName || 'Woolworths';
+  }, [results, storeName]);
 
-  // Calculate total cost of selected items
-  const selectedTotal = useMemo(() => {
-    let total = 0;
-    
-    Object.entries(results).forEach(([normalizedKey, result]) => {
-      const isChecked = checkedItems[normalizedKey];
-      
-      if (!isChecked || !result) return;
-      
-      // Access products array correctly
-      const products = result.allProducts || result.products || [];
-      if (products.length === 0) return;
-      
-      // Get selected product - check multiple possible locations
-      let selectedProduct = null;
-      
-      if (result.currentSelectionURL) {
-        selectedProduct = products.find(p => p && p.url === result.currentSelectionURL);
+  // Transform ingredients into product cards
+  // FIX: Uses resolveSelectedProduct which honours currentSelectionURL
+  const products = useMemo(() => {
+    return ingredients.map((item, idx) => {
+      const normalizedKey = item.normalizedKey || item.originalIngredient?.toLowerCase().trim();
+      const result = results[normalizedKey] || {};
+      const { allProducts, selectedProduct } = resolveSelectedProduct(result);
+
+      let price = null;
+      if (selectedProduct) {
+        const rawPrice = selectedProduct.product_price ?? selectedProduct.price;
+        if (rawPrice !== null && rawPrice !== undefined) {
+          const parsed = parseFloat(rawPrice);
+          if (!isNaN(parsed)) {
+            price = parsed;
+          }
+        }
       }
-      
-      if (!selectedProduct && result.selectedIndex !== undefined) {
-        selectedProduct = products[result.selectedIndex];
-      }
-      
-      if (!selectedProduct) {
-        selectedProduct = products[0];
-      }
-      
-      if (!selectedProduct) return;
-      
-      // Get price - try multiple possible field names
-      const price = parseFloat(
-        selectedProduct.product_price || 
-        selectedProduct.price || 
-        selectedProduct.current_price || 
-        0
-      );
-      
-      if (isNaN(price) || price <= 0) return;
-      
-      // Get quantity
-      const quantity = result.userQuantity || 1;
-      
-      total += price * quantity;
+
+      const size = selectedProduct?.product_size || selectedProduct?.size || null;
+
+      const cheapest = allProducts.reduce((best, current) => {
+        if (!current) return best;
+        return (current.unit_price_per_100 ?? Infinity) < (best?.unit_price_per_100 ?? Infinity)
+          ? current : best;
+      }, allProducts[0]);
+
+      const isCheapest = selectedProduct && cheapest && selectedProduct?.url === cheapest?.url;
+
+      return {
+        id: `${normalizedKey}-${idx}`,
+        normalizedKey,
+        name: item.originalIngredient || 'Unknown',
+        price,
+        size,
+        cheapest: isCheapest,
+        category: item.category || 'uncategorized',
+      };
     });
-    
-    return total;
-  }, [checkedItems, results]);
+  }, [ingredients, results]);
 
-  // Toggle item checked state
-  const handleToggleItem = (normalizedKey) => {
-    setCheckedItems(prev => ({
-      ...prev,
-      [normalizedKey]: !prev[normalizedKey]
-    }));
-  };
-
-  // Toggle category expansion
-  const handleToggleCategory = (category) => {
-    setExpandedCategories(prev => ({
-      ...prev,
-      [category]: !prev[category]
-    }));
-  };
-
-  // Expand all categories
-  const handleExpandAll = () => {
-    const allExpanded = {};
-    Object.keys(categorizedResults).forEach(cat => {
-      allExpanded[cat] = true;
+  // Categorize products
+  const categorizedProducts = useMemo(() => {
+    const cats = {};
+    products.forEach(product => {
+      const cat = product.category || 'uncategorized';
+      if (!cats[cat]) cats[cat] = [];
+      cats[cat].push(product);
     });
-    setExpandedCategories(allExpanded);
-  };
+    return cats;
+  }, [products]);
 
-  // Collapse all categories
-  const handleCollapseAll = () => {
-    setExpandedCategories({});
-  };
-
-  // Copy list to clipboard
-  const handleCopyList = async () => {
-    let text = `Shopping List - ${actualStoreName}\n`;
-    text += `Total (Selected): $${selectedTotal.toFixed(2)}\n`;
-    text += `Items: ${checkedCount} of ${totalItems}\n`;
-    text += '='.repeat(40) + '\n\n';
-
-    Object.entries(categorizedResults).forEach(([category, items]) => {
-      text += `${category.toUpperCase()}\n`;
-      text += '-'.repeat(40) + '\n';
-      items.forEach(({ normalizedKey, ingredient }) => {
-        const checked = checkedItems[normalizedKey] ? '✓' : '☐';
-        text += `${checked} ${ingredient}\n`;
+  const categories = useMemo(() => {
+    const cats = [{ id: 'all', label: 'All', count: products.length }];
+    Object.entries(categorizedProducts).forEach(([cat, items]) => {
+      cats.push({
+        id: cat,
+        label: cat.charAt(0).toUpperCase() + cat.slice(1),
+        count: items.length,
       });
-      text += '\n';
     });
+    return cats;
+  }, [categorizedProducts, products.length]);
 
-    const success = await copyToClipboard(text);
-    if (success && onShowToast) {
-      onShowToast('Shopping list copied to clipboard!', 'success');
+  const filteredProducts = useMemo(() => {
+    if (activeCategory === 'all') return products;
+    return categorizedProducts[activeCategory] || [];
+  }, [activeCategory, products, categorizedProducts]);
+
+  // Modal data computation
+  // FIX: Uses resolveSelectedProduct which honours currentSelectionURL
+  const modalProductData = useMemo(() => {
+    if (!selectedProductModal) return null;
+
+    const freshResult = results[selectedProductModal];
+    if (!freshResult) {
+      return {
+        ingredientKey: selectedProductModal,
+        normalizedKey: selectedProductModal,
+        result: { source: 'failed' },
+        currentSelection: null,
+        absoluteCheapestProduct: null,
+        substitutes: [],
+        currentQuantity: 1,
+      };
+    }
+
+    const { allProducts, selectedProduct: currentSelection } = resolveSelectedProduct(freshResult);
+
+    const cheapest = allProducts.reduce((best, current) => {
+      if (!current) return best;
+      return (current.unit_price_per_100 ?? Infinity) < (best?.unit_price_per_100 ?? Infinity) 
+        ? current : best;
+    }, allProducts[0]);
+    
+    const substitutes = allProducts
+      .filter(p => p && p.url !== currentSelection?.url)
+      .sort((a, b) => (a.unit_price_per_100 ?? Infinity) - (b.unit_price_per_100 ?? Infinity));
+
+    return {
+      ingredientKey: selectedProductModal,
+      normalizedKey: selectedProductModal,
+      result: freshResult,
+      currentSelection,
+      absoluteCheapestProduct: cheapest,
+      substitutes,
+      currentQuantity: freshResult.userQuantity || 1,
+    };
+  }, [selectedProductModal, results]);
+
+  const handleCopyList = async () => {
+    try {
+      const text = products.map(p => {
+        const priceStr = p.price !== null ? `$${p.price.toFixed(2)}` : 'N/A';
+        const sizeStr = p.size ? ` (${p.size})` : '';
+        return `${p.name} - ${priceStr}${sizeStr}`;
+      }).join('\n');
+
+      await navigator.clipboard.writeText(
+        `${actualStoreName} Shopping List\nTotal: $${totalCost.toFixed(2)}\n${'─'.repeat(30)}\n${text}`
+      );
+      if (onShowToast) onShowToast('Shopping list copied to clipboard!', 'success');
+    } catch (err) {
+      console.error('Copy failed:', err);
+      if (onShowToast) onShowToast('Failed to copy list');
     }
   };
 
-  // Print list
   const handlePrint = () => {
     window.print();
   };
 
-  // Share list
   const handleShare = async () => {
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'Cheffy Shopping List',
-          text: `My shopping list from Cheffy - ${checkedCount} of ${totalItems} items selected`,
+          title: `${actualStoreName} Shopping List`,
+          text: `Shopping list with ${products.length} items - Total: $${totalCost.toFixed(2)}`,
         });
       } catch (err) {
-        console.error('Share failed:', err);
+        if (err.name !== 'AbortError') {
+          console.error('Share failed:', err);
+        }
       }
     } else {
       handleCopyList();
     }
   };
 
-  // Get category icon
-  const getCategoryIcon = (category) => {
-    const iconMap = {
-      produce: '🥕',
-      fruit: '🍎',
-      veg: '🥬',
-      grains: '🌾',
-      meat: '🥩',
-      seafood: '🐟',
-      dairy: '🥛',
-      pantry: '🥫',
-      frozen: '❄️',
-      bakery: '🍞',
-      snacks: '🍿',
-      condiments: '🧂',
-      drinks: '🧃',
-    };
-    return iconMap[category.toLowerCase()] || '🛒';
+  const handleViewProduct = (normalizedKey) => {
+    setSelectedProductModal(normalizedKey);
   };
 
-  // Debug logging
-  useEffect(() => {
-    console.log('[ShoppingList] Store Detection:', {
-      providedStoreName: storeName,
-      detectedStoreName: actualStoreName,
-      sampleProduct: results[Object.keys(results)[0]]?.allProducts?.[0] || results[Object.keys(results)[0]]?.products?.[0]
-    });
-  }, [storeName, actualStoreName, results]);
+  const handleCloseModal = () => {
+    setSelectedProductModal(null);
+  };
+
+  // FIX: No longer closes the modal after a substitute swap.
+  // The modal stays open so users can see the updated selection in-place.
+  // The `results` prop update (from useAppLogic.handleSubstituteSelection)
+  // triggers a re-compute of `modalProductData` via the useMemo above,
+  // which will now reflect the new currentSelectionURL.
+  const handleSelectSubstitute = (normalizedKey, substitute) => {
+    if (onSelectSubstitute) {
+      onSelectSubstitute(normalizedKey, substitute);
+    }
+    // Modal stays open — removed: setSelectedProductModal(null);
+  };
 
   return (
-    <div className="space-y-4">
-      {/* Shopping List Summary Card */}
-      <div
-        className="rounded-2xl p-6 shadow-xl"
-        style={{
-          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-        }}
-      >
-        {/* Header Row */}
-        <div className="flex items-start justify-between mb-6">
-          <div className="flex items-center">
-            <div className="bg-white bg-opacity-20 rounded-xl p-3 mr-4">
-              <ShoppingBag size={32} className="text-white" />
+    <div className="sld-root">
+
+      {/* ════════════════════════════════════════════════════════════════════════
+           SECTION CARD — mirrors .mpd-section-card
+           Contains: header + action buttons + category strip as unified component
+           ════════════════════════════════════════════════════════════════════════ */}
+      <div className="sld-section-card">
+
+        {/* ── Header area ── */}
+        <div className="sld-header">
+          <div className="sld-header-left">
+            <div className="sld-header-icon">
+              <ShoppingBag size={22} color="#ffffff" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Shopping List</h2>
-              <p className="text-indigo-100 text-sm">
-                {totalItems} items from {actualStoreName}
+              <h2 className="sld-header-title">Shopping List</h2>
+              <p className="sld-header-sub">
+                {products.length} items from {actualStoreName}
               </p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-4xl font-bold text-white mb-1">
-              ${selectedTotal.toFixed(2)}
-            </p>
-            <p className="text-indigo-100 text-sm">Total Cost</p>
+          <div className="sld-header-right">
+            <p className="sld-header-total">${totalCost.toFixed(2)}</p>
+            <p className="sld-header-total-label">Total Cost</p>
           </div>
         </div>
 
-        {/* Progress Bar */}
-        <div className="bg-white bg-opacity-20 rounded-full h-3 overflow-hidden mb-2">
-          <div
-            className="bg-white h-3 transition-all duration-500 ease-out"
-            style={{ 
-              width: `${totalItems > 0 ? (checkedCount / totalItems) * 100 : 0}%` 
-            }}
-          />
-        </div>
-        <p className="text-indigo-100 text-sm font-medium">
-          {checkedCount} of {totalItems} items checked
-        </p>
-      </div>
-
-      {/* Action Buttons */}
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={handleCopyList}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          <Copy size={16} className="mr-2" />
-          Copy List
-        </button>
-
-        <button
-          onClick={handleShare}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          <Share2 size={16} className="mr-2" />
-          Share
-        </button>
-
-        <button
-          onClick={handlePrint}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          <Printer size={16} className="mr-2" />
-          Print
-        </button>
-
-        <button
-          onClick={handleExpandAll}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring ml-auto"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          Expand All
-        </button>
-
-        <button
-          onClick={handleCollapseAll}
-          className="flex items-center px-4 py-2 bg-white border rounded-lg hover-lift transition-spring"
-          style={{ borderColor: COLORS.gray[300], color: COLORS.gray[700] }}
-        >
-          Collapse All
-        </button>
-      </div>
-
-      {/* Detailed Product List by Category */}
-      <div className="space-y-3">
-        {Object.entries(categorizedResults).map(([category, items]) => {
-          const isExpanded = expandedCategories[category];
-          const categoryCheckedCount = items.filter(item => 
-            checkedItems[item.normalizedKey]
-          ).length;
-
-          return (
-            <div
-              key={category}
-              className="bg-white rounded-xl overflow-hidden border"
-              style={{ 
-                borderColor: COLORS.gray[200],
-                boxShadow: SHADOWS.sm 
-              }}
+        {/* ── Action Buttons — styled like mpd-copy-btn ── */}
+        <div className="sld-actions">
+          {[
+            { Icon: Copy, label: 'Copy', onClick: handleCopyList },
+            { Icon: Printer, label: 'Print', onClick: handlePrint },
+            { Icon: Share2, label: 'Share', onClick: handleShare },
+          ].map(({ Icon, label, onClick }) => (
+            <button
+              key={label}
+              onClick={onClick}
+              className="sld-action-btn"
             >
-              {/* Category Header */}
-              <button
-                onClick={() => handleToggleCategory(category)}
-                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-fast"
-              >
-                <div className="flex items-center">
-                  <span className="text-2xl mr-3">{getCategoryIcon(category)}</span>
-                  <div className="text-left">
-                    <h3 className="font-bold" style={{ color: COLORS.gray[900] }}>
-                      {category}
-                    </h3>
-                    <p className="text-sm" style={{ color: COLORS.gray[500] }}>
-                      {categoryCheckedCount} of {items.length} items
-                    </p>
-                  </div>
-                </div>
-                {isExpanded ? (
-                  <ChevronUp style={{ color: COLORS.gray[400] }} />
-                ) : (
-                  <ChevronDown style={{ color: COLORS.gray[400] }} />
-                )}
-              </button>
+              <Icon size={15} />
+              <span className="sld-action-btn__label">{label}</span>
+            </button>
+          ))}
+        </div>
 
-              {/* Category Items - Full Product Details */}
-              {isExpanded && (
-                <div className="border-t" style={{ borderColor: COLORS.gray[200] }}>
-                  {items.map(({ normalizedKey, ingredient, ...result }) => {
-                    const isChecked = checkedItems[normalizedKey] || false;
+        {/* ── Category Strip — mirrors .mpd-cal-strip-wrapper / .mpd-cal-strip ──
+             Uses the same negative-margin bleed trick so the strip sits
+             edge-to-edge within the section card's 22px padding.
+        ── */}
+        <div className="sld-cat-strip-wrapper">
+          <div ref={stripRef} className="sld-cat-strip">
+            {categories.map(({ id, label, count }) => {
+              const isActive = activeCategory === id;
+              return (
+                <button
+                  key={id}
+                  data-active={isActive}
+                  onClick={() => setActiveCategory(id)}
+                  className={`sld-cat-cell ${isActive ? 'sld-cat-cell--active' : ''}`}
+                >
+                  <span className="sld-cat-count">{count}</span>
+                  <span className="sld-cat-label">{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-                    return (
-                      <div
-                        key={normalizedKey}
-                        className={`relative transition-all ${
-                          isChecked ? 'opacity-100' : 'opacity-40'
-                        }`}
-                      >
-                        {/* Checkbox Overlay */}
-                        <div className="absolute top-4 right-4 z-10">
-                          <button
-                            onClick={() => handleToggleItem(normalizedKey)}
-                            className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center transition-all shadow-sm ${
-                              isChecked 
-                                ? 'bg-green-500 border-green-500' 
-                                : 'bg-white border-gray-300'
-                            }`}
-                          >
-                            {isChecked && <Check size={20} className="text-white" />}
-                          </button>
-                        </div>
+      </div>
+      {/* ── end .sld-section-card ── */}
 
-                        {/* Full Product Card */}
-                        <div className={isChecked ? '' : 'pointer-events-none'}>
-                          <IngredientResultBlock
-                            ingredientKey={ingredient}
-                            normalizedKey={normalizedKey}
-                            result={result}
-                            onSelectSubstitute={onSelectSubstitute}
-                            onQuantityChange={onQuantityChange}
-                            onFetchNutrition={onFetchNutrition}
-                            nutritionData={nutritionCache[result.allProducts?.[result.selectedIndex || 0]?.url] || nutritionCache[result.products?.[result.selectedIndex || 0]?.url]}
-                            isLoadingNutrition={loadingNutritionFor === result.allProducts?.[result.selectedIndex || 0]?.url || loadingNutritionFor === result.products?.[result.selectedIndex || 0]?.url}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+
+      {/* ════════ Product list ════════ */}
+      <div className="sld-product-list">
+        {filteredProducts.length === 0 ? (
+          <div className="sld-empty-state">
+            <ShoppingBag size={48} className="sld-empty-state__icon" />
+            <div className="sld-empty-state__title">
+              No {activeCategory !== 'all' ? activeCategory : ''} items yet
             </div>
-          );
-        })}
+            <div className="sld-empty-state__text">
+              Add items to your list to get started
+            </div>
+          </div>
+        ) : (
+          filteredProducts.map((product, index) => (
+            <IngredientCard
+              key={product.id}
+              ingredientName={product.name}
+              price={product.price}
+              size={product.size}
+              isCheapest={product.cheapest}
+              onViewProduct={() => handleViewProduct(product.normalizedKey)}
+              index={index}
+            />
+          ))
+        )}
       </div>
 
-      {/* Empty State */}
-      {totalItems === 0 && (
-        <div className="text-center py-12" style={{ color: COLORS.gray[500] }}>
-          <ShoppingBag size={48} className="mx-auto mb-4 opacity-50" />
-          <p>No items in your shopping list yet</p>
-        </div>
+      {/* ════════ Product Detail Modal ════════ */}
+      {modalProductData && (
+        <ProductDetailModal
+          isOpen={!!selectedProductModal}
+          onClose={handleCloseModal}
+          ingredientKey={modalProductData.ingredientKey}
+          normalizedKey={modalProductData.normalizedKey}
+          result={modalProductData.result}
+          currentSelection={modalProductData.currentSelection}
+          absoluteCheapestProduct={modalProductData.absoluteCheapestProduct}
+          substitutes={modalProductData.substitutes}
+          currentQuantity={modalProductData.currentQuantity}
+          onSelectSubstitute={handleSelectSubstitute}
+          onQuantityChange={onQuantityChange}
+        />
       )}
+
+
+      {/* ════════════════════════════════════════════════════════════════════════
+           SCOPED STYLES
+           ════════════════════════════════════════════════════════════════════════
+           Every value below is copied verbatim from MealPlanDisplay's inline
+           <style> block and mpd-theme-override.css so the Shopping List card
+           is a pixel-perfect sibling of the Nutrition card.
+           ════════════════════════════════════════════════════════════════════════ */}
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+
+        * { box-sizing: border-box; }
+
+        .sld-root {
+          font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          padding: 16px;
+          max-width: 800px;
+          margin: 0 auto;
+        }
+
+
+        /* ==========================================================
+           SECTION CARD
+           Source: .mpd-section-card { background: #1a1d2a;
+             border-radius: 20px; padding: 22px; border: 1px solid #262a3a; }
+           ========================================================== */
+
+        .sld-section-card {
+          background: #1a1d2a;
+          border-radius: 20px;
+          padding: 22px;
+          border: 1px solid #262a3a;
+          margin-bottom: 20px;
+          box-shadow:
+            0 4px 16px rgba(0, 0, 0, 0.35),
+            0 0 0 1px rgba(99, 102, 241, 0.08);
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-section-card */
+        [data-theme="light"] .sld-section-card {
+          background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+          border: 1px solid #e0e7ff;
+          box-shadow:
+            0 2px 8px rgba(99, 102, 241, 0.06),
+            0 0 0 1px rgba(99, 102, 241, 0.04);
+        }
+
+
+        /* ==========================================================
+           HEADER — mirrors .mpd-header layout
+           ========================================================== */
+
+        .sld-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          margin-bottom: 16px;
+        }
+
+        .sld-header-left {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .sld-header-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 42px;
+          height: 42px;
+          border-radius: 12px;
+          background: linear-gradient(135deg, #6366f1, #a855f7);
+          flex-shrink: 0;
+        }
+
+        /* Source: .mpd-header-title { font-size: 1.15rem; font-weight: 700; color: #f0f1f5; } */
+        .sld-header-title {
+          font-size: 1.15rem;
+          font-weight: 700;
+          color: #f0f1f5;
+          line-height: 1.2;
+          margin: 0;
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-header-title */
+        [data-theme="light"] .sld-header-title {
+          color: #1f2937;
+        }
+
+        /* Source: .mpd-header-sub { font-size: 0.75rem; color: #7b809a; } */
+        .sld-header-sub {
+          font-size: 0.75rem;
+          color: #7b809a;
+          margin: 1px 0 0 0;
+        }
+
+        [data-theme="light"] .sld-header-sub {
+          color: #6b7280;
+        }
+
+        .sld-header-right {
+          text-align: right;
+          flex-shrink: 0;
+        }
+
+        .sld-header-total {
+          font-size: 1.6rem;
+          font-weight: 700;
+          color: #f0f1f5;
+          line-height: 1;
+          margin: 0 0 2px 0;
+          font-variant-numeric: tabular-nums;
+        }
+
+        [data-theme="light"] .sld-header-total {
+          color: #1f2937;
+        }
+
+        .sld-header-total-label {
+          font-size: 0.7rem;
+          color: #7b809a;
+          margin: 0;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          font-weight: 600;
+        }
+
+        [data-theme="light"] .sld-header-total-label {
+          color: #9ca3af;
+        }
+
+
+        /* ==========================================================
+           ACTION BUTTONS — mirrors .mpd-copy-btn
+           Source: .mpd-copy-btn { padding: 8px 14px; border-radius: 10px;
+             background: rgba(99,102,241,0.12); border: 1px solid rgba(99,102,241,0.2);
+             color: #818cf8; font-size: 0.78rem; font-weight: 600; }
+           ========================================================== */
+
+        .sld-actions {
+          display: flex;
+          gap: 6px;
+          margin-bottom: 16px;
+          flex-wrap: wrap;
+        }
+
+        .sld-action-btn {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 14px;
+          border-radius: 10px;
+          background: rgba(99, 102, 241, 0.12);
+          border: 1px solid rgba(99, 102, 241, 0.2);
+          color: #818cf8;
+          font-size: 0.78rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-family: inherit;
+        }
+
+        .sld-action-btn:hover {
+          background: rgba(99, 102, 241, 0.22);
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-copy-btn */
+        [data-theme="light"] .sld-action-btn {
+          background: rgba(99, 102, 241, 0.08);
+          border-color: rgba(99, 102, 241, 0.18);
+          color: #4f46e5;
+        }
+
+        [data-theme="light"] .sld-action-btn:hover {
+          background: rgba(99, 102, 241, 0.15);
+        }
+
+
+        /* ==========================================================
+           CATEGORY STRIP
+           Source: .mpd-cal-strip-wrapper { margin: 0 -22px 18px; padding: 0 22px; }
+           Source: .mpd-cal-strip { display: flex; gap: 8px; padding: 8px;
+             background: rgba(255,255,255,0.04); border-radius: 14px;
+             border: 1px solid #262a3a; overflow-x: auto; }
+           ========================================================== */
+
+        .sld-cat-strip-wrapper {
+          margin: 0 -22px 0;
+          padding: 0 22px;
+        }
+
+        .sld-cat-strip {
+          display: flex;
+          gap: 8px;
+          padding: 8px;
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 14px;
+          border: 1px solid #262a3a;
+          overflow-x: auto;
+          -ms-overflow-style: none;
+          scrollbar-width: none;
+        }
+
+        .sld-cat-strip::-webkit-scrollbar { display: none; }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-strip */
+        [data-theme="light"] .sld-cat-strip {
+          background: rgba(99, 102, 241, 0.04);
+          border-color: #e0e7ff;
+        }
+
+
+        /* ==========================================================
+           CATEGORY CELL
+           Source: .mpd-cal-day { display: flex; flex-direction: column;
+             align-items: center; padding: 8px 12px; border-radius: 12px;
+             cursor: pointer; transition: all 0.25s ease; flex-shrink: 0;
+             min-width: 50px; border: 1px solid transparent; background: transparent; }
+           ========================================================== */
+
+        .sld-cat-cell {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 8px 12px;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 0.25s ease;
+          flex-shrink: 0;
+          min-width: 50px;
+          border: 1px solid transparent;
+          background: transparent;
+          font-family: inherit;
+        }
+
+        .sld-cat-cell:hover:not(.sld-cat-cell--active) {
+          background: rgba(255, 255, 255, 0.04);
+          border-color: rgba(255, 255, 255, 0.06);
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-day:hover */
+        [data-theme="light"] .sld-cat-cell:hover:not(.sld-cat-cell--active) {
+          background: rgba(99, 102, 241, 0.06);
+          border-color: rgba(99, 102, 241, 0.12);
+        }
+
+        /* Source: .mpd-cal-day--active { background: linear-gradient(135deg, #6366f1, #a855f7);
+             border-color: transparent; box-shadow: 0 3px 12px rgba(99,102,241,0.35); } */
+        .sld-cat-cell--active {
+          background: linear-gradient(135deg, #6366f1, #a855f7);
+          border-color: transparent;
+          box-shadow: 0 3px 12px rgba(99, 102, 241, 0.35);
+        }
+
+
+        /* ── Category count ──
+           Source: .mpd-cal-num { font-family: 'DM Sans'; font-size: 1.15rem;
+             font-weight: 700; color: #e8eaf0; line-height: 1; }
+           Source: .mpd-cal-day--active .mpd-cal-num { color: #ffffff; }
+        */
+
+        .sld-cat-count {
+          font-family: 'DM Sans', -apple-system, sans-serif;
+          font-size: 1.15rem;
+          font-weight: 700;
+          color: #e8eaf0;
+          line-height: 1;
+        }
+
+        .sld-cat-cell--active .sld-cat-count {
+          color: white;
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-num { color: #374151; } */
+        [data-theme="light"] .sld-cat-count {
+          color: #374151;
+        }
+
+        [data-theme="light"] .sld-cat-cell--active .sld-cat-count {
+          color: #ffffff;
+        }
+
+
+        /* ── Category label ──
+           Source: .mpd-cal-dow { font-size: 0.6rem; text-transform: uppercase;
+             letter-spacing: 0.12em; color: #7b809a; margin-bottom: 3px;
+             font-weight: 600; }
+           Source: .mpd-cal-day--active .mpd-cal-dow { color: rgba(255,255,255,0.8); }
+        */
+
+        .sld-cat-label {
+          font-size: 0.6rem;
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
+          color: #7b809a;
+          margin-top: 3px;
+          font-weight: 600;
+          line-height: 1;
+        }
+
+        .sld-cat-cell--active .sld-cat-label {
+          color: rgba(255, 255, 255, 0.8);
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-dow { color: #9ca3af; } */
+        [data-theme="light"] .sld-cat-label {
+          color: #9ca3af;
+        }
+
+        /* Source: mpd-theme-override.css [data-theme="light"] .mpd-cal-day--active .mpd-cal-dow */
+        [data-theme="light"] .sld-cat-cell--active .sld-cat-label {
+          color: rgba(255, 255, 255, 0.85);
+        }
+
+
+        /* ==========================================================
+           PRODUCT LIST
+           ========================================================== */
+
+        .sld-product-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+
+        /* ==========================================================
+           EMPTY STATE — theme-aware
+           ========================================================== */
+
+        .sld-empty-state {
+          text-align: center;
+          padding: 60px 20px;
+          background: var(--color-bg-card, #1e2130);
+          border-radius: 16px;
+          border: 2px dashed var(--color-border, #2d3148);
+        }
+
+        [data-theme="light"] .sld-empty-state {
+          background: #ffffff;
+          border-color: #e2e8f0;
+        }
+
+        .sld-empty-state__icon {
+          color: var(--color-text-tertiary, #6b7280);
+          margin: 0 auto 16px;
+          display: block;
+        }
+
+        .sld-empty-state__title {
+          font-size: 18px;
+          font-weight: 600;
+          color: var(--color-text-primary, #f0f1f5);
+          margin-bottom: 8px;
+        }
+
+        [data-theme="light"] .sld-empty-state__title {
+          color: #4a5568;
+        }
+
+        .sld-empty-state__text {
+          font-size: 14px;
+          color: var(--color-text-secondary, #9ca3b0);
+        }
+
+        [data-theme="light"] .sld-empty-state__text {
+          color: #718096;
+        }
+
+
+        /* ==========================================================
+           RESPONSIVE
+           ========================================================== */
+
+        @media (max-width: 768px) {
+          .sld-action-btn__label { display: none; }
+          .sld-action-btn {
+            min-width: 40px;
+            padding: 10px;
+            justify-content: center;
+          }
+        }
+
+        @media (max-width: 400px) {
+          .sld-header-total {
+            font-size: 1.3rem;
+          }
+          .sld-header-title {
+            font-size: 1rem;
+          }
+        }
+
+
+        /* ==========================================================
+           PRINT
+           ========================================================== */
+
+        @media print {
+          body { background: white !important; }
+          .sld-actions,
+          .sld-cat-strip-wrapper { display: none !important; }
+          .sld-section-card {
+            background: white !important;
+            border-color: #e5e7eb !important;
+            box-shadow: none !important;
+            color: #111 !important;
+          }
+          .sld-header-title,
+          .sld-header-total { color: #111 !important; }
+          .glass-card {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+        }
+      `}</style>
     </div>
   );
 };

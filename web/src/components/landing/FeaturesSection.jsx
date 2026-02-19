@@ -1,129 +1,170 @@
 // web/src/components/landing/FeaturesSection.jsx
 import React, { useRef } from 'react';
 import { Sparkles, Target, Calendar, Heart } from 'lucide-react';
-import { COLORS } from '../../constants';
-import { useInView } from '../../hooks/useResponsive'; // <-- Import useInView
+import { useInView } from '../../hooks/useResponsive';
 
 /**
  * Features Section Component
- * Showcases the 4 main features of Cheffy
+ * Bento-grid inspired layout — theme aligned to Cheffy app indigo/purple palette
  */
 const FeaturesSection = () => {
   const features = [
-    // ... (features array remains the same)
     {
-      icon: <Sparkles size={32} />,
+      icon: <Sparkles size={24} />,
       title: 'AI Meal Generation',
-      description: 'Get personalized meal suggestions based on your preferences, dietary restrictions, and nutritional goals.',
-      color: COLORS.primary[500],
-      bgColor: COLORS.primary[50]
+      description:
+        'Intelligent suggestions shaped by your preferences, restrictions, and nutritional targets — no two plans are the same.',
+      accent: '#6366f1',
+      accentBg: 'rgba(99, 102, 241, 0.07)',
+      span: 'md:col-span-2',
     },
     {
-      icon: <Target size={32} />,
-      title: 'Macro Tracking',
-      description: 'Monitor your daily protein, carbs, and fats intake with visual progress indicators and detailed breakdowns.',
-      color: COLORS.secondary[500],
-      bgColor: COLORS.secondary[50]
+      icon: <Target size={24} />,
+      title: 'Precision Macro Tracking',
+      description:
+        'Visual breakdowns of protein, carbs, and fats with real-time progress toward your daily goals.',
+      accent: '#a855f7',
+      accentBg: 'rgba(168, 85, 247, 0.08)',
+      span: '',
     },
     {
-      icon: <Calendar size={32} />,
-      title: 'Meal Planning Calendar',
-      description: 'Plan your meals for the week ahead with our intuitive calendar view and automatic grocery list generation.',
-      color: COLORS.info.main,
-      bgColor: COLORS.info.light
+      icon: <Calendar size={24} />,
+      title: 'Weekly Meal Calendar',
+      description:
+        'Drag-and-drop meal scheduling with automatic grocery list generation based on real local prices.',
+      accent: '#7e22ce',
+      accentBg: 'rgba(126, 34, 206, 0.07)',
+      span: '',
     },
     {
-      icon: <Heart size={32} />,
-      title: 'Health Goals',
-      description: 'Set and achieve your fitness objectives with customized meal plans that support your journey.',
-      color: COLORS.error.main,
-      bgColor: COLORS.error.light
-    }
+      icon: <Heart size={24} />,
+      title: 'Goal Alignment',
+      description:
+        'Whether you\'re cutting, bulking, or maintaining — every plan adapts dynamically to keep you on track.',
+      accent: '#4f46e5',
+      accentBg: 'rgba(79, 70, 229, 0.06)',
+      span: 'md:col-span-2',
+    },
   ];
 
-  // --- Add Animation Hooks ---
   const sectionRef = useRef(null);
-  // Trigger when 10% of the section is visible
   const isInView = useInView(sectionRef, { threshold: 0.1, triggerOnce: true });
-  // --- End Animation Hooks ---
 
   return (
     <section
-      ref={sectionRef} // <-- Assign ref to section
-      className="py-20 md:py-32 bg-white transition-opacity duration-500"
-      style={{ opacity: isInView ? 1 : 0 }} // <-- Fade in section
+      id="features"
+      ref={sectionRef}
+      className="py-20 md:py-28 relative"
+      style={{ backgroundColor: '#f9fafb' }}
     >
-      <div className="max-w-7xl mx-auto px-4 md:px-8">
+      {/* Subtle divider line */}
+      <div
+        className="absolute top-0 left-1/2 -translate-x-1/2 w-16 h-px"
+        style={{ backgroundColor: 'rgba(0,0,0,0.1)' }}
+      />
+
+      <div className="max-w-7xl mx-auto px-5 md:px-10">
         {/* Section Header */}
-        {/*
-          ADD:
-          - Animate class based on isInView
-          - Opacity 0 to hide before animation
-        */}
         <div
-          className={`text-center mb-16 ${
-            isInView ? 'animate-fadeInUp' : 'opacity-0'
-          }`}
+          className="mb-16 max-w-2xl transition-all duration-700 ease-out"
+          style={{
+            opacity: isInView ? 1 : 0,
+            transform: isInView ? 'translateY(0)' : 'translateY(20px)',
+          }}
         >
-          <h2 className="text-4xl md:text-5xl font-bold mb-4 font-poppins">
-            <span style={{ color: COLORS.gray[900] }}>Everything You Need to</span>
-            <br />
-            <span className="bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-              Master Your Nutrition
-            </span>
-          </h2>
-          <p 
-            className="text-lg md:text-xl max-w-3xl mx-auto"
-            style={{ color: COLORS.gray[600] }}
+          <span
+            className="text-xs font-semibold tracking-widest uppercase block mb-4"
+            style={{
+              color: '#6366f1',
+              fontFamily: "'Georgia', serif",
+              letterSpacing: '0.12em',
+            }}
           >
-            Powerful features designed to make healthy eating simple, sustainable, and enjoyable.
+            Features
+          </span>
+          <h2
+            className="text-3xl md:text-4xl lg:text-5xl mb-5"
+            style={{
+              fontFamily: "'Georgia', 'Times New Roman', serif",
+              fontWeight: 700,
+              color: '#1B1B18',
+              lineHeight: 1.12,
+              letterSpacing: '-0.02em',
+            }}
+          >
+            Everything you need to
+            <br />
+            <span style={{ color: '#6366f1' }}>master your nutrition</span>
+          </h2>
+          <p
+            className="text-base md:text-lg leading-relaxed"
+            style={{
+              color: '#6B6B63',
+              fontFamily: "'Georgia', serif",
+              lineHeight: 1.7,
+            }}
+          >
+            Powerful, intuitive tools designed to make healthy eating
+            simple, sustainable, and genuinely enjoyable.
           </p>
         </div>
 
-        {/* Features Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Bento Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {features.map((feature, index) => (
             <div
               key={index}
-              /*
-                ADD:
-                - stagger-item class for animation
-                - Opacity 0 to hide before animation
-                - isInView check to trigger animation
-              */
-              className={`p-8 rounded-2xl border-2 transition-all hover:shadow-xl hover:-translate-y-1 ${
-                isInView ? 'stagger-item' : 'opacity-0'
-              }`}
-              // Add inline style for animation delay (optional but nice)
-              style={{ 
-                borderColor: COLORS.gray[200],
-                backgroundColor: 'white',
-                animationDelay: `${index * 100}ms` // <-- Stagger delay
+              className={`group p-7 md:p-9 rounded-2xl transition-all duration-500 ease-out cursor-default ${feature.span}`}
+              style={{
+                backgroundColor: '#FFFFFF',
+                border: '1px solid rgba(0,0,0,0.06)',
+                opacity: isInView ? 1 : 0,
+                transform: isInView ? 'translateY(0)' : 'translateY(20px)',
+                transitionDelay: `${100 + index * 100}ms`,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.boxShadow =
+                  '0 12px 32px -6px rgba(99, 102, 241, 0.08)';
+                e.currentTarget.style.transform = 'translateY(-3px)';
+                e.currentTarget.style.borderColor = `${feature.accent}22`;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.boxShadow = 'none';
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.borderColor = 'rgba(0,0,0,0.06)';
               }}
             >
               {/* Icon */}
-              <div 
-                className="w-16 h-16 rounded-xl flex items-center justify-center mb-6"
-                style={{ 
-                  backgroundColor: feature.bgColor,
-                  color: feature.color
+              <div
+                className="w-14 h-14 rounded-xl flex items-center justify-center mb-5 transition-transform duration-300 group-hover:scale-105"
+                style={{
+                  backgroundColor: feature.accentBg,
+                  color: feature.accent,
                 }}
               >
                 {feature.icon}
               </div>
 
               {/* Title */}
-              <h3 
-                className="text-2xl font-bold mb-4"
-                style={{ color: COLORS.gray[900] }}
+              <h3
+                className="text-xl md:text-2xl mb-3"
+                style={{
+                  fontFamily: "'Georgia', serif",
+                  fontWeight: 700,
+                  color: '#1B1B18',
+                }}
               >
                 {feature.title}
               </h3>
 
               {/* Description */}
-              <p 
-                className="text-base leading-relaxed"
-                style={{ color: COLORS.gray[600] }}
+              <p
+                className="text-sm md:text-base leading-relaxed"
+                style={{
+                  color: '#6B6B63',
+                  fontFamily: "'Georgia', serif",
+                  lineHeight: 1.7,
+                }}
               >
                 {feature.description}
               </p>
@@ -136,4 +177,3 @@ const FeaturesSection = () => {
 };
 
 export default FeaturesSection;
-

@@ -2,11 +2,22 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
 import usePlanPersistence from './usePlanPersistence';
+import { persistRunId, getPendingRun, clearPendingRun } from '../services/runRecovery';
+import {
+    cachePlan,
+    getCachedPlan,
+    cacheLogs,
+    getCachedLogs,
+    cacheRunId,
+    getCachedRunState,
+    clearRunState
+} from '../services/localPlanCache';
 
 // --- CONFIGURATION ---
 const ORCHESTRATOR_TARGETS_API_URL = '/api/plan/targets';
 const ORCHESTRATOR_DAY_API_URL = '/api/plan/day';
 const ORCHESTRATOR_FULL_PLAN_API_URL = '/api/plan/generate-full-plan';
+const PLAN_STATUS_API_URL = '/api/plan/status';
 const NUTRITION_API_URL = '/api/nutrition-search';
 const MAX_SUBSTITUTES = 5;
 
@@ -84,6 +95,7 @@ const useAppLogic = ({
 }) => {
     // --- Refs ---
     const abortControllerRef = useRef(null);
+    const currentRunIdRef = useRef(null);
     
     // --- State ---
     const [results, setResults] = useState({});
@@ -94,12 +106,15 @@ const useAppLogic = ({
     const [error, setError] = useState(null);
     const [eatenMeals, setEatenMeals] = useState({});
     const [selectedDay, setSelectedDay] = useState(1);
-    const [diagnosticLogs, setDiagnosticLogs] = useState([]);
+    const [diagnosticLogs, setDiagnosticLogs] = useState(() => getCachedLogs());
     const [nutritionCache, setNutritionCache] = useState({});
     const [loadingNutritionFor, setLoadingNutritionFor] = useState(null);
     const [logHeight, setLogHeight] = useState(250);
     const [isLogOpen, setIsLogOpen] = useState(false);
-    const [failedIngredientsHistory, setFailedIngredientsHistory] = useState([]);
+    
+    // REPLACED: failedIngredientsHistory -> matchTraces
+    const [matchTraces, setMatchTraces] = useState([]);
+    
     const [statusMessage, setStatusMessage] = useState({ text: '', type: '' });
     
     // Macro Debug State
@@ -109,18 +124,36 @@ const useAppLogic = ({
       () => JSON.parse(localStorage.getItem('cheffy_show_macro_debug_log') ?? 'false')
     );
     
+    // Product Match Trace State (NEW FIX)
+    const [showProductMatchTrace, setShowProductMatchTrace] = useState(
+      () => JSON.parse(localStorage.getItem('cheffy_show_product_match_trace') ?? 'false')
+    );
+
     const [showOrchestratorLogs, setShowOrchestratorLogs] = useState(
       () => JSON.parse(localStorage.getItem('cheffy_show_orchestrator_logs') ?? 'true')
     );
-    const [showFailedIngredientsLogs, setShowFailedIngredientsLogs] = useState(
-      () => JSON.parse(localStorage.getItem('cheffy_show_failed_ingredients_logs') ?? 'true')
+    
+    // Legacy: Keeping for compatibility but superseding with showProductMatchTrace logic
+    const [showMatchTraceLogs, setShowMatchTraceLogs] = useState(
+      () => JSON.parse(localStorage.getItem('cheffy_show_match_trace_logs') ?? 'false')
     );
+
+    // [FIX] Ref for SSE closure to read current toggle value (Updated to use Product Match Trace)
+    const showProductMatchTraceRef = useRef(showProductMatchTrace);
+    useEffect(() => { 
+        showProductMatchTraceRef.current = showProductMatchTrace; 
+    }, [showProductMatchTrace]);
     
     const [generationStepKey, setGenerationStepKey] = useState(null);
     const [generationStatus, setGenerationStatus] = useState("Ready to generate plan."); 
 
     const [selectedMeal, setSelectedMeal] = useState(null);
-    const [useBatchedMode, setUseBatchedMode] = useState(true);
+    // useBatchedMode REMOVED — batched generation is now always enabled.
+
+    // --- AI Model Selection (persisted to localStorage) ---
+    const [selectedModel, setSelectedModel] = useState(
+      () => localStorage.getItem('cheffy_selected_model') || 'gpt-5.1'
+    );
 
     const [toasts, setToasts] = useState([]);
     const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -136,24 +169,184 @@ const useAppLogic = ({
         };
     }, []);
 
+    // --- PERSISTENCE FIX: Resume polling if a run was in-flight before refresh ---
+    useEffect(() => {
+        const { runId, state } = getCachedRunState();
+        if (!runId || !state) return;
+
+        // Only resume if we don't already have a plan loaded
+        if (mealPlan && mealPlan.length > 0) {
+            clearRunState();
+            return;
+        }
+        
+        
+        console.log(`[MOUNT] Found in-flight run ${runId} (state: ${state}). Resuming polling…`);
+        currentRunIdRef.current = runId;
+
+        // Fire-and-forget poll
+        (async () => {
+            try {
+                const recovered = await pollForCompletedPlan(runId);
+                if (recovered) {
+                    setMealPlan(recovered.mealPlan || []);
+                    setResults(recovered.results || {});
+                    setUniqueIngredients(recovered.uniqueIngredients || []);
+                    recalculateTotalCost(recovered.results || {});
+                    if (recovered.macroDebug) setMacroDebug(recovered.macroDebug);
+
+                    setGenerationStepKey('complete');
+                    setGenerationStatus('Plan recovered after refresh!');
+                    setError(null);
+
+                    cachePlan({
+                        mealPlan: recovered.mealPlan || [],
+                        results: recovered.results || {},
+                        uniqueIngredients: recovered.uniqueIngredients || [],
+                        formData: formData,
+                        nutritionalTargets: nutritionalTargets
+                    });
+
+                    if (planPersistence && planPersistence.autoSavePlan) {
+                        planPersistence.autoSavePlan({
+                            mealPlan: recovered.mealPlan || [],
+                            results: recovered.results || {},
+                            uniqueIngredients: recovered.uniqueIngredients || [],
+                            formData: formData,
+                            nutritionalTargets: nutritionalTargets
+                        }).catch(err => console.warn('[AUTO_SAVE] Post-refresh recovery save failed:', err.message));
+                    }
+
+                    showToast('Plan recovered after refresh!', 'success');
+                } else {
+                    setGenerationStatus('Previous generation could not be recovered. You can start a new one.');
+                    setGenerationStepKey(null);
+                }
+            } catch (err) {
+                console.error('[MOUNT] Poll recovery failed:', err);
+                setGenerationStatus('Previous generation could not be recovered.');
+                setGenerationStepKey(null);
+            } finally {
+                clearRunState();
+                setLoading(false);
+            }
+        })();
+
+        // Show loading state while polling
+        setLoading(true);
+        setGenerationStatus('Recovering plan from previous session…');
+        setGenerationStepKey('reconnecting');
+
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []); // Intentionally empty deps — runs once on mount only
+
+
+
+
+    // --- Mount-time run recovery (survives tab close / refresh) ---
+    useEffect(() => {
+        if (!isAuthReady || !userId || loading) return;
+
+        const pendingRun = getPendingRun();
+        if (!pendingRun) return;
+
+        console.log('[RECOVERY] Found pending run from previous session:', pendingRun.runId);
+
+        // Kick off polling in the background
+        const recover = async () => {
+            setLoading(true);
+            setGenerationStepKey('reconnecting');
+            setGenerationStatus('Resuming plan generation from previous session…');
+
+            try {
+                const recovered = await pollForCompletedPlan(pendingRun.runId);
+                if (recovered) {
+                    setMealPlan(recovered.mealPlan || []);
+                    setResults(recovered.results || {});
+                    setUniqueIngredients(recovered.uniqueIngredients || []);
+                    recalculateTotalCost(recovered.results || {});
+                    if (recovered.macroDebug) setMacroDebug(recovered.macroDebug);
+
+                    setGenerationStepKey('complete');
+                    setGenerationStatus('Plan recovered successfully!');
+                    setError(null);
+
+                    showToast('Plan recovered from previous session!', 'success');
+
+                    // Auto-save the recovered plan
+                    if (planPersistence && planPersistence.autoSavePlan) {
+                        try {
+                            await planPersistence.autoSavePlan({
+                                mealPlan: recovered.mealPlan || [],
+                                results: recovered.results || {},
+                                uniqueIngredients: recovered.uniqueIngredients || [],
+                                formData: formData,
+                                nutritionalTargets: nutritionalTargets
+                            });
+                        } catch (err) {
+                            console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
+                            showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
+                        }
+                    }
+                } else {
+                    console.warn('[RECOVERY] Polling timed out for pending run:', pendingRun.runId);
+                    setGenerationStepKey(null);
+                    setGenerationStatus('Ready to generate plan.');
+                }
+            } catch (err) {
+                console.error('[RECOVERY] Recovery failed:', err);
+                setError(null);
+                setGenerationStepKey(null);
+                setGenerationStatus('Ready to generate plan.');
+            } finally {
+                clearPendingRun();
+                setLoading(false);
+            }
+        };
+
+        recover();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isAuthReady, userId]);
+
     // --- Persist Log Visibility Preferences ---
     useEffect(() => {
       localStorage.setItem('cheffy_show_orchestrator_logs', JSON.stringify(showOrchestratorLogs));
     }, [showOrchestratorLogs]);
 
+    // Persistence for Product Match Trace (NEW)
     useEffect(() => {
-      localStorage.setItem('cheffy_show_failed_ingredients_logs', JSON.stringify(showFailedIngredientsLogs));
-    }, [showFailedIngredientsLogs]);
+        localStorage.setItem('cheffy_show_product_match_trace', JSON.stringify(showProductMatchTrace));
+        // Clear traces when disabled to clean up state immediately
+        if (!showProductMatchTrace) {
+            setMatchTraces([]);
+        }
+    }, [showProductMatchTrace]);
+
+    // Legacy: Persist showMatchTraceLogs instead of showFailedIngredientsLogs
+    useEffect(() => {
+      localStorage.setItem('cheffy_show_match_trace_logs', JSON.stringify(showMatchTraceLogs));
+    }, [showMatchTraceLogs]);
     
     // Macro Debug Log Persistence
     useEffect(() => {
       localStorage.setItem('cheffy_show_macro_debug_log', JSON.stringify(showMacroDebugLog));
     }, [showMacroDebugLog]);
 
-    // --- Base Helpers ---
+    // --- PERSISTENCE FIX: Persist diagnostic logs to sessionStorage ---
+    useEffect(() => {
+        if (diagnosticLogs.length > 0) {
+            cacheLogs(diagnosticLogs);
+        }
+    }, [diagnosticLogs]);
+
+    // Persist selected AI model
+    useEffect(() => {
+      localStorage.setItem('cheffy_selected_model', selectedModel);
+    }, [selectedModel]);
+
     const showToast = useCallback((message, type = 'info', duration = 3000) => {
-      const id = Date.now();
-      setToasts(prev => [...prev, { id, message, type, duration }]);
+        const id = Date.now();
+        setToasts([{ id, message, type, duration }]);
     }, []);
     
     const removeToast = useCallback((id) => {
@@ -187,9 +380,12 @@ const useAppLogic = ({
         showToast: showToast || (() => {}),
         setMealPlan: setMealPlan || (() => {}),
         setResults: setResults || (() => {}),
-        setUniqueIngredients: setUniqueIngredients || (() => {})
+        setUniqueIngredients: setUniqueIngredients || (() => {}),
+        recalculateTotalCost: recalculateTotalCost || (() => {}),
+        setFormData: setFormData || (() => {}),
+        setNutritionalTargets: setNutritionalTargets || (() => {}),
+        setSelectedDay: setSelectedDay || (() => {}),
     });
-    // --- End Plan Persistence Hook Call ---
 
     // --- Profile & Settings Handlers ---
     const handleLoadProfile = useCallback(async (silent = false) => {
@@ -222,7 +418,8 @@ const useAppLogic = ({
                     eatingOccasions: data.eatingOccasions || '3',
                     store: data.store || 'Woolworths',
                     costPriority: data.costPriority || 'Best Value',
-                    mealVariety: data.mealVariety || 'Balanced Variety'
+                    mealVariety: data.mealVariety || 'Balanced Variety',
+                    measurementUnits: data.measurementUnits || 'metric', // Load measurement units
                 });
                 
                 if (data.nutritionalTargets) {
@@ -261,8 +458,12 @@ const useAppLogic = ({
         try {
             const settingsData = {
                 showOrchestratorLogs: showOrchestratorLogs,
-                showFailedIngredientsLogs: showFailedIngredientsLogs,
+                showMatchTraceLogs: showMatchTraceLogs, // Legacy
                 showMacroDebugLog: showMacroDebugLog,
+                showProductMatchTrace: showProductMatchTrace, // ADDED
+                selectedModel: selectedModel,
+                theme: localStorage.getItem('cheffy-theme') || 'dark',
+                measurementUnits: formData.measurementUnits || 'metric', // Persist units in settings
                 lastUpdated: new Date().toISOString()
             };
 
@@ -272,7 +473,7 @@ const useAppLogic = ({
         } catch (error) {
             console.error("[SETTINGS] Error saving settings:", error);
         }
-    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, userId, db, isAuthReady]);
+    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, showProductMatchTrace, selectedModel, userId, db, isAuthReady, formData.measurementUnits]);
 
     const handleLoadSettings = useCallback(async () => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
@@ -286,15 +487,34 @@ const useAppLogic = ({
             if (settingsSnap.exists()) {
                 const data = settingsSnap.data();
                 setShowOrchestratorLogs(data.showOrchestratorLogs ?? true);
-                setShowFailedIngredientsLogs(data.showFailedIngredientsLogs ?? true);
+                
+                // UPDATED: Load showMatchTraceLogs, fallback to old key if missing, default to FALSE
+                setShowMatchTraceLogs(data.showMatchTraceLogs ?? data.showFailedIngredientsLogs ?? false);
+                
                 setShowMacroDebugLog(data.showMacroDebugLog ?? false);
+                setShowProductMatchTrace(data.showProductMatchTrace ?? false); // ADDED
+                
+                if (data.selectedModel) setSelectedModel(data.selectedModel);
+                
+                // Load measurement units from settings if available
+                if (data.measurementUnits) {
+                    setFormData(prev => ({ ...prev, measurementUnits: data.measurementUnits }));
+                }
+
+                // --- Theme Sync ---
+                const localTheme = localStorage.getItem('cheffy-theme');
+                if (!localTheme && data.theme) {
+                    localStorage.setItem('cheffy-theme', data.theme);
+                    document.documentElement.setAttribute('data-theme', data.theme);
+                }
+
                 console.log("[SETTINGS] Settings loaded successfully");
             }
             
         } catch (error) {
             console.error("[SETTINGS] Error loading settings:", error);
         }
-    }, [userId, db, isAuthReady]);
+    }, [userId, db, isAuthReady, setFormData]);
 
     const handleSaveProfile = useCallback(async (silent = false) => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
@@ -321,6 +541,7 @@ const useAppLogic = ({
                 store: formData.store,
                 costPriority: formData.costPriority,
                 mealVariety: formData.mealVariety,
+                measurementUnits: formData.measurementUnits || 'metric', // Save measurement units
                 nutritionalTargets: {
                     calories: nutritionalTargets.calories,
                     protein: nutritionalTargets.protein,
@@ -361,7 +582,7 @@ const useAppLogic = ({
         if (userId && !userId.startsWith('local_') && isAuthReady) {
             handleSaveSettings();
         }
-    }, [showOrchestratorLogs, showFailedIngredientsLogs, showMacroDebugLog, userId, isAuthReady, handleSaveSettings]);
+    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, showProductMatchTrace, userId, isAuthReady, handleSaveSettings, formData.measurementUnits]);
 
     useEffect(() => {
         if (userId && !userId.startsWith('local_') && isAuthReady && db) {
@@ -378,17 +599,67 @@ const useAppLogic = ({
       }
     }, [mealPlan, showToast]);
 
+    const getResponseErrorDetails = useCallback(async (response) => {
+        let errorMsg = `HTTP ${response.status}`;
+        try {
+            const clonedResponse = response.clone();
+            try {
+                const errorData = await clonedResponse.json();
+                errorMsg = errorData.message || JSON.stringify(errorData);
+            } catch (jsonErr) {
+                errorMsg = await response.text() || `HTTP ${response.status} - Could not read body`;
+            }
+        } catch (e) {
+            console.error('[ERROR] Could not read error response body:', e);
+            errorMsg = `HTTP ${response.status} - Could not read response body`;
+        }
+        return errorMsg;
+    }, []);
+
+    const pollForCompletedPlan = useCallback(async (runId) => {
+        if (!runId) return null;
+
+        const MAX_POLLS = 200;
+        const POLL_INTERVAL_MS = 3000;
+
+        setGenerationStatus('Connection lost — checking for completed plan…');
+        setGenerationStepKey('reconnecting');
+
+        for (let i = 0; i < MAX_POLLS; i++) {
+            try {
+                const res = await fetch(`${PLAN_STATUS_API_URL}?runId=${encodeURIComponent(runId)}`);
+                if (!res.ok) {
+                    console.warn(`[POLL] Status endpoint returned ${res.status}`);
+                    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+                    continue;
+                }
+                const data = await res.json();
+
+                if (data.status === 'complete' && data.payload) {
+                    return data.payload;
+                }
+                if (data.status === 'failed') {
+                    throw new Error(data.payload?.error || 'Plan generation failed on server');
+                }
+            } catch (err) {
+                console.warn(`[POLL] Poll attempt ${i + 1} error:`, err.message);
+            }
+            await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+        }
+        return null;
+    }, []);
+
     const handleGeneratePlan = useCallback(async (e) => {
         e.preventDefault();
         
-        // --- RECOMMENDED FIX: Abort any pending request ---
         if (abortControllerRef.current) {
             console.log('[GENERATE] Aborting previous request.');
             abortControllerRef.current.abort();
         }
+        clearPendingRun();
         abortControllerRef.current = new AbortController();
+        currentRunIdRef.current = null;
         const signal = abortControllerRef.current.signal;
-        // --- End Abort Fix ---
 
         setLoading(true);
         setError(null);
@@ -402,10 +673,13 @@ const useAppLogic = ({
         setMealPlan([]);
         setTotalCost(0);
         setEatenMeals({});
-        setFailedIngredientsHistory([]);
+        
+        // UPDATED: Reset matchTraces instead of failedIngredientsHistory
+        setMatchTraces([]);
+        
         setGenerationStepKey('targets');
         if (!isLogOpen) { setLogHeight(250); setIsLogOpen(true); }
-        setMacroDebug(null); // Macro Debug Reset
+        setMacroDebug(null);
 
         let targets;
 
@@ -431,7 +705,7 @@ const useAppLogic = ({
             if (err.name === 'AbortError') {
                 console.log('[GENERATE] Targets request aborted.');
                 setLoading(false);
-                return; // Exit gracefully
+                return;
             }
             console.error("Plan generation failed critically at Targets:", err);
             setError(`Critical failure: ${err.message}`);
@@ -443,126 +717,9 @@ const useAppLogic = ({
             return;
         }
 
-        if (!useBatchedMode) {
-            setGenerationStatus("Generating plan (per-day mode)...");
-            let accumulatedResults = {}; 
-            let accumulatedMealPlan = []; 
-            let accumulatedUniqueIngredients = new Map(); 
-
-            try {
-                const numDays = parseInt(formData.days, 10);
-                for (let day = 1; day <= numDays; day++) {
-                    setGenerationStatus(`Generating plan for Day ${day}/${numDays}...`);
-                    setGenerationStepKey('planning');
-                    
-                    let dailyFailedIngredients = [];
-                    let dayFetchError = null;
-
-                    try {
-                        const dayResponse = await fetch(`${ORCHESTRATOR_DAY_API_URL}?day=${day}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                            body: JSON.stringify({ formData, nutritionalTargets: targets }),
-                            signal: signal,
-                        });
-
-                        if (!dayResponse.ok) {
-                            const errorMsg = await getResponseErrorDetails(dayResponse);
-                            throw new Error(`Day ${day} request failed: ${errorMsg}`);
-                        }
-
-                        const reader = dayResponse.body.getReader();
-                        const decoder = new TextDecoder();
-                        let buffer = '';
-                        let dayDataReceived = false;
-
-                        while (true) {
-                            const { value, done } = await reader.read();
-                            if (done) {
-                                if (!dayDataReceived && !dayFetchError) {
-                                    throw new Error(`Day ${day} stream ended unexpectedly without data.`);
-                                }
-                                break;
-                            }
-                            
-                            const { events, newBuffer } = processSseChunk(value, buffer, decoder);
-                            buffer = newBuffer;
-
-                            for (const event of events) {
-                                const eventData = event.data;
-                                switch (event.eventType) {
-                                    case 'message':
-                                    case 'log_message':
-                                        setDiagnosticLogs(prev => [...prev, eventData]);
-                                        if (eventData?.tag === 'MARKET_RUN' || eventData?.tag === 'CHECKLIST' || eventData?.tag === 'HTTP') {
-                                            setGenerationStepKey('market');
-                                        } else if (eventData?.tag === 'LLM' || eventData?.tag === 'LLM_PROMPT') {
-                                            setGenerationStepKey('planning');
-                                        }
-                                        break;
-                                    case 'error':
-                                        dayFetchError = eventData.message || 'An error occurred during generation.';
-                                        setError(prevError => prevError ? `${prevError}\nDay ${day}: ${dayFetchError}` : `Day ${day}: ${dayFetchError}`);
-                                        setGenerationStepKey('error');
-                                        break;
-                                    case 'finalData':
-                                        dayDataReceived = true;
-                                        if (eventData.mealPlanForDay) accumulatedMealPlan.push(eventData.mealPlanForDay);
-                                        if (eventData.dayResults) accumulatedResults = { ...accumulatedResults, ...eventData.dayResults };
-                                        if (eventData.dayUniqueIngredients) {
-                                            eventData.dayUniqueIngredients.forEach(ing => {
-                                                if (ing && ing.originalIngredient) accumulatedUniqueIngredients.set(ing.originalIngredient, { ...(accumulatedUniqueIngredients.get(ing.originalIngredient) || {}), ...ing });
-                                            });
-                                        }
-                                        setMealPlan([...accumulatedMealPlan]);
-                                        setResults({ ...accumulatedResults }); 
-                                        setUniqueIngredients(Array.from(accumulatedUniqueIngredients.values()));
-                                        recalculateTotalCost(accumulatedResults);
-                                        break;
-                                    case 'phase:start':
-                                    case 'ingredient:found':
-                                    case 'ingredient:failed':
-                                        setDiagnosticLogs(prev => [...prev, { timestamp: new Date().toISOString(), level: 'DEBUG', tag: 'SSE_UNHANDLED', message: `Received unhandled v2 event '${event.eventType}' in v1 loop.`}]);
-                                        break;
-                                }
-                            }
-                            if (dayFetchError) break;
-                        }
-                    } catch (dayError) {
-                        if (dayError.name === 'AbortError') {
-                            console.log(`[GENERATE] Day ${day} request aborted.`);
-                            return; // Exit gracefully
-                        }
-                        console.error(`Error processing day ${day}:`, dayError);
-                        setError(prevError => prevError ? `${prevError}\n${dayError.message}` : dayError.message); 
-                        setGenerationStepKey('error');
-                        setDiagnosticLogs(prev => [...prev, { timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND', message: dayError.message }]);
-                    } finally {
-                        if (dailyFailedIngredients.length > 0) setFailedIngredientsHistory(prev => [...prev, ...dailyFailedIngredients]);
-                    }
-                }
-
-                if (!error) {
-                    setGenerationStatus(`Plan generation finished.`);
-                    setGenerationStepKey('finalizing');
-                    setTimeout(() => setGenerationStepKey('complete'), 1500);
-                } else {
-                    setGenerationStepKey('error');
-                }
-            } catch (err) {
-                 console.error("Per-day plan generation failed critically:", err);
-                 setError(`Critical failure: ${err.message}`);
-                 setGenerationStepKey('error');
-            } finally {
-                 setTimeout(() => setLoading(false), 2000);
-            }
-
-        } else {
-            setGenerationStatus("Generating full plan (batched mode)...");
+        setGenerationStatus("Generating full plan...");
             
             try {
-                // console.log('[DEBUG] Starting batched plan generation...'); // Diagnostic log removed for cleanup
-                
                 const planResponse = await fetch(ORCHESTRATOR_FULL_PLAN_API_URL, {
                     method: 'POST',
                     headers: { 
@@ -571,26 +728,25 @@ const useAppLogic = ({
                     },
                     body: JSON.stringify({
                         formData,
-                        nutritionalTargets: targets
+                        nutritionalTargets: targets,
+                        preferredModel: selectedModel
                     }),
                     signal: signal,
                 });
 
-                // console.log('[DEBUG] Fetch completed, status:', planResponse.status, 'ok:', planResponse.ok); // Diagnostic log removed for cleanup
-
                 if (!planResponse.ok) {
-                    // --- FIXED ERROR HANDLING (Alternative Fix: Clone/Text/JSON) ---
                     const errorMsg = await getResponseErrorDetails(planResponse);
                     throw new Error(`Full plan request failed (${planResponse.status}): ${errorMsg}`);
-                    // --- END FIXED ERROR HANDLING ---
                 }
 
-                // console.log('[DEBUG] About to get reader from body...'); // Diagnostic log removed for cleanup
-                // console.log('[DEBUG] planResponse.body exists:', !!planResponse.body); // Diagnostic log removed for cleanup
+                const headerRunId = planResponse.headers.get('X-Cheffy-Run-Id');
+                if (headerRunId) {
+                    currentRunIdRef.current = headerRunId;
+                    cacheRunId(headerRunId, 'generating');
+                    console.log('[GENERATE] Got run_id from header:', headerRunId);
+                }
                 
                 const reader = planResponse.body.getReader();
-                // console.log('[DEBUG] Reader obtained successfully'); // Diagnostic log removed for cleanup
-                
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let planComplete = false;
@@ -616,6 +772,13 @@ const useAppLogic = ({
                                 setDiagnosticLogs(prev => [...prev, eventData]);
                                 break;
                             
+                            case 'plan:start':
+                                if (eventData.run_id) {
+                                    currentRunIdRef.current = eventData.run_id;
+                                    cacheRunId(eventData.run_id, 'generating');
+                                }
+                                break;
+                            
                             case 'phase:start':
                                 const phaseMap = {
                                     'meals': 'planning',
@@ -639,14 +802,19 @@ const useAppLogic = ({
                                     [eventData.key]: eventData.data
                                 }));
                                 break;
+                                
+                            // UPDATED: Handle new match_trace event with NEW toggle check
+                            case 'ingredient:match_trace':
+                                // Check the new toggle ref to control collection
+                                if (eventData.trace && showProductMatchTraceRef.current) {
+                                    setMatchTraces(prev => [...prev, eventData.trace]);
+                                }
+                                break;
 
                             case 'ingredient:failed':
-                                const failedItem = {
-                                    timestamp: new Date().toISOString(),
-                                    originalIngredient: eventData.key,
-                                    error: eventData.reason,
-                                };
-                                setFailedIngredientsHistory(prev => [...prev, failedItem]);
+                                // Removed setFailedIngredientsHistory() call as that state is gone.
+                                // We rely on match_trace for history now.
+                                // Still updating results to show failure status in the UI lists.
                                 setResults(prev => ({
                                     ...prev,
                                     [eventData.key]: {
@@ -662,12 +830,12 @@ const useAppLogic = ({
 
                             case 'plan:complete':
                                 planComplete = true;
+                                clearPendingRun();
                                 setMealPlan(eventData.mealPlan || []);
                                 setResults(eventData.results || {});
                                 setUniqueIngredients(eventData.uniqueIngredients || []);
                                 recalculateTotalCost(eventData.results || {});
                                 
-                                // Capture Macro Debug Data
                                 if (eventData.macroDebug) {
                                     setMacroDebug(eventData.macroDebug);
                                 }
@@ -683,10 +851,31 @@ const useAppLogic = ({
                                 
                                 setTimeout(() => {
                                   setShowSuccessModal(true);
-                                  setTimeout(() => {
-                                    setShowSuccessModal(false);
-                                  }, 2500);
                                 }, 500);
+
+                                if (planPersistence && planPersistence.autoSavePlan) {
+                                    try {
+                                        await planPersistence.autoSavePlan({
+                                            mealPlan: eventData.mealPlan || [],
+                                            results: eventData.results || {},
+                                            uniqueIngredients: eventData.uniqueIngredients || [],
+                                            formData: formData,
+                                            nutritionalTargets: nutritionalTargets
+                                        });
+                                    } catch (err) {
+                                        console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
+                                        showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
+                                    }
+                                }
+
+                                cachePlan({
+                                    mealPlan: eventData.mealPlan || [],
+                                    results: eventData.results || {},
+                                    uniqueIngredients: eventData.uniqueIngredients || [],
+                                    formData: formData,
+                                    nutritionalTargets: nutritionalTargets
+                                });
+                                clearRunState();
                                 break;
 
                             case 'error':
@@ -698,41 +887,88 @@ const useAppLogic = ({
             } catch (err) {
                 if (err.name === 'AbortError') {
                     console.log('[GENERATE] Batched request aborted.');
-                    return; // Exit gracefully
+                    return;
                 }
-                
+
+                const isStreamInterrupt = (
+                    err instanceof TypeError ||
+                    /load failed|network|failed to fetch|aborted|readable/i.test(err.message)
+                );
+
+                if (isStreamInterrupt && currentRunIdRef.current) {
+                    console.warn('[GENERATE] Stream interrupted, attempting recovery via polling...', err.message);
+                    cacheRunId(currentRunIdRef.current, 'polling');
+                    setDiagnosticLogs(prev => [...prev, {
+                        timestamp: new Date().toISOString(), level: 'WARN', tag: 'FRONTEND',
+                        message: `Stream interrupted: ${err.message}. Polling for server-side result…`
+                    }]);
+
+                    try {
+                        const recovered = await pollForCompletedPlan(currentRunIdRef.current);
+                        if (recovered) {
+                            clearPendingRun();
+                            setMealPlan(recovered.mealPlan || []);
+                            setResults(recovered.results || {});
+                            setUniqueIngredients(recovered.uniqueIngredients || []);
+                            recalculateTotalCost(recovered.results || {});
+                            if (recovered.macroDebug) setMacroDebug(recovered.macroDebug);
+
+                            setGenerationStepKey('complete');
+                            setGenerationStatus('Plan recovered successfully!');
+                            setError(null);
+
+                            setPlanStats([
+                                { label: 'Days', value: formData.days, color: '#4f46e5' },
+                                { label: 'Meals', value: recovered.mealPlan?.length * (parseInt(formData.eatingOccasions) || 3), color: '#10b981' },
+                                { label: 'Items', value: recovered.uniqueIngredients?.length || 0, color: '#f59e0b' },
+                            ]);
+
+                            showToast('Plan recovered after connection interruption!', 'success');
+                            
+                            if (planPersistence && planPersistence.autoSavePlan) {
+                                try {
+                                    await planPersistence.autoSavePlan({
+                                        mealPlan: recovered.mealPlan || [],
+                                        results: recovered.results || {},
+                                        uniqueIngredients: recovered.uniqueIngredients || [],
+                                        formData: formData,
+                                        nutritionalTargets: nutritionalTargets
+                                    });
+                                } catch (err) {
+                                    console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
+                                    showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
+                                }
+                            }
+
+                            cachePlan({
+                                mealPlan: recovered.mealPlan || [],
+                                results: recovered.results || {},
+                                uniqueIngredients: recovered.uniqueIngredients || [],
+                                        formData: formData,
+                                        nutritionalTargets: nutritionalTargets
+                            });
+                            clearRunState();
+                            return;
+                        }
+                    } catch (pollErr) {
+                        console.error('[GENERATE] Recovery polling failed:', pollErr);
+                    }
+                }
+
+                clearPendingRun();
                 console.error("Batched plan generation failed critically:", err);
                 setError(`Critical failure: ${err.message}`);
                 setGenerationStepKey('error');
+                clearRunState();
                 setDiagnosticLogs(prev => [...prev, {
-                    timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND', message: `Critical failure: ${err.message}`
+                    timestamp: new Date().toISOString(), level: 'CRITICAL', tag: 'FRONTEND',
+                    message: `Critical failure: ${err.message}`
                 }]);
             } finally {
                  setTimeout(() => setLoading(false), 2000);
             }
-        }
-    }, [formData, isLogOpen, recalculateTotalCost, useBatchedMode, showToast, nutritionalTargets.calories, error]);
-
-    // --- NEW HELPER FUNCTION for robust error parsing ---
-    const getResponseErrorDetails = useCallback(async (response) => {
-        let errorMsg = `HTTP ${response.status}`;
-        try {
-            // Clone the response so we can safely read the body without disturbing the stream
-            const clonedResponse = response.clone();
-            try {
-                // Attempt to read as JSON first
-                const errorData = await clonedResponse.json();
-                errorMsg = errorData.message || JSON.stringify(errorData);
-            } catch (jsonErr) {
-                // If JSON parsing fails, read the raw text
-                errorMsg = await response.text() || `HTTP ${response.status} - Could not read body`;
-            }
-        } catch (e) {
-            console.error('[ERROR] Could not read error response body:', e);
-            errorMsg = `HTTP ${response.status} - Could not read response body`;
-        }
-        return errorMsg;
-    }, []);
+        
+    }, [formData, isLogOpen, recalculateTotalCost, selectedModel, showToast, nutritionalTargets, error, pollForCompletedPlan, planPersistence, getResponseErrorDetails]);
 
     const handleFetchNutrition = useCallback(async (product) => {
         if (!product || !product.url || nutritionCache[product.url]) { return; }
@@ -767,38 +1003,76 @@ const useAppLogic = ({
         });
     }, [recalculateTotalCost]); 
 
-    const handleQuantityChange = useCallback((key, delta) => {
-        setResults(prev => {
-            if (!prev[key]) {
-                console.error(`[handleQuantityChange] Error: Ingredient key "${key}" not found.`);
-                return prev;
-            }
-            const currentQty = prev[key].userQuantity || 1; 
-            const newQty = Math.max(1, currentQty + delta); 
-            const updatedItem = { ...prev[key], userQuantity: newQty };
-            const newResults = { ...prev, [key]: updatedItem };
-            recalculateTotalCost(newResults); 
-            return newResults;
-        });
-    }, [recalculateTotalCost]); 
+    const handleQuantityChange = useCallback((key, newQuantity) => {
+    setResults(prev => {
+        if (!prev[key]) {
+            console.error(`[handleQuantityChange] Error: Ingredient key "${key}" not found.`);
+            return prev;
+        }
+        const safeQty = Math.max(1, newQuantity);
+        const updatedItem = { ...prev[key], userQuantity: safeQty };
+        const newResults = { ...prev, [key]: updatedItem };
+        recalculateTotalCost(newResults); 
+        return newResults;
+    });
+}, [recalculateTotalCost]); 
 
-    const handleDownloadFailedLogs = useCallback(() => {
-        if (failedIngredientsHistory.length === 0) return;
-        let logContent = "Failed Ingredient History\n==========================\n\n";
-        failedIngredientsHistory.forEach((item, index) => {
-            logContent += `Failure ${index + 1}:\nTimestamp: ${new Date(item.timestamp).toLocaleString()}\nIngredient: ${item.originalIngredient}\nTight Query: ${item.tightQuery || 'N/A'}\nNormal Query: ${item.normalQuery || 'N/A'}\nWide Query: ${item.wideQuery || 'N/A'}\n${item.error ? `Error: ${item.error}\n` : ''}\n`;
-        });
-        const blob = new Blob([logContent], { type: 'text/plain;charset=utf-8' });
+    // REPLACED: handleDownloadFailedLogs -> handleDownloadMatchTraceReport
+    const handleDownloadMatchTraceReport = useCallback(() => {
+        if (matchTraces.length === 0) return;
+        
+        let output = '';
+        output += '═══════════════════════════════════════════════════════\n';
+        output += '  PRODUCT MATCH TRACE REPORT\n';
+        output += `  Generated: ${new Date().toISOString()}\n`;
+        output += `  Total: ${matchTraces.length}\n`;
+        output += `  Success: ${matchTraces.filter(t => t.outcome === 'success').length}\n`;
+        output += `  Failed: ${matchTraces.filter(t => t.outcome === 'failed').length}\n`;
+        output += '═══════════════════════════════════════════════════════\n\n';
+        
+        for (const trace of matchTraces) {
+            const icon = trace.outcome === 'success' ? '[OK]' : trace.outcome === 'failed' ? '[FAIL]' : '[ERR]';
+            output += `${icon} ${trace.ingredient}\n`;
+            output += '-'.repeat(55) + '\n';
+            output += `  Queries: T="${trace.queries.tight || 'N/A'}" N="${trace.queries.normal || 'N/A'}" W="${trace.queries.wide || 'N/A'}"\n`;
+            output += `  Required: [${trace.validationRules.requiredWords.join(', ')}]\n`;
+            output += `  Negative: [${trace.validationRules.negativeKeywords.join(', ')}]\n`;
+            output += `  Categories: [${trace.validationRules.allowedCategories.join(', ')}]\n`;
+            
+            for (const attempt of trace.attempts) {
+                output += `\n  [${attempt.status}] ${attempt.queryType.toUpperCase()} → "${attempt.queryString}"\n`;
+                output += `    Raw: ${attempt.rawCount} | Pass: ${attempt.passCount} | Best: ${attempt.bestScore}\n`;
+                
+                for (const raw of attempt.rawResults) {
+                    output += `      • "${raw.name}" ($${raw.price || '?'})\n`;
+                }
+                for (const scored of attempt.scoredResults) {
+                    output += `      ★ "${scored.name}" score=${scored.score}\n`;
+                }
+                for (const rej of attempt.rejections) {
+                    output += `      ✗ "${rej.name}" → ${rej.reason}\n`;
+                }
+            }
+            
+            if (trace.selection) {
+                output += `\n  ► SELECTED: "${trace.selection.productName}" score=${trace.selection.score || 'N/A'} via ${trace.selection.viaQueryType}\n`;
+            } else if (trace.outcome === 'failed') {
+                output += `\n  ► FAILED: ${trace.failureReason || 'No match'}\n`;
+            }
+            output += `  Duration: ${trace.durationMs}ms\n\n`;
+        }
+        
+        const blob = new Blob([output], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        link.download = `cheffy_failed_ingredients_${timestamp}.txt`;
+        link.download = `cheffy_match_trace_${timestamp}.txt`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-    }, [failedIngredientsHistory]); 
+    }, [matchTraces]);
 
     const handleDownloadLogs = useCallback(() => {
         if (!diagnosticLogs || diagnosticLogs.length === 0) return;
@@ -876,7 +1150,8 @@ const useAppLogic = ({
                     trialStartDate: trialStartDate.toISOString(),
                     trialEndDate: trialEndDate.toISOString(),
                     accountStatus: 'trial',
-                    appId: appId
+                    appId: appId,
+                    profileSetupComplete: false
                 });
                 console.log("[AUTH] User profile saved to Firestore");
             }
@@ -937,7 +1212,7 @@ const useAppLogic = ({
                 activityLevel: 'moderate', goal: 'cut_moderate', dietary: 'None', 
                 days: 7, store: 'Woolworths', eatingOccasions: '3', 
                 costPriority: 'Best Value', mealVariety: 'Balanced Variety', 
-                cuisine: '', bodyFat: '' 
+                cuisine: '', bodyFat: '', measurementUnits: 'metric'
             });
             setNutritionalTargets({ calories: 0, protein: 0, fat: 0, carbs: 0 });
             
@@ -961,7 +1236,6 @@ const useAppLogic = ({
     const categorizedResults = useMemo(() => {
         const groups = {};
         Object.entries(results || {}).forEach(([normalizedKey, item]) => {
-            // FIX: Remove overly restrictive 'source' filter to display all ingredients.
             if (item && item.originalIngredient) {
                 const category = item.category || 'Uncategorized';
                 if (!groups[category]) groups[category] = [];
@@ -1005,14 +1279,18 @@ const useAppLogic = ({
         loadingNutritionFor,
         logHeight,
         isLogOpen,
-        failedIngredientsHistory,
+        // REPLACED: failedIngredientsHistory -> matchTraces
+        matchTraces,
         statusMessage,
         showOrchestratorLogs,
-        showFailedIngredientsLogs,
+        // REPLACED: showFailedIngredientsLogs -> showMatchTraceLogs
+        showMatchTraceLogs,
+        // NEW: showProductMatchTrace
+        showProductMatchTrace,
         generationStepKey,
         generationStatus,
         selectedMeal,
-        useBatchedMode,
+        selectedModel,
         toasts,
         showSuccessModal,
         planStats,
@@ -1027,10 +1305,13 @@ const useAppLogic = ({
         setLogHeight,
         setIsLogOpen,
         setShowOrchestratorLogs,
-        setShowFailedIngredientsLogs,
+        // REPLACED: setShowFailedIngredientsLogs -> setShowMatchTraceLogs
+        setShowMatchTraceLogs,
+        // NEW: setShowProductMatchTrace
+        setShowProductMatchTrace,
         setShowMacroDebugLog,
         setSelectedMeal,
-        setUseBatchedMode,
+        setSelectedModel,
         setShowSuccessModal,
         
         // Handlers
@@ -1045,7 +1326,8 @@ const useAppLogic = ({
         handleFetchNutrition,
         handleSubstituteSelection,
         handleQuantityChange,
-        handleDownloadFailedLogs,
+        // REPLACED: handleDownloadFailedLogs -> handleDownloadMatchTraceReport
+        handleDownloadMatchTraceReport,
         handleDownloadLogs,
         handleDownloadMacroDebugLogs,
         handleSignUp,
@@ -1059,6 +1341,7 @@ const useAppLogic = ({
         handleSavePlan: planPersistence.savePlan,
         handleLoadPlan: planPersistence.loadPlan,
         handleDeletePlan: planPersistence.deletePlan,
+        handleRenamePlan: planPersistence.renamePlan,
         savingPlan: planPersistence.savingPlan,
         loadingPlan: planPersistence.loadingPlan,
         handleListPlans: planPersistence.listPlans,

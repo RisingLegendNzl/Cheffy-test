@@ -39,7 +39,7 @@ module.exports = async (req, res) => {
         }
 
         // Validate action type
-        const validActions = ['save', 'load', 'list', 'delete', 'set-active'];
+        const validActions = ['save', 'load', 'list', 'delete', 'set-active', 'rename'];
         if (!validActions.includes(action)) {
             return res.status(400).json({
                 error: 'Invalid action',
@@ -67,6 +67,7 @@ module.exports = async (req, res) => {
             case 'load':
             case 'delete':
             case 'set-active':
+            case 'rename':
                 if (!planId) {
                     return res.status(400).json({
                         error: 'Missing planId',

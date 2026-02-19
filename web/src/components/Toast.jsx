@@ -115,4 +115,9 @@ export const ToastContainer = ({ toasts, onRemoveToast }) => {
   );
 };
 
-export default Toast;
+// FIX: Default export changed to ToastContainer.
+// MainApp imports via `import ToastContainer from './Toast'` (default import),
+// so the default export MUST be ToastContainer for toasts to render properly.
+// The individual Toast component remains available as a named export if needed.
+export { Toast };
+export default ToastContainer;

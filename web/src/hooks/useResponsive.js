@@ -1,6 +1,5 @@
 // web/src/hooks/useResponsive.js
-import { useState, useEffect, useRef }
-from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BREAKPOINTS } from '../constants';
 
 /**
@@ -86,6 +85,8 @@ export const useScrollPosition = () => {
 /**
  * Custom hook for detecting if element is in viewport
  *
+ * FIX: Properly handles null refs to prevent "Xt.current is null" errors
+ * 
  * @param {React.RefObject} ref - The ref of the element to observe
  * @param {object} options - IntersectionObserver options (e.g., threshold, rootMargin)
  * @param {boolean} options.triggerOnce - If true, stops observing after in view
@@ -97,21 +98,27 @@ export const useInView = (ref, options = { triggerOnce: true, threshold: 0.1 }) 
   const [hasTriggered, setHasTriggered] = useState(false);
 
   useEffect(() => {
-    // Ensure ref.current is valid
+    // CRITICAL FIX: Early return if ref or ref.current is null
+    // This prevents "null is not an object" errors
+    if (!ref || !ref.current) {
+      return;
+    }
+
+    // Store the current element in a variable
     const element = ref.current;
-    if (!element) return;
 
     // Don't run observer if it has already triggered and triggerOnce is true
-    if (hasTriggered && options.triggerOnce) return;
+    if (hasTriggered && options.triggerOnce) {
+      return;
+    }
 
+    // Create the IntersectionObserver
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
           setIsInView(true);
           if (options.triggerOnce) {
             setHasTriggered(true);
-            // Stop observing
-            observer.unobserve(element);
           }
         } else {
           // Only set to false if not triggerOnce
@@ -121,22 +128,24 @@ export const useInView = (ref, options = { triggerOnce: true, threshold: 0.1 }) 
         }
       },
       {
-        threshold: options.threshold,
-        rootMargin: options.rootMargin,
+        threshold: options.threshold || 0.1,
+        rootMargin: options.rootMargin || '0px',
       }
     );
 
+    // Start observing
     observer.observe(element);
 
+    // Cleanup function
     return () => {
+      // Use the stored element reference for cleanup
       if (element) {
         observer.unobserve(element);
       }
     };
-  }, [ref, options, hasTriggered]); // Rerun if ref or options change
+  }, [ref, options.threshold, options.triggerOnce, options.rootMargin, hasTriggered]);
 
   return isInView;
 };
 
 export default useResponsive;
-
