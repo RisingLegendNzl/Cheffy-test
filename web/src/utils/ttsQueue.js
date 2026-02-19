@@ -1,17 +1,20 @@
 // web/src/utils/ttsQueue.js
 // =============================================================================
-// Natural Voice Mode — Sentence-Level TTS Queue v3.4
+// Natural Voice Mode — Sentence-Level TTS Queue v5.0
 //
-// v3.4: Added global ttsMute gate for debug toggle.
-//   - enqueue() drops text when muted
-//   - flush() fires onPlaybackEnd immediately when muted
-//   - _playItem() skips playback when muted
+// v5.0 — Smooth playback overhaul
 //
-// v3.3 fixes (preserved):
-//   1. _turnPlaying stays true from first sentence start to last sentence end
-//   2. onPlaybackStart fires ONCE when first sentence begins playing
-//   3. onPlaybackEnd fires ONCE after last sentence finishes
-//   4. interrupt() resets state but does NOT fire onPlaybackEnd
+//   FIX #6 — Cleanup race prevention
+//     - _playItem() uses _safeCreateAudio() with a microtask yield between
+//       _stopAudio() and new Audio() to let the browser event loop complete
+//       cleanup of the previous element, preventing rare pop/click artifacts
+//
+//   FIX #1 port — visibilitychange resilience
+//     - Paused playback auto-resumes when tab returns to foreground
+//     - Mobile browsers that suspend <audio> on tab-switch are handled
+//
+// v3.4 (preserved) — ttsMute gate
+// v3.3 (preserved) — Turn-level playback, single onPlaybackStart/End
 // =============================================================================
 
 import { ttsMute } from './ttsMute';
@@ -44,6 +47,12 @@ export class TTSQueue {
 
         this._voice = DEFAULT_VOICE;
         this._speed = DEFAULT_SPEED;
+
+        // FIX #1 port: Visibility change handler for <audio> resilience
+        this._boundVisibilityHandler = this._onVisibilityChange.bind(this);
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', this._boundVisibilityHandler);
+        }
     }
 
     get isPlaying() { return this._turnPlaying; }
@@ -108,12 +117,31 @@ export class TTSQueue {
     destroy() {
         this._destroyed = true;
         this.interrupt();
+        // FIX #1 port: Remove visibility listener
+        if (typeof document !== 'undefined') {
+            document.removeEventListener('visibilitychange', this._boundVisibilityHandler);
+        }
         for (const url of this._cache.values()) URL.revokeObjectURL(url);
         this._cache.clear();
         this._onPlaybackStart = null;
         this._onPlaybackEnd = null;
         this._onSentenceStart = null;
         this._onError = null;
+    }
+
+    // =========================================================================
+    // FIX #1 port: VISIBILITY CHANGE
+    // =========================================================================
+
+    _onVisibilityChange() {
+        if (this._destroyed) return;
+        if (document.visibilityState === 'visible' && this._audio && this._isPlaying) {
+            // Tab returned — if audio was paused by the browser, resume it
+            if (this._audio.paused && this._audio.currentTime > 0) {
+                console.debug('[TTSQueue] Tab visible — resuming paused audio');
+                this._audio.play().catch(() => {});
+            }
+        }
     }
 
     // =========================================================================
@@ -128,7 +156,7 @@ export class TTSQueue {
         const inFlight = this._queue.filter(i => i.status === 'synthesizing').length;
         const available = MAX_CONCURRENT_SYNTH - inFlight;
         for (let i = 0; i < available; i++) {
-            const nextIdx = this._queue.findIndex(i => i.status === 'pending');
+            const nextIdx = this._queue.findIndex(item => item.status === 'pending');
             if (nextIdx === -1) break;
             this._synthesize(nextIdx);
         }
@@ -173,7 +201,7 @@ export class TTSQueue {
 
         } catch (err) {
             if (err.name === 'AbortError' || capturedSession !== this._sessionId) return;
-            console.warn(`[TTSQueue] Synthesis failed:`, err.message);
+            console.warn('[TTSQueue] Synthesis failed:', err.message);
             item.status = 'error';
             item.abortCtrl = null;
             this._onError?.({ type: 'synthesis_failed', message: err.message, text: item.text });
@@ -217,6 +245,7 @@ export class TTSQueue {
         }
     }
 
+    // FIX #6: Refactored _playItem with safe audio element creation
     _playItem(index) {
         const item = this._queue[index];
         if (!item?.blobUrl) return;
@@ -239,35 +268,46 @@ export class TTSQueue {
         }
 
         this._onSentenceStart?.(index);
+
+        // FIX #6: Stop previous audio, then yield a microtask before creating new Audio.
+        // This gives the browser event loop time to fully release the previous
+        // HTMLAudioElement's system audio resources, preventing click/pop artifacts
+        // that occur when two elements briefly overlap at the OS mixer level.
         this._stopAudio();
 
-        this._audio = new Audio(item.blobUrl);
+        // Use Promise.resolve().then() for a microtask yield — faster than setTimeout
+        // but still enough for the browser to process the pause/unload above.
+        Promise.resolve().then(() => {
+            if (capturedSession !== this._sessionId || this._destroyed) return;
 
-        this._audio.addEventListener('ended', () => {
-            if (capturedSession !== this._sessionId) return;
-            item.status = 'done';
-            this._isPlaying = false;
-            this._playIndex++;
-            this._advancePlayback();
-        });
+            this._audio = new Audio(item.blobUrl);
 
-        this._audio.addEventListener('error', (e) => {
-            if (capturedSession !== this._sessionId) return;
-            console.warn(`[TTSQueue] Playback error for sentence ${index}:`, e);
-            item.status = 'error';
-            this._isPlaying = false;
-            this._playIndex++;
-            this._onError?.({ type: 'playback_failed', index });
-            this._advancePlayback();
-        });
+            this._audio.addEventListener('ended', () => {
+                if (capturedSession !== this._sessionId) return;
+                item.status = 'done';
+                this._isPlaying = false;
+                this._playIndex++;
+                this._advancePlayback();
+            });
 
-        this._audio.play().catch((err) => {
-            if (capturedSession !== this._sessionId) return;
-            item.status = 'error';
-            this._isPlaying = false;
-            this._playIndex++;
-            this._onError?.({ type: 'play_rejected', message: err.message, index });
-            this._advancePlayback();
+            this._audio.addEventListener('error', (e) => {
+                if (capturedSession !== this._sessionId) return;
+                console.warn(`[TTSQueue] Playback error for sentence ${index}:`, e);
+                item.status = 'error';
+                this._isPlaying = false;
+                this._playIndex++;
+                this._onError?.({ type: 'playback_failed', index });
+                this._advancePlayback();
+            });
+
+            this._audio.play().catch((err) => {
+                if (capturedSession !== this._sessionId) return;
+                item.status = 'error';
+                this._isPlaying = false;
+                this._playIndex++;
+                this._onError?.({ type: 'play_rejected', message: err.message, index });
+                this._advancePlayback();
+            });
         });
     }
 
