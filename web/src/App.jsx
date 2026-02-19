@@ -353,10 +353,7 @@ const App = () => {
                     setShowMacroDebugLog={logic.setShowMacroDebugLog || (() => {})}
                     handleDownloadMacroDebugLogs={logic.handleDownloadMacroDebugLogs || (() => {})}
 
-                    // Cheffy TTS (with defensive defaults)
-                    cheffyTTSDisabled={logic.cheffyTTSDisabled ?? false}
-                    handleToggleCheffyTTS={logic.handleToggleCheffyTTS || (() => {})}
-                    
+
                     // Generation State
                     generationStepKey={logic.generationStepKey}
                     generationStatus={logic.generationStatus}

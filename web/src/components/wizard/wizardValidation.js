@@ -70,4 +70,3 @@ export const isStepValid = (stepId, formData) => {
   if (!validator) return true;
   return Object.keys(validator(formData)).length === 0;
 };
-};

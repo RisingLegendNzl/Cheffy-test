@@ -38,4 +38,3 @@ export const WIZARD_STEPS = [
     accentColor: '#f43f5e', // rose
   },
 ];
-];

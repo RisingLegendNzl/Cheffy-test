@@ -122,10 +122,6 @@ const MainApp = ({
     setShowMacroDebugLog = () => {},
     handleDownloadMacroDebugLogs = () => {},
 
-    // Cheffy TTS
-    cheffyTTSDisabled = false,
-    handleToggleCheffyTTS = () => {},
-    
     // ADDED: Product Match Trace Props (Fix)
     showProductMatchTrace = false,
     setShowProductMatchTrace = () => {},
@@ -518,10 +514,6 @@ const handleEditProfileClean = useCallback(() => {
                 
                 showMacroDebugLog={showMacroDebugLog}
                 onToggleMacroDebugLog={setShowMacroDebugLog}
-
-                // Cheffy TTS
-                cheffyTTSDisabled={cheffyTTSDisabled}
-                onToggleCheffyTTS={handleToggleCheffyTTS}
 
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
