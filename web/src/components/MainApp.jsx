@@ -121,6 +121,10 @@ const MainApp = ({
     showMacroDebugLog = false,
     setShowMacroDebugLog = () => {},
     handleDownloadMacroDebugLogs = () => {},
+
+    // Cheffy TTS
+    cheffyTTSDisabled = false,
+    handleToggleCheffyTTS = () => {},
     
     // ADDED: Product Match Trace Props (Fix)
     showProductMatchTrace = false,
@@ -514,6 +518,11 @@ const handleEditProfileClean = useCallback(() => {
                 
                 showMacroDebugLog={showMacroDebugLog}
                 onToggleMacroDebugLog={setShowMacroDebugLog}
+
+                // Cheffy TTS
+                cheffyTTSDisabled={cheffyTTSDisabled}
+                onToggleCheffyTTS={handleToggleCheffyTTS}
+
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
                 measurementUnits={formData.measurementUnits || 'metric'}

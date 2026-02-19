@@ -1,10 +1,9 @@
 // web/src/components/SettingsPanel.jsx
 // =============================================================================
-// [V3.3] Added "Disable Cheffy TTS" debug toggle under new Voice Cooking section
-//   - Mutes all Cheffy TTS output for debugging secondary voice overlap
-//   - Uses same Eye/EyeOff toggle pattern as Developer Logs
-//   - Persists via ttsMute singleton (localStorage)
-//   - VolumeX icon differentiates it from log toggles
+// [V4.0] Voice Cooking removal:
+//   - Removed "Disable Cheffy TTS" debug toggle and entire Voice Cooking section
+//   - Removed cheffyTTSDisabled and onToggleCheffyTTS props
+//   - Removed VolumeX and Volume2 icon imports
 //
 // [V3.2] Removed "Failed Ingredients" toggle and "Edit Profile" button
 // [V3.1] Added Product Match Trace toggle
@@ -22,8 +21,6 @@ import {
   Palette,
   Ruler,
   Search,
-  VolumeX,
-  Volume2,
 } from 'lucide-react';
 import { COLORS, Z_INDEX } from '../constants';
 import { useTheme } from '../contexts/ThemeContext';
@@ -73,9 +70,6 @@ const SettingsPanel = ({
   // AI Model
   selectedModel = 'gpt-5.1',
   onModelChange = () => {},
-  // ── NEW v3.3: Cheffy TTS Debug Toggle ──
-  cheffyTTSDisabled = false,
-  onToggleCheffyTTS = () => {},
 }) => {
   const { theme, setTheme, isDark } = useTheme();
 
@@ -230,21 +224,17 @@ const SettingsPanel = ({
                         style={{
                           color: isActive
                             ? COLORS.primary[600]
-                            : isDark ? '#f0f1f5' : COLORS.gray[900],
+                            : isDark ? '#d1d5db' : COLORS.gray[700],
                         }}
                       >
                         {model.label}
                       </span>
                       {model.badge && (
                         <span
-                          className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                          className="text-xs px-2 py-0.5 rounded-full font-medium"
                           style={{
-                            backgroundColor: isActive
-                              ? isDark ? 'rgba(99,102,241,0.25)' : COLORS.primary[100]
-                              : isDark ? '#2d3148' : COLORS.gray[200],
-                            color: isActive
-                              ? COLORS.primary[600]
-                              : isDark ? '#9ca3b0' : COLORS.gray[600],
+                            backgroundColor: isDark ? 'rgba(99,102,241,0.15)' : COLORS.primary[50],
+                            color: COLORS.primary[600],
                           }}
                         >
                           {model.badge}
@@ -253,76 +243,13 @@ const SettingsPanel = ({
                     </div>
                     <p
                       className="text-xs"
-                      style={{ color: isDark ? '#9ca3b0' : COLORS.gray[500] }}
+                      style={{ color: isDark ? '#6b7280' : COLORS.gray[400], margin: 0 }}
                     >
                       {model.description}
                     </p>
                   </button>
                 );
               })}
-            </div>
-          </div>
-
-          {/* ─── Voice Cooking Debug Section ─── */}
-          <div>
-            <div className="flex items-center mb-4">
-              <VolumeX size={20} className="mr-2" style={{ color: '#f59e0b' }} />
-              <h3 className="font-bold" style={{ color: isDark ? '#f0f1f5' : COLORS.gray[900] }}>
-                Voice Cooking
-              </h3>
-            </div>
-
-            <div
-              className="flex items-center justify-between p-3 rounded-lg mb-2"
-              style={{
-                backgroundColor: isDark ? '#1e2130' : COLORS.gray[50],
-                border: `1px solid ${
-                  cheffyTTSDisabled
-                    ? isDark ? 'rgba(245,158,11,0.4)' : 'rgba(245,158,11,0.3)'
-                    : isDark ? '#2d3148' : COLORS.gray[200]
-                }`,
-              }}
-            >
-              <div className="flex-1 mr-3">
-                <div className="flex items-center">
-                  <span className="mr-2" style={{ color: isDark ? '#9ca3b0' : COLORS.gray[500] }}>
-                    {cheffyTTSDisabled
-                      ? <VolumeX size={14} style={{ color: '#f59e0b' }} />
-                      : <Volume2 size={14} />
-                    }
-                  </span>
-                  <span
-                    className="text-sm font-medium"
-                    style={{ color: isDark ? '#d1d5db' : COLORS.gray[700] }}
-                  >
-                    Disable Cheffy TTS
-                  </span>
-                </div>
-                <p
-                  className="text-xs mt-1 ml-6"
-                  style={{ color: isDark ? '#6b7280' : COLORS.gray[400] }}
-                >
-                  {cheffyTTSDisabled
-                    ? 'TTS silenced — listening for secondary voice'
-                    : 'Mutes Cheffy to isolate overlapping audio'
-                  }
-                </p>
-              </div>
-              <button
-                onClick={() => onToggleCheffyTTS(!cheffyTTSDisabled)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all flex-shrink-0"
-                style={{
-                  backgroundColor: cheffyTTSDisabled
-                    ? isDark ? 'rgba(245,158,11,0.15)' : '#fef3c7'
-                    : isDark ? 'rgba(16,185,129,0.15)' : '#d1fae5',
-                  color: cheffyTTSDisabled
-                    ? isDark ? '#fbbf24' : '#d97706'
-                    : isDark ? '#34d399' : '#059669',
-                }}
-              >
-                {cheffyTTSDisabled ? <EyeOff size={13} /> : <Eye size={13} />}
-                {cheffyTTSDisabled ? 'Muted' : 'Active'}
-              </button>
             </div>
           </div>
 
@@ -343,16 +270,16 @@ const SettingsPanel = ({
                 toggle: onToggleOrchestratorLogs,
               },
               {
-                label: 'Macro Debug Log',
-                icon: <Target size={14} />,
-                value: showMacroDebugLog,
-                toggle: onToggleMacroDebugLog,
-              },
-              {
                 label: 'Product Match Trace',
                 icon: <Search size={14} />,
                 value: showProductMatchTrace,
                 toggle: onToggleProductMatchTrace,
+              },
+              {
+                label: 'Macro Debug Log',
+                icon: <Target size={14} />,
+                value: showMacroDebugLog,
+                toggle: onToggleMacroDebugLog,
               },
             ].map((item) => (
               <div

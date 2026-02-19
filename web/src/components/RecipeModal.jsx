@@ -23,12 +23,15 @@
 //    so overflow is always confined to the content area.
 // 5. A 3px colored top-border, box-shadow ring, and subtle background
 //    tint give the modal clear visual separation from the backdrop.
+//
+// [CLEANUP] Voice Cooking removal:
+//   - Removed import of NaturalVoiceButton
+//   - Removed <NaturalVoiceButton meal={meal} /> rendering block
 // =============================================================================
 
 import React, { useEffect, useRef } from 'react';
 import { X, ListChecks, ListOrdered } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
-import NaturalVoiceButton from './NaturalVoiceButton';
 
 
 const MODAL_Z = 9999; // Above everything in the app
@@ -114,15 +117,15 @@ const RecipeModal = ({ meal, onClose }) => {
         if (e.target === e.currentTarget) onClose();
     };
 
-    // ── Theme tokens ──
+    // --- Theme Tokens ---
     const t = {
-        cardBg:          isDark ? '#1e2130' : '#ffffff',
-        headerBg:        isDark ? '#1e2130' : '#ffffff',
+        cardBg:          isDark ? '#181a24' : '#ffffff',
+        headerBg:        isDark ? '#181a24' : '#ffffff',
         headerBorder:    isDark ? '#2d3148' : '#e5e7eb',
-        titleColor:      isDark ? '#f0f1f5' : '#111827',
-        closeBtnBg:      isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
-        closeBtnColor:   isDark ? '#d1d5db' : '#6b7280',
         bodyBg:          isDark ? '#181a24' : '#ffffff',
+        titleColor:      isDark ? '#f0f1f5' : '#111827',
+        closeBtnBg:      isDark ? 'rgba(255,255,255,0.08)' : '#f3f4f6',
+        closeBtnColor:   isDark ? '#d1d5db' : '#374151',
         descColor:       isDark ? '#d1d5db' : '#374151',
         sectionTitleClr: isDark ? '#f0f1f5' : '#111827',
         ingredientIconBg:isDark ? 'rgba(99,102,241,0.15)' : '#e0e7ff',
@@ -275,12 +278,6 @@ const RecipeModal = ({ meal, onClose }) => {
                         </div>
                     )}
 
-                    {meal.instructions && meal.instructions.length > 0 && (
-                        <div style={{ marginBottom: '1.5rem' }}>
-                            <NaturalVoiceButton meal={meal} />
-                        </div>
-                    )}
-
                     {/* Ingredients */}
                     {meal.items && meal.items.length > 0 && (
                         <div style={{ marginBottom: '2rem' }}>
@@ -303,7 +300,7 @@ const RecipeModal = ({ meal, onClose }) => {
                                         justifyContent: 'center',
                                     }}
                                 >
-                                    <ListChecks size={20} color="#4f46e5" />
+                                    <ListChecks size={20} color={isDark ? '#a5b4fc' : '#6366f1'} />
                                 </div>
                                 <h4
                                     style={{
@@ -317,52 +314,47 @@ const RecipeModal = ({ meal, onClose }) => {
                                 </h4>
                             </div>
 
-                            <ul
-                                style={{
-                                    listStyle: 'none',
-                                    padding: 0,
-                                    margin: 0,
-                                }}
-                            >
-                                {meal.items.map((item, index) => {
+                            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                                {meal.items.map((item, i) => {
                                     const name = getIngredientName(item);
                                     const qty = getIngredientQty(item);
+                                    if (!name) return null;
+
                                     return (
                                         <li
-                                            key={index}
+                                            key={i}
                                             style={{
-                                                padding: '0.625rem 0.75rem',
-                                                borderRadius: '8px',
-                                                backgroundColor:
-                                                    index % 2 === 0
-                                                        ? t.ingredientBg
-                                                        : 'transparent',
-                                                borderBottom: `1px solid ${t.ingredientBorder}`,
                                                 display: 'flex',
-                                                alignItems: 'baseline',
-                                                gap: '0.5rem',
+                                                alignItems: 'center',
+                                                gap: '0.75rem',
+                                                padding: '0.625rem 0.75rem',
+                                                borderRadius: '10px',
+                                                backgroundColor: i % 2 === 0 ? t.ingredientBg : 'transparent',
+                                                borderBottom: `1px solid ${t.ingredientBorder}`,
                                             }}
                                         >
+                                            <span
+                                                style={{
+                                                    color: t.ingredientText,
+                                                    fontSize: '0.95rem',
+                                                    flex: 1,
+                                                    textTransform: 'capitalize',
+                                                }}
+                                            >
+                                                {name}
+                                            </span>
                                             {qty && (
                                                 <span
                                                     style={{
-                                                        fontWeight: 600,
                                                         color: t.ingredientQty,
-                                                        fontSize: '0.9rem',
+                                                        fontSize: '0.85rem',
+                                                        fontWeight: 600,
                                                         whiteSpace: 'nowrap',
                                                     }}
                                                 >
                                                     {qty}
                                                 </span>
                                             )}
-                                            <span
-                                                style={{
-                                                    color: t.ingredientText,
-                                                    fontSize: '0.95rem',
-                                                }}
-                                            >
-                                                {name}
-                                            </span>
                                         </li>
                                     );
                                 })}
@@ -405,63 +397,52 @@ const RecipeModal = ({ meal, onClose }) => {
                                     Instructions
                                 </h4>
                             </div>
-                            <ol
-                                style={{
-                                    listStyle: 'none',
-                                    padding: 0,
-                                    margin: 0,
-                                }}
-                            >
-                                {meal.instructions.map((step, index) => (
+
+                            <ol style={{ listStyle: 'none', padding: 0, margin: 0, counterReset: 'step' }}>
+                                {meal.instructions.map((step, i) => (
                                     <li
-                                        key={index}
+                                        key={i}
                                         style={{
                                             display: 'flex',
-                                            gap: '1rem',
+                                            gap: '0.75rem',
                                             marginBottom: '1rem',
-                                            color: t.stepText,
+                                            alignItems: 'flex-start',
                                         }}
                                     >
                                         <span
                                             style={{
                                                 width: '28px',
                                                 height: '28px',
-                                                borderRadius: '50%',
+                                                borderRadius: '8px',
                                                 backgroundColor: t.stepNumBg,
                                                 color: t.stepNumColor,
-                                                fontWeight: 700,
-                                                fontSize: '0.875rem',
                                                 display: 'flex',
                                                 alignItems: 'center',
                                                 justifyContent: 'center',
+                                                fontSize: '0.8rem',
+                                                fontWeight: 700,
                                                 flexShrink: 0,
+                                                marginTop: '2px',
                                             }}
                                         >
-                                            {index + 1}
+                                            {i + 1}
                                         </span>
-                                        <span
+                                        <p
                                             style={{
+                                                color: t.stepText,
+                                                fontSize: '0.95rem',
+                                                lineHeight: '1.6',
+                                                margin: 0,
                                                 flex: 1,
-                                                fontSize: '1rem',
-                                                lineHeight: '1.625',
-                                                paddingTop: '0.125rem',
                                             }}
                                         >
                                             {step}
-                                        </span>
+                                        </p>
                                     </li>
                                 ))}
                             </ol>
                         </div>
                     )}
-
-                    {/* Bottom safe-area spacer */}
-                    <div
-                        style={{
-                            height: '2rem',
-                            paddingBottom: 'env(safe-area-inset-bottom)',
-                        }}
-                    />
                 </div>
             </div>
         </div>
