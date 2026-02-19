@@ -12,8 +12,6 @@ import {
     getCachedRunState,
     clearRunState
 } from '../services/localPlanCache';
-// --- TTS Mute Singleton ---
-import { ttsMute } from '../utils/ttsMute';
 
 // --- CONFIGURATION ---
 const ORCHESTRATOR_TARGETS_API_URL = '/api/plan/targets';
@@ -138,11 +136,6 @@ const useAppLogic = ({
     // Legacy: Keeping for compatibility but superseding with showProductMatchTrace logic
     const [showMatchTraceLogs, setShowMatchTraceLogs] = useState(
       () => JSON.parse(localStorage.getItem('cheffy_show_match_trace_logs') ?? 'false')
-    );
-
-    // Cheffy TTS Debug Mute (reads initial value from ttsMute singleton)
-    const [cheffyTTSDisabled, setCheffyTTSDisabled] = useState(
-      () => ttsMute.isMuted
     );
 
     // [FIX] Ref for SSE closure to read current toggle value (Updated to use Product Match Trace)
@@ -468,7 +461,6 @@ const useAppLogic = ({
                 showMatchTraceLogs: showMatchTraceLogs, // Legacy
                 showMacroDebugLog: showMacroDebugLog,
                 showProductMatchTrace: showProductMatchTrace, // ADDED
-                cheffyTTSDisabled: cheffyTTSDisabled, // ADDED
                 selectedModel: selectedModel,
                 theme: localStorage.getItem('cheffy-theme') || 'dark',
                 measurementUnits: formData.measurementUnits || 'metric', // Persist units in settings
@@ -481,7 +473,7 @@ const useAppLogic = ({
         } catch (error) {
             console.error("[SETTINGS] Error saving settings:", error);
         }
-    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, showProductMatchTrace, cheffyTTSDisabled, selectedModel, userId, db, isAuthReady, formData.measurementUnits]);
+    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, showProductMatchTrace, selectedModel, userId, db, isAuthReady, formData.measurementUnits]);
 
     const handleLoadSettings = useCallback(async () => {
         if (!isAuthReady || !userId || !db || userId.startsWith('local_')) {
@@ -502,11 +494,7 @@ const useAppLogic = ({
                 setShowMacroDebugLog(data.showMacroDebugLog ?? false);
                 setShowProductMatchTrace(data.showProductMatchTrace ?? false); // ADDED
                 
-                // Load TTS setting
-                const loadedMute = data.cheffyTTSDisabled ?? false; // ADDED
-                setCheffyTTSDisabled(loadedMute);
-                ttsMute.set(loadedMute);
-                
+
                 if (data.selectedModel) setSelectedModel(data.selectedModel);
                 
                 // Load measurement units from settings if available
@@ -595,7 +583,7 @@ const useAppLogic = ({
         if (userId && !userId.startsWith('local_') && isAuthReady) {
             handleSaveSettings();
         }
-    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, showProductMatchTrace, cheffyTTSDisabled, userId, isAuthReady, handleSaveSettings, formData.measurementUnits]);
+    }, [showOrchestratorLogs, showMatchTraceLogs, showMacroDebugLog, showProductMatchTrace, userId, isAuthReady, handleSaveSettings, formData.measurementUnits]);
 
     useEffect(() => {
         if (userId && !userId.startsWith('local_') && isAuthReady && db) {
@@ -612,12 +600,6 @@ const useAppLogic = ({
       }
     }, [mealPlan, showToast]);
     
-    // Toggle Cheffy TTS Mute
-    const handleToggleCheffyTTS = useCallback((disabled) => {
-        ttsMute.set(disabled);
-        setCheffyTTSDisabled(disabled);
-        console.debug('[Settings] Cheffy TTS', disabled ? 'DISABLED' : 'ENABLED');
-    }, []);
 
     const getResponseErrorDetails = useCallback(async (response) => {
         let errorMsg = `HTTP ${response.status}`;
@@ -1307,7 +1289,6 @@ const useAppLogic = ({
         showMatchTraceLogs,
         // NEW: showProductMatchTrace
         showProductMatchTrace,
-        cheffyTTSDisabled, // ADDED
         generationStepKey,
         generationStatus,
         selectedMeal,
@@ -1334,8 +1315,7 @@ const useAppLogic = ({
         setSelectedMeal,
         setSelectedModel,
         setShowSuccessModal,
-        handleToggleCheffyTTS, // ADDED
-        
+
         // Handlers
         showToast,
         removeToast,
