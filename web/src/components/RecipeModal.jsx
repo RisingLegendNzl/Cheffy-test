@@ -24,15 +24,15 @@
 // 5. A 3px colored top-border, box-shadow ring, and subtle background
 //    tint give the modal clear visual separation from the backdrop.
 //
-// [CLEANUP] Voice Cooking removal:
-//   - Removed import of NaturalVoiceButton
-//   - Removed <NaturalVoiceButton meal={meal} /> rendering block
+// [V5.0] Voice Cooking re-added:
+//   - Added import of VoiceCookingButton
+//   - Added <VoiceCookingButton meal={meal} isDark={isDark} /> after Instructions
 // =============================================================================
 
 import React, { useEffect, useRef } from 'react';
 import { X, ListChecks, ListOrdered } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
-
+import VoiceCookingButton from './voice/VoiceCookingButton';
 
 const MODAL_Z = 9999; // Above everything in the app
 
@@ -117,12 +117,12 @@ const RecipeModal = ({ meal, onClose }) => {
         if (e.target === e.currentTarget) onClose();
     };
 
-    // --- Theme Tokens ---
+    // ── Theme tokens ──
     const t = {
-        cardBg:          isDark ? '#181a24' : '#ffffff',
-        headerBg:        isDark ? '#181a24' : '#ffffff',
-        headerBorder:    isDark ? '#2d3148' : '#e5e7eb',
+        cardBg:          isDark ? '#1e2130' : '#ffffff',
         bodyBg:          isDark ? '#181a24' : '#ffffff',
+        headerBg:        isDark ? '#1e2130' : '#ffffff',
+        headerBorder:    isDark ? '#2d3148' : '#e5e7eb',
         titleColor:      isDark ? '#f0f1f5' : '#111827',
         closeBtnBg:      isDark ? 'rgba(255,255,255,0.08)' : '#f3f4f6',
         closeBtnColor:   isDark ? '#d1d5db' : '#374151',
@@ -188,7 +188,7 @@ const RecipeModal = ({ meal, onClose }) => {
                     // Visual containment: colored top accent + ring shadow
                     borderTop: '3.5px solid #6366f1',
                     boxShadow: isDark
-                        ? '0 0 0 1px rgba(99,102,241,0.15), 0 24px 48px -12px rgba(0,0,0,0.6)'
+                        ? '0 0 0 1px rgba(99,102,241,0.2), 0 24px 48px -12px rgba(0,0,0,0.6)'
                         : '0 0 0 1px rgba(99,102,241,0.12), 0 24px 48px -12px rgba(0,0,0,0.3)',
                 }}
             >
@@ -212,19 +212,18 @@ const RecipeModal = ({ meal, onClose }) => {
                     {/* Title */}
                     <h3
                         style={{
-                            fontSize: '1.25rem',
+                            fontSize: '1.2rem',
                             fontWeight: 700,
                             color: t.titleColor,
                             margin: 0,
-                            lineHeight: 1.3,
-                            flex: 1,
-                            minWidth: 0,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
+                            flex: 1,
+                            minWidth: 0,
                         }}
                     >
-                        {meal.meal_name || meal.name || 'Recipe'}
+                        {meal.name}
                     </h3>
 
                     {/* Close button */}
@@ -329,32 +328,37 @@ const RecipeModal = ({ meal, onClose }) => {
                                                 gap: '0.75rem',
                                                 padding: '0.625rem 0.75rem',
                                                 borderRadius: '10px',
-                                                backgroundColor: i % 2 === 0 ? t.ingredientBg : 'transparent',
+                                                backgroundColor: i % 2 === 0
+                                                    ? t.ingredientBg
+                                                    : 'transparent',
                                                 borderBottom: `1px solid ${t.ingredientBorder}`,
                                             }}
                                         >
-                                            <span
-                                                style={{
-                                                    color: t.ingredientText,
-                                                    fontSize: '0.95rem',
-                                                    flex: 1,
-                                                    textTransform: 'capitalize',
-                                                }}
-                                            >
-                                                {name}
-                                            </span>
+                                            {/* Quantity badge */}
                                             {qty && (
                                                 <span
                                                     style={{
-                                                        color: t.ingredientQty,
+                                                        fontWeight: 700,
                                                         fontSize: '0.85rem',
-                                                        fontWeight: 600,
-                                                        whiteSpace: 'nowrap',
+                                                        color: t.ingredientQty,
+                                                        minWidth: '52px',
+                                                        textAlign: 'right',
+                                                        flexShrink: 0,
                                                     }}
                                                 >
                                                     {qty}
                                                 </span>
                                             )}
+                                            {/* Ingredient name */}
+                                            <span
+                                                style={{
+                                                    fontSize: '0.95rem',
+                                                    color: t.ingredientText,
+                                                    textTransform: 'capitalize',
+                                                }}
+                                            >
+                                                {name}
+                                            </span>
                                         </li>
                                     );
                                 })}
@@ -427,20 +431,32 @@ const RecipeModal = ({ meal, onClose }) => {
                                         >
                                             {i + 1}
                                         </span>
-                                        <p
+                                        <span
                                             style={{
-                                                color: t.stepText,
                                                 fontSize: '0.95rem',
                                                 lineHeight: '1.6',
-                                                margin: 0,
-                                                flex: 1,
+                                                color: t.stepText,
                                             }}
                                         >
                                             {step}
-                                        </p>
+                                        </span>
                                     </li>
                                 ))}
                             </ol>
+                        </div>
+                    )}
+
+                    {/* ── Voice Cooking Button ── */}
+                    {meal.instructions && meal.instructions.length > 0 && (
+                        <div
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'center',
+                                paddingTop: '8px',
+                                paddingBottom: '8px',
+                            }}
+                        >
+                            <VoiceCookingButton meal={meal} isDark={isDark} />
                         </div>
                     )}
                 </div>
