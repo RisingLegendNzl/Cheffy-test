@@ -2,20 +2,11 @@
 // =============================================================================
 // VoiceCookingButton — "Voice Cooking" CTA for recipe cards / modals
 //
-// Renders a styled button with microphone icon that opens the
-// VoiceCookingPage full-screen overlay.
-//
-// Props:
-//   meal    {object}  — Cheffy meal object to pass to VoiceCookingPage
-//   isDark  {boolean}
-//
-// Usage in RecipeModal:
-//   import VoiceCookingButton from './voice/VoiceCookingButton';
-//   <VoiceCookingButton meal={meal} />
+// [FIX v2.1] Import includes explicit .jsx extension for Vercel Linux compat.
 // =============================================================================
 
 import React, { useState, useCallback } from 'react';
-import VoiceCookingPage from './VoiceCookingPage';
+import VoiceCookingPage from './VoiceCookingPage.jsx';
 
 const BUTTON_KEYFRAMES = `
 @keyframes vcb-shimmer {

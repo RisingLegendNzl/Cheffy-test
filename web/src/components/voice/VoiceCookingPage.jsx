@@ -2,34 +2,24 @@
 // =============================================================================
 // VoiceCookingPage — Full-screen voice-guided cooking experience
 //
-// Opens as a full-screen overlay/route. Displays:
-//   - Animated ChefHat with glow rings
-//   - Session status indicators
-//   - Collapsible recipe card (expanded by default)
-//   - Live transcript panel (agent + user dialogue)
-//   - "Start Cooking" button (required for browser audio policy)
-//
-// Props:
-//   meal    {object}        — Cheffy meal object (falls back to DEMO_RECIPE)
-//   onClose {function}      — Callback to exit voice cooking
-//
-// Uses:
-//   useElevenLabsConversation hook
-//   lib/recipe.js helpers for prompt generation
+// [FIX v2.1] All local imports include explicit .jsx extensions to prevent
+// Rollup resolution failures on Vercel's case-sensitive Linux filesystem.
+// macOS resolves ./ChefHatAnimated → ChefHatAnimated.jsx silently,
+// but Linux does NOT.
 // =============================================================================
 
 import React, { useCallback, useMemo, useEffect } from 'react';
-import { useTheme } from '../../contexts/ThemeContext';
-import { useElevenLabsConversation } from '../../hooks/useElevenLabsConversation';
+import { useTheme } from '../../contexts/ThemeContext.jsx';
+import { useElevenLabsConversation } from '../../hooks/useElevenLabsConversation.js';
 import {
   DEMO_RECIPE,
   buildAgentSystemPrompt,
   buildFirstMessage,
-} from '../../lib/recipe';
+} from '../../lib/recipe.js';
 
-import ChefHatAnimated from './ChefHatAnimated';
-import TranscriptPanel from './TranscriptPanel';
-import RecipeCardVoice from './RecipeCardVoice';
+import ChefHatAnimated from './ChefHatAnimated.jsx';
+import TranscriptPanel from './TranscriptPanel.jsx';
+import RecipeCardVoice from './RecipeCardVoice.jsx';
 
 // ── Inline keyframes ──
 const PAGE_KEYFRAMES = `
@@ -138,7 +128,6 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
   const { isDark } = useTheme();
   const meal = mealProp || DEMO_RECIPE;
 
-  // Memoize prompt + first message so they don't change on re-render
   const systemPrompt = useMemo(() => buildAgentSystemPrompt(meal), [meal]);
   const firstMessage = useMemo(() => buildFirstMessage(meal), [meal]);
 
@@ -426,7 +415,7 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
             )}
           </div>
 
-          {/* Transcript — only show when connected or after session */}
+          {/* Transcript */}
           {(isConnected || transcript.length > 0) && (
             <div style={{ animation: 'vc-slideUp 0.5s ease-out' }}>
               <TranscriptPanel

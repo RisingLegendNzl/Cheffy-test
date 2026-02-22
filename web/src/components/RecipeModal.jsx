@@ -2,49 +2,24 @@
 // =============================================================================
 // RecipeModal — Full-screen recipe detail overlay
 //
-// DARK MODE: All colors are now theme-aware via useTheme().
-//
-// FIX: Ingredient field mapping corrected to match backend data structure:
-//   item.key  → ingredient name (NOT item.name / item.ingredient)
-//   item.qty  → numeric quantity (NOT item.quantity / item.amount)
-//   item.unit → unit string like "g", "ml" etc.
-//
-// FIXES APPLIED:
-// 1. z-index raised to 9999 — above Header (1020), BottomNav (1030),
-//    SettingsPanel (1050), ProductDetailModal (1001), and log bar (100).
-// 2. Overlay uses position:fixed inset:0 and the modal fills 100% of
-//    that container. No maxHeight:90vh, no alignItems:flex-end.
-//    On desktop (>=672 px) the modal is inset with margin/padding and
-//    border-radius via an injected <style> tag using 100dvh with vh fallback.
-// 3. Body scroll is locked with the iOS-safe position:fixed technique
-//    and restored (including scroll position) on unmount.
-// 4. The header (with the X button) is flexShrink:0 and pinned at the
-//    top of a flex column; the scrollable body uses flex:1 + minHeight:0
-//    so overflow is always confined to the content area.
-// 5. A 3px colored top-border, box-shadow ring, and subtle background
-//    tint give the modal clear visual separation from the backdrop.
-//
-// [CLEANUP] Voice Cooking removal:
-//   - Removed import of NaturalVoiceButton
-//   - Removed <NaturalVoiceButton meal={meal} /> rendering block
+// [FIX v2.1] VoiceCookingButton import includes explicit .jsx extension
+//            for Vercel Linux case-sensitive filesystem compatibility.
 // =============================================================================
 
 import React, { useEffect, useRef } from 'react';
 import { X, ListChecks, ListOrdered } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
+import VoiceCookingButton from './voice/VoiceCookingButton.jsx';
 
-
-const MODAL_Z = 9999; // Above everything in the app
+const MODAL_Z = 9999;
 
 const RecipeModal = ({ meal, onClose }) => {
     const { isDark } = useTheme();
     const scrollRef = useRef(null);
 
-    // ── Robust body scroll lock (iOS-safe) + inject dvh helper CSS ──
     useEffect(() => {
         if (!meal) return;
 
-        // Save current state
         const scrollY = window.scrollY;
         const orig = {
             overflow: document.body.style.overflow,
@@ -54,14 +29,12 @@ const RecipeModal = ({ meal, onClose }) => {
             height: document.body.style.height,
         };
 
-        // Lock body
         document.body.style.position = 'fixed';
         document.body.style.top = `-${scrollY}px`;
         document.body.style.width = '100%';
         document.body.style.overflow = 'hidden';
         document.body.style.height = '100%';
 
-        // Inject dynamic-viewport-height helper CSS
         const id = 'recipe-modal-dvh-styles';
         let styleEl = document.getElementById(id);
         if (!styleEl) {
@@ -70,21 +43,16 @@ const RecipeModal = ({ meal, onClose }) => {
             document.head.appendChild(styleEl);
         }
         styleEl.textContent = `
-            /* Full-viewport overlay — dvh with vh fallback */
             .rm-overlay {
                 height: 100vh;
                 height: 100dvh;
             }
-
-            /* Mobile-first: modal fills the overlay entirely */
             .rm-container {
                 height: 100%;
                 width: 100%;
                 max-width: 100%;
                 border-radius: 0;
             }
-
-            /* Desktop: centered card with breathing room */
             @media (min-width: 672px) {
                 .rm-container {
                     max-width: 672px;
@@ -96,7 +64,6 @@ const RecipeModal = ({ meal, onClose }) => {
         `;
 
         return () => {
-            // Restore body
             document.body.style.overflow = orig.overflow;
             document.body.style.position = orig.position;
             document.body.style.width = orig.width;
@@ -104,7 +71,6 @@ const RecipeModal = ({ meal, onClose }) => {
             document.body.style.height = orig.height;
             window.scrollTo(0, scrollY);
 
-            // Clean up style tag
             const el = document.getElementById(id);
             if (el) el.remove();
         };
@@ -112,17 +78,15 @@ const RecipeModal = ({ meal, onClose }) => {
 
     if (!meal) return null;
 
-    // Close on backdrop click (not on the card itself)
     const handleBackdropClick = (e) => {
         if (e.target === e.currentTarget) onClose();
     };
 
-    // --- Theme Tokens ---
     const t = {
-        cardBg:          isDark ? '#181a24' : '#ffffff',
-        headerBg:        isDark ? '#181a24' : '#ffffff',
-        headerBorder:    isDark ? '#2d3148' : '#e5e7eb',
+        cardBg:          isDark ? '#1e2130' : '#ffffff',
         bodyBg:          isDark ? '#181a24' : '#ffffff',
+        headerBg:        isDark ? '#1e2130' : '#ffffff',
+        headerBorder:    isDark ? '#2d3148' : '#e5e7eb',
         titleColor:      isDark ? '#f0f1f5' : '#111827',
         closeBtnBg:      isDark ? 'rgba(255,255,255,0.08)' : '#f3f4f6',
         closeBtnColor:   isDark ? '#d1d5db' : '#374151',
@@ -140,9 +104,6 @@ const RecipeModal = ({ meal, onClose }) => {
         stepText:        isDark ? '#d1d5db' : '#374151',
     };
 
-    // ── Extract ingredient display fields ──
-    // Backend shape: { key: "chicken breast", qty: 200, unit: "g", stateHint, methodHint }
-    // Fallbacks cover alternative shapes (name/ingredient, quantity/amount)
     const getIngredientName = (item) => {
         if (typeof item === 'string') return item;
         return item.key || item.name || item.ingredient || '';
@@ -157,7 +118,6 @@ const RecipeModal = ({ meal, onClose }) => {
     };
 
     return (
-        /* ── BACKDROP ── */
         <div
             className="rm-overlay"
             onClick={handleBackdropClick}
@@ -175,7 +135,6 @@ const RecipeModal = ({ meal, onClose }) => {
                 padding: '0',
             }}
         >
-            {/* ── MODAL CARD ── */}
             <div
                 className="rm-container"
                 onClick={(e) => e.stopPropagation()}
@@ -185,14 +144,13 @@ const RecipeModal = ({ meal, onClose }) => {
                     flexDirection: 'column',
                     overflow: 'hidden',
                     boxSizing: 'border-box',
-                    // Visual containment: colored top accent + ring shadow
                     borderTop: '3.5px solid #6366f1',
                     boxShadow: isDark
-                        ? '0 0 0 1px rgba(99,102,241,0.15), 0 24px 48px -12px rgba(0,0,0,0.6)'
+                        ? '0 0 0 1px rgba(99,102,241,0.2), 0 24px 48px -12px rgba(0,0,0,0.6)'
                         : '0 0 0 1px rgba(99,102,241,0.12), 0 24px 48px -12px rgba(0,0,0,0.3)',
                 }}
             >
-                {/* ── HEADER (pinned, never scrolls) ── */}
+                {/* Header */}
                 <div
                     style={{
                         display: 'flex',
@@ -209,25 +167,22 @@ const RecipeModal = ({ meal, onClose }) => {
                         zIndex: 2,
                     }}
                 >
-                    {/* Title */}
                     <h3
                         style={{
-                            fontSize: '1.25rem',
+                            fontSize: '1.2rem',
                             fontWeight: 700,
                             color: t.titleColor,
                             margin: 0,
-                            lineHeight: 1.3,
-                            flex: 1,
-                            minWidth: 0,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
+                            flex: 1,
+                            minWidth: 0,
                         }}
                     >
-                        {meal.meal_name || meal.name || 'Recipe'}
+                        {meal.name}
                     </h3>
 
-                    {/* Close button */}
                     <button
                         onClick={onClose}
                         style={{
@@ -249,7 +204,7 @@ const RecipeModal = ({ meal, onClose }) => {
                     </button>
                 </div>
 
-                {/* ── SCROLLABLE BODY ── */}
+                {/* Scrollable body */}
                 <div
                     ref={scrollRef}
                     style={{
@@ -329,32 +284,35 @@ const RecipeModal = ({ meal, onClose }) => {
                                                 gap: '0.75rem',
                                                 padding: '0.625rem 0.75rem',
                                                 borderRadius: '10px',
-                                                backgroundColor: i % 2 === 0 ? t.ingredientBg : 'transparent',
+                                                backgroundColor: i % 2 === 0
+                                                    ? t.ingredientBg
+                                                    : 'transparent',
                                                 borderBottom: `1px solid ${t.ingredientBorder}`,
                                             }}
                                         >
-                                            <span
-                                                style={{
-                                                    color: t.ingredientText,
-                                                    fontSize: '0.95rem',
-                                                    flex: 1,
-                                                    textTransform: 'capitalize',
-                                                }}
-                                            >
-                                                {name}
-                                            </span>
                                             {qty && (
                                                 <span
                                                     style={{
-                                                        color: t.ingredientQty,
+                                                        fontWeight: 700,
                                                         fontSize: '0.85rem',
-                                                        fontWeight: 600,
-                                                        whiteSpace: 'nowrap',
+                                                        color: t.ingredientQty,
+                                                        minWidth: '52px',
+                                                        textAlign: 'right',
+                                                        flexShrink: 0,
                                                     }}
                                                 >
                                                     {qty}
                                                 </span>
                                             )}
+                                            <span
+                                                style={{
+                                                    fontSize: '0.95rem',
+                                                    color: t.ingredientText,
+                                                    textTransform: 'capitalize',
+                                                }}
+                                            >
+                                                {name}
+                                            </span>
                                         </li>
                                     );
                                 })}
@@ -427,20 +385,32 @@ const RecipeModal = ({ meal, onClose }) => {
                                         >
                                             {i + 1}
                                         </span>
-                                        <p
+                                        <span
                                             style={{
-                                                color: t.stepText,
                                                 fontSize: '0.95rem',
                                                 lineHeight: '1.6',
-                                                margin: 0,
-                                                flex: 1,
+                                                color: t.stepText,
                                             }}
                                         >
                                             {step}
-                                        </p>
+                                        </span>
                                     </li>
                                 ))}
                             </ol>
+                        </div>
+                    )}
+
+                    {/* Voice Cooking Button */}
+                    {meal.instructions && meal.instructions.length > 0 && (
+                        <div
+                            style={{
+                                display: 'flex',
+                                justifyContent: 'center',
+                                paddingTop: '8px',
+                                paddingBottom: '8px',
+                            }}
+                        >
+                            <VoiceCookingButton meal={meal} isDark={isDark} />
                         </div>
                     )}
                 </div>
