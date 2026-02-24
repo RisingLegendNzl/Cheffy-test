@@ -6,6 +6,12 @@
 // Rollup resolution failures on Vercel's case-sensitive Linux filesystem.
 // macOS resolves ./ChefHatAnimated → ChefHatAnimated.jsx silently,
 // but Linux does NOT.
+//
+// [FIX v2.2] Body scroll lock cleanup is now bulletproof:
+//   - handleClose uses try/finally so onClose() ALWAYS fires even if
+//     disconnect() throws or never resolves (with a 3s timeout).
+//   - useEffect cleanup also resets documentElement overflow as a safety net.
+//   - Prevents the "permanently un-scrollable app" bug.
 // =============================================================================
 
 import React, { useCallback, useMemo, useEffect } from 'react';
@@ -155,17 +161,32 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
     document.body.style.overflow = 'hidden';
 
     return () => {
+      // [FIX v2.2] Restore body styles
       document.body.style.overflow = orig.overflow;
       document.body.style.position = orig.position;
       document.body.style.width = orig.width;
       document.body.style.top = orig.top;
+
+      // [FIX v2.2] Safety net: also clear documentElement overflow in case
+      // it was set by another component or left in a bad state
+      document.documentElement.style.overflow = '';
+
       window.scrollTo(0, scrollY);
     };
   }, []);
 
+  // [FIX v2.2] Bulletproof close handler — onClose() ALWAYS fires
   const handleClose = useCallback(async () => {
     if (status === 'connected' || status === 'connecting') {
-      await disconnect();
+      try {
+        // Race disconnect against a timeout so we never hang forever
+        await Promise.race([
+          disconnect(),
+          new Promise((resolve) => setTimeout(resolve, 3000)),
+        ]);
+      } catch {
+        // Swallow disconnect errors — closing the UI is more important
+      }
     }
     onClose?.();
   }, [status, disconnect, onClose]);
