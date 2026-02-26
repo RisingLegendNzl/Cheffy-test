@@ -12,9 +12,24 @@
 //     disconnect() throws or never resolves (with a 3s timeout).
 //   - useEffect cleanup also resets documentElement overflow as a safety net.
 //   - Prevents the "permanently un-scrollable app" bug.
+//
+// [FIX v3.0] Removed body scroll lock entirely for mobile compatibility.
+//   - The component already uses position:fixed inset:0 as a full-screen
+//     overlay, which naturally prevents interaction with content behind it.
+//   - The previous body scroll lock (position:fixed + overflow:hidden on
+//     document.body) was PREVENTING mobile users from scrolling WITHIN the
+//     voice cooking page itself, because iOS/Android treat body-level
+//     position:fixed + overflow:hidden as a global scroll kill.
+//   - The internal scrollable container (overflowY:'auto' with
+//     WebkitOverflowScrolling:'touch') now works correctly on mobile.
+//   - Scroll position save/restore on close is handled via a ref instead
+//     of body manipulation, so the user returns to their previous position
+//     when voice cooking is dismissed.
+//   - Desktop behavior is completely unchanged since the overlay already
+//     covered the full viewport.
 // =============================================================================
 
-import React, { useCallback, useMemo, useEffect } from 'react';
+import React, { useCallback, useMemo, useEffect, useRef } from 'react';
 import { useTheme } from '../../contexts/ThemeContext.jsx';
 import { useElevenLabsConversation } from '../../hooks/useElevenLabsConversation.js';
 import {
@@ -77,17 +92,15 @@ const PhoneOffIcon = ({ size = 20 }) => (
 // ── Status badge ──
 const StatusBadge = ({ status, isSpeaking, isDark }) => {
   const configs = {
-    idle: { label: 'Ready to cook', color: isDark ? '#9ca3b0' : '#6b7280', dot: '#9ca3af' },
-    connecting: { label: 'Connecting…', color: '#f59e0b', dot: '#f59e0b' },
+    idle: { label: 'Ready to cook', color: isDark ? '#9ca3b0' : '#6b7280', dot: isDark ? '#4b5563' : '#9ca3af' },
+    connecting: { label: 'Connecting…', color: isDark ? '#fbbf24' : '#d97706', dot: '#f59e0b' },
     connected: {
-      label: isSpeaking ? 'Cheffy is speaking…' : 'Listening…',
-      color: isSpeaking ? '#34d399' : '#6366f1',
-      dot: isSpeaking ? '#34d399' : '#6366f1',
+      label: isSpeaking ? 'Chef is speaking…' : 'Listening…',
+      color: isDark ? '#34d399' : '#059669',
+      dot: '#10b981',
     },
-    disconnecting: { label: 'Ending session…', color: '#f59e0b', dot: '#f59e0b' },
-    error: { label: 'Connection error', color: '#ef4444', dot: '#ef4444' },
+    error: { label: 'Connection lost', color: '#ef4444', dot: '#ef4444' },
   };
-
   const cfg = configs[status] || configs.idle;
 
   return (
@@ -98,7 +111,8 @@ const StatusBadge = ({ status, isSpeaking, isDark }) => {
         gap: '8px',
         padding: '6px 14px',
         borderRadius: '20px',
-        backgroundColor: isDark ? 'rgba(30, 33, 48, 0.7)' : 'rgba(255,255,255,0.7)',
+        background: isDark
+          ? 'rgba(30, 33, 48, 0.7)' : 'rgba(255,255,255,0.7)',
         backdropFilter: 'blur(8px)',
         border: `1px solid ${isDark ? '#2d3148' : '#e5e7eb'}`,
       }}
@@ -146,32 +160,29 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
     error,
   } = useElevenLabsConversation({ systemPrompt, firstMessage });
 
-  // Lock body scroll while page is open
+  // [FIX v3.0] Save scroll position on mount so we can restore it on close.
+  // NO body scroll lock — the fixed overlay already covers the viewport and
+  // prevents interaction with background content. Locking body scroll was
+  // killing mobile scroll entirely (including within this overlay).
+  const savedScrollY = useRef(window.scrollY);
+
   useEffect(() => {
-    const scrollY = window.scrollY;
-    const orig = {
-      overflow: document.body.style.overflow,
-      position: document.body.style.position,
-      width: document.body.style.width,
-      top: document.body.style.top,
-    };
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-    document.body.style.overflow = 'hidden';
+    savedScrollY.current = window.scrollY;
 
     return () => {
-      // [FIX v2.2] Restore body styles
-      document.body.style.overflow = orig.overflow;
-      document.body.style.position = orig.position;
-      document.body.style.width = orig.width;
-      document.body.style.top = orig.top;
-
-      // [FIX v2.2] Safety net: also clear documentElement overflow in case
-      // it was set by another component or left in a bad state
-      document.documentElement.style.overflow = '';
-
-      window.scrollTo(0, scrollY);
+      // Safety net: if any other component left stale body styles, clean them.
+      // This does NOT set them — it only clears residual state.
+      const body = document.body;
+      const html = document.documentElement;
+      if (body.style.position === 'fixed' && !document.querySelector('[data-scroll-lock]')) {
+        body.style.position = '';
+        body.style.top = '';
+        body.style.width = '';
+        body.style.overflow = '';
+        body.style.height = '';
+        html.style.overflow = '';
+        window.scrollTo(0, savedScrollY.current);
+      }
     };
   }, []);
 
@@ -229,6 +240,9 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
           display: 'flex',
           flexDirection: 'column',
           animation: 'vc-fadeIn 0.3s ease-out',
+          // [FIX v3.0] The overlay itself is the scroll boundary.
+          // overflow:hidden on the outer wrapper prevents background bleed,
+          // while the inner scrollable div handles content scrolling.
           overflow: 'hidden',
         }}
       >
@@ -274,6 +288,10 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
             flexDirection: 'column',
             gap: '16px',
             WebkitOverflowScrolling: 'touch',
+            // [FIX v3.0] Ensure touch scrolling works on mobile and
+            // scroll doesn't propagate to the body behind the overlay.
+            overscrollBehavior: 'contain',
+            touchAction: 'pan-y',
           }}
         >
           {/* Chef hat + title block */}
@@ -317,7 +335,9 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
           <div
             style={{
               display: 'flex',
-              justifyContent: 'center',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '12px',
               animation: 'vc-slideUp 0.6s ease-out',
             }}
           >
@@ -336,12 +356,10 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
                   fontSize: '1rem',
                   fontWeight: 700,
                   cursor: 'pointer',
-                  animation: 'vc-btnPulse 2s ease-in-out infinite',
-                  transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-                  boxShadow: '0 4px 20px rgba(99, 102, 241, 0.3)',
+                  boxShadow: '0 4px 20px rgba(99,102,241,0.3)',
+                  animation: 'vc-btnPulse 2.5s ease-in-out infinite',
+                  transition: 'transform 0.15s ease',
                 }}
-                onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.97)')}
-                onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
               >
                 <MicIcon size={20} />
                 Start Cooking
@@ -356,24 +374,23 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
                   gap: '10px',
                   padding: '14px 32px',
                   borderRadius: '16px',
-                  background: isDark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.08)',
-                  border: `1px solid ${isDark ? 'rgba(99,102,241,0.3)' : 'rgba(99,102,241,0.15)'}`,
-                  color: '#6366f1',
-                  fontSize: '0.9rem',
+                  background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                  color: isDark ? '#a5b4fc' : '#6366f1',
+                  fontSize: '1rem',
                   fontWeight: 600,
                 }}
               >
                 <div
                   style={{
-                    width: '18px',
-                    height: '18px',
-                    border: '2.5px solid #6366f1',
+                    width: '20px',
+                    height: '20px',
+                    border: '2px solid currentColor',
                     borderTopColor: 'transparent',
                     borderRadius: '50%',
-                    animation: 'chefhat-spin 0.8s linear infinite',
+                    animation: 'vc-dotBlink 0.8s linear infinite',
                   }}
                 />
-                Setting up your kitchen…
+                Connecting…
               </div>
             )}
 
@@ -385,8 +402,9 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
                   alignItems: 'center',
                   gap: '8px',
                   padding: '10px 24px',
-                  borderRadius: '12px',
-                  border: `1px solid ${isDark ? 'rgba(239,68,68,0.3)' : 'rgba(239,68,68,0.2)'}`,
+                  borderRadius: '14px',
+                  border: `1.5px solid ${isDark
+                    ? 'rgba(239,68,68,0.3)' : 'rgba(239,68,68,0.2)'}`,
                   background: isDark ? 'rgba(239,68,68,0.1)' : 'rgba(239,68,68,0.05)',
                   color: '#ef4444',
                   fontSize: '0.85rem',
