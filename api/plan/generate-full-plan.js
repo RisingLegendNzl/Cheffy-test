@@ -547,12 +547,12 @@ module.exports = async function handler(request, response) {
 
         sendEvent('plan:progress', { pct: 60, message: `Running nutrition lookups...` });
         const nutritionStartTime = Date.now();
-        const nutritionDataMap = new Map(); // Map<normalizedKey, { per100: {...}, source: string }>
+        const nutritionDataMap = new Map(); // Map<normalizedKey, { status, source, calories, protein, fat, carbs, ... }>
 
         // MOD ZONE 2: Fetch nutrition per *unique ingredient*, not per meal item
         const nutritionResults = await concurrentlyMap(aggregatedIngredients, NUTRITION_CONCURRENCY, async (aggItem) => {
             try {
-                const nData = await lookupIngredientNutrition(aggItem.normalizedKey, aggItem.stateHint, log);
+                const nData = await lookupIngredientNutrition(aggItem.normalizedKey, log);
                 return { key: aggItem.normalizedKey, data: nData };
             } catch (err) {
                 log(`Nutrition lookup failed for "${aggItem.normalizedKey}": ${err.message}`, 'WARN', 'NUTRITION');
@@ -626,16 +626,20 @@ module.exports = async function handler(request, response) {
              let p = 0, f = 0, c = 0, kcal = 0;
              let nutritionSource = 'missing';
 
-             if (nutritionEntry && nutritionEntry.per100) {
-                 const per100 = nutritionEntry.per100;
-                 debugItem.per100 = { kcal: per100.kcal, protein: per100.protein, fat: per100.fat, carbs: per100.carbs };
+             if (nutritionEntry && nutritionEntry.status === 'found') {
+                 // lookupIngredientNutrition returns flat fields: calories, protein, fat, carbs (per 100g)
+                 const proteinPer100 = Number(nutritionEntry.protein || nutritionEntry.protein_g_per_100g) || 0;
+                 const fatPer100 = Number(nutritionEntry.fat || nutritionEntry.fat_g_per_100g) || 0;
+                 const carbsPer100 = Number(nutritionEntry.carbs || nutritionEntry.carbs_g_per_100g || nutritionEntry.carb_g_per_100g) || 0;
+                 const kcalPer100 = Number(nutritionEntry.calories || nutritionEntry.kcal_per_100g) || 0;
+                 debugItem.per100 = { kcal: kcalPer100, protein: proteinPer100, fat: fatPer100, carbs: carbsPer100 };
                  debugItem.source = nutritionEntry.source || 'ingredient-centric';
                  nutritionSource = debugItem.source;
 
                  const factor = grams_as_sold / 100;
-                 p = (per100.protein || 0) * factor;
-                 f = (per100.fat || 0) * factor;
-                 c = (per100.carbs || 0) * factor;
+                 p = proteinPer100 * factor;
+                 f = fatPer100 * factor;
+                 c = carbsPer100 * factor;
                  
                  // Add absorbed oil if applicable
                  const absorbed_oil_g = getAbsorbedOil(item, grams_as_sold, log);
