@@ -1,5 +1,6 @@
 // --- Cheffy API: /api/plan/generate-full-plan.js ---
 // [NEW] Hybrid Batched Orchestrator (V14.1 - Enhanced Grocery Matching)
+// REFACTORED: Helper functions extracted to api/plan/helpers/
 // Implements the "full plan" architecture:
 // 1. Compute Targets (passed in)
 // 2. Generate ALL meals
@@ -11,32 +12,52 @@
 // 8. Assemble and return
 
 /// ===== IMPORTS-START ===== \\
-const fetch = require('node-fetch');
-// Ensure Response is available for the fix in Change 2.5
-const Response = fetch.Response || global.Response;
 const crypto = require('crypto');
-const { createClient } = require('@vercel/kv');
 
-// Import cache-wrapped microservices
+// --- Helper modules (extracted from this file) ---
+const {
+    GEMINI_API_KEY, TRANSFORM_CONFIG_VERSION,
+    USE_SOLVER_V1, ALLOW_PROTEIN_SCALING,
+    PLAN_MODEL_NAME_PRIMARY, PLAN_MODEL_NAME_FALLBACK,
+    PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS,
+    MARKET_RUN_CONCURRENCY, NUTRITION_CONCURRENCY,
+    REQUIRED_WORD_SCORE_THRESHOLD, SKIP_STRONG_MATCH_THRESHOLD,
+    PRICE_OUTLIER_Z_SCORE, PANTRY_CATEGORIES, MAX_CALORIES_PER_ITEM,
+    FAIL_FAST_CATEGORIES,
+    TOKEN_BUCKET_CAPACITY, TOKEN_BUCKET_REFILL_PER_SEC, TOKEN_BUCKET_MAX_WAIT_MS,
+    MOCK_PRODUCT_TEMPLATE, MOCK_RECIPE_FALLBACK,
+    CACHE_PREFIX, TTL_PLAN_MS,
+} = require('./helpers/config');
+const { cacheGet, cacheSet, hashString, setRunStatus, getRunStatus } = require('./helpers/cache');
+const { createLogger } = require('./helpers/logger');
+const { delay, getSanitizedFormData, concurrentlyMap } = require('./helpers/utils');
+const { fetchLLMWithRetry } = require('./helpers/http');
+const {
+    calculateUnitPrice, parseSize, passRequiredWords, mean,
+    normalizeStateHintForItem, synthTight, synthWide, passSimplePantryChecklist,
+} = require('./helpers/market-helpers');
+const { generateMealPlan_Single, generateGroceryQueries_Batched } = require('./helpers/llm-callers');
+
+// --- External microservices ---
 const { fetchPriceData } = require('../price-search.js');
 // MOD ZONE 1.1: Import new ingredient-centric function
-const { fetchNutritionData, lookupIngredientNutrition } = require('../nutrition-search.js'); 
+const { fetchNutritionData, lookupIngredientNutrition } = require('../nutrition-search.js');
 
-// Import utils
+// --- Import utils ---
 // Note: Vercel bundles these relative to the project root, hence the `../`
 try {
     var { normalizeKey } = require('../scripts/normalize.js');
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
     // Change 2.1: Import LLM provider (Primary path)
-    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../utils/llm-provider.js');
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape } = require('../utils/llm-provider.js');
 } catch (e) {
     console.error("CRITICAL: Failed to import utils. Using local fallbacks.", e.message);
     var { normalizeKey } = require('../../scripts/normalize.js');
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
     // Change 2.1: Import LLM provider (Fallback path)
-    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../../utils/llm-provider.js');
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape } = require('../../utils/llm-provider.js');
 }
 
 // --- [NEW] Import validation helper (Task 1) ---
@@ -55,1061 +76,32 @@ const { tracedScoring } = require('../../utils/traced-scoring');
 
 /// ===== IMPORTS-END ===== ////
 
-// --- CONFIGURATION ---
-/// ===== CONFIG-START ===== \\
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v13.3-hybrid';
-
-const USE_SOLVER_V1 = process.env.CHEFFY_USE_SOLVER === '1'; // Default to false (use legacy reconcile)
-const ALLOW_PROTEIN_SCALING = process.env.CHEFFY_SCALE_PROTEIN === '1'; // D3: New feature flag for protein scaling
-
-// Change 2.2: GPT-5.1 as primary, Gemini as fallback (from llm-provider.js)
-const PLAN_MODEL_NAME_PRIMARY = PRIMARY_MODEL;
-const PLAN_MODEL_NAME_FALLBACK = FALLBACK_MODEL;
-
-// --- Vercel KV Client ---
-const kv = createClient({
-    url: process.env.UPSTASH_REDIS_REST_URL,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN,
-});
-
-// Change 6.2: Add health check
-let kvReady = !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
-(async () => {
-    if (kvReady) {
-        try {
-            const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('KV Ping Timeout')), 3000));
-            await Promise.race([kv.ping(), timeout]);
-        } catch (e) {
-            console.warn(`KV Connection check failed: ${e.message}`);
-            kvReady = false;
-        }
-    }
-})();
-
-const CACHE_PREFIX = `cheffy:plan:v3:t:${TRANSFORM_CONFIG_VERSION}`;
-const TTL_PLAN_MS = 1000 * 60 * 60 * 24; // 24 hours
-
-// --- Performance & API Constants ---
-const MAX_LLM_RETRIES = 2; // Change 2.3
-const LLM_REQUEST_TIMEOUT_MS = 45000; // Change 2.3: Increased for GPT-5.1 JSON mode latency
-const REQUIRED_WORD_SCORE_THRESHOLD = 0.60;
-const SKIP_STRONG_MATCH_THRESHOLD = 0.80;
-const MARKET_RUN_CONCURRENCY = 12; // [PERF V2] Increased from 6 — no 429s observed in logs
-const NUTRITION_CONCURRENCY = 10;  // [PERF V2] Increased from 6
-const TOKEN_BUCKET_CAPACITY = 10;
-const TOKEN_BUCKET_REFILL_PER_SEC = 10;
-const TOKEN_BUCKET_MAX_WAIT_MS = 250;
-const FAIL_FAST_CATEGORIES = ["produce", "meat", "dairy", "veg", "fruit", "seafood"];
-
-// [REMOVED] Local BANNED_KEYWORDS array replaced by SCORER_BANNED_KEYWORDS in utils/product-scorer
-// const BANNED_KEYWORDS = [ ... ];
-
-const PRICE_OUTLIER_Z_SCORE = 2.0;
-const PANTRY_CATEGORIES = ["pantry", "grains", "canned", "spreads", "condiments", "drinks"];
-const MAX_CALORIES_PER_ITEM = 1200; // Sanity check
-
-/// ===== CONFIG-END ===== ////
-
-/// ===== MOCK-START ===== \\
-const MOCK_PRODUCT_TEMPLATE = { name: "Placeholder (Not Found)", brand: "MOCK DATA", price: 0, size: "N/A", url: "#", unit_price_per_100: 0, barcode: null };
-const MOCK_RECIPE_FALLBACK = {
-    description: "Meal description could not be generated.",
-    instructions: ["Cooking instructions could not be generated for this meal. Please rely on standard cooking methods for the ingredients listed."]
-};
-/// ===== MOCK-END ===== ////
-
-
-/// ===== HELPERS-START ===== \\
-
-// --- Cache Helpers ---
-async function cacheGet(key, log) {
-  if (!kvReady) return null;
-  try {
-    const hit = await kv.get(key);
-    if (hit) log(`Cache HIT for key: ${key.split(':').pop()}`, 'DEBUG', 'CACHE');
-    return hit;
-  } catch (e) {
-    log(`Cache GET Error: ${e.message}`, 'ERROR', 'CACHE');
-    return null;
-  }
-}
-async function cacheSet(key, val, ttl, log) {
-  if (!kvReady) return;
-  try {
-    await kv.set(key, val, { px: ttl });
-    log(`Cache SET for key: ${key.split(':').pop()}`, 'DEBUG', 'CACHE');
-  } catch (e) {
-    log(`Cache SET Error: ${e.message}`, 'ERROR', 'CACHE');
-  }
-}
-function hashString(str) {
-  return crypto.createHash('sha256').update(str).digest('hex').substring(0, 16);
-}
-
-// CHANGE 4: Persist `lastPhase` to KV for polling progress
-async function setRunStatus(runId, status, payload, log, lastPhase = null) {
-    if (!kvReady) return;
-    const key = `cheffy:run:${runId}`;
-    const ttl = 1000 * 60 * 60; // 1 hour
-    try {
-        const record = {
-            status,
-            payload,
-            updatedAt: new Date().toISOString(),
-        };
-        // Include lastPhase and startedAt for running status
-        if (lastPhase) record.lastPhase = lastPhase;
-        if (status === 'running') record.startedAt = record.startedAt || new Date().toISOString();
-
-        await kv.set(key, JSON.stringify(record), { px: ttl });
-        log(`Run status SET: ${key} → ${status}${lastPhase ? ` (phase: ${lastPhase})` : ''}`, 'DEBUG', 'RUN_STATUS');
-    } catch (e) {
-        log(`Run status SET Error: ${e.message}`, 'ERROR', 'RUN_STATUS');
-    }
-}
-
-async function getRunStatus(runId, log) {
-    if (!kvReady) return null;
-    const key = `cheffy:run:${runId}`;
-    try {
-        const raw = await kv.get(key);
-        if (!raw) return null;
-        return typeof raw === 'string' ? JSON.parse(raw) : raw;
-    } catch (e) {
-        if (log) log(`Run status GET Error: ${e.message}`, 'ERROR', 'RUN_STATUS');
-        return null;
-    }
-}
-// --- End Cache Helpers ---
-
-
-// --- Logger (SSE Aware for Batched Plan) ---
-function createLogger(run_id, responseStream = null) {
-    const logs = [];
-    
-    /**
-     * Writes a Server-Sent Event (SSE) to the response stream.
-     * CHANGE 2: Make `writeSseEvent` resilient to disconnection
-     * @param {string} eventType - The event type (e.g., 'message', 'finalData').
-     * @param {object} data - The JSON-serializable data payload.
-     */
-    const writeSseEvent = (eventType, data) => {
-        // Skip writes if the client has disconnected or stream is ended.
-        // CRITICAL: Do NOT call responseStream.end() here — that would
-        // terminate the serverless function and prevent the pipeline from
-        // completing.
-        if (!responseStream || responseStream.writableEnded) {
-            return;
-        }
-        try {
-            const payload = (typeof data === 'string') ? { message: data } : data;
-            const dataString = JSON.stringify(payload);
-            responseStream.write(`event: ${eventType}\n`);
-            responseStream.write(`data: ${dataString}\n\n`);
-        } catch (e) {
-            // Client likely disconnected.  Log it but do NOT end the stream.
-            // The pipeline will continue and persist the result to KV.
-            console.warn(`[SSE Logger] Write failed for event '${eventType}' (client likely gone): ${e.message}`);
-        }
-    };
-
-    /**
-     * Creates a log entry, sends it via SSE, and logs it to the console.
-     * @param {string} message - The log message.
-     * @param {string} [level='INFO'] - Log level (e.g., 'INFO', 'WARN', 'ERROR').
-     * @param {string} [tag='SYSTEM'] - A tag for categorizing the log (e.g., 'LLM', 'MARKET_RUN').
-     * @param {object} [data=null] - Optional serializable data.
-     */
-    const log = (message, level = 'INFO', tag = 'SYSTEM', data = null) => {
-        let logEntry;
-        try {
-            logEntry = {
-                timestamp: new Date().toISOString(),
-                run_id: run_id,
-                level: level.toUpperCase(),
-                tag: tag.toUpperCase(),
-                message,
-                data: data ? JSON.parse(JSON.stringify(data, (key, value) => // Basic serialization
-                    (typeof value === 'string' && value.length > 300) ? value.substring(0, 300) + '...' : value
-                )) : null
-            };
-            logs.push(logEntry);
-            
-            // Send log message over SSE
-            writeSseEvent('log_message', logEntry);
-
-            // Also log to console for server visibility
-             const time = new Date(logEntry.timestamp).toLocaleTimeString('en-AU', { hour12: false, timeZone: 'Australia/Brisbane' });
-             console.log(`${time} [${logEntry.level}] [${logEntry.tag}] ${logEntry.message}`);
-             // Only log data blobs for non-debug or high-severity levels
-             if (data && (level !== 'DEBUG' || ['ERROR', 'CRITICAL', 'WARN'].includes(level))) {
-                 try {
-                     // Truncate long strings within data for console logging
-                     const truncatedData = JSON.stringify(data, (k, v) => typeof v === 'string' && v.length > 150 ? v.substring(0, 150) + '...' : v, 2);
-                     console.log("  Data:", truncatedData.length > 500 ? truncatedData.substring(0, 500) + '...' : truncatedData);
-                 } catch { console.log("  Data: [Serialization Error]"); }
-             }
-            return logEntry;
-        } catch (error) {
-             // Fallback if logging itself fails
-             const fallbackEntry = { timestamp: new Date().toISOString(), run_id: run_id, level: 'ERROR', tag: 'LOGGING', message: `Log serialization failed: ${message}`, data: { error: error.message }}
-             logs.push(fallbackEntry);
-             console.error(JSON.stringify(fallbackEntry));
-             // Try to send this critical error over SSE
-             writeSseEvent('log_message', fallbackEntry);
-             return fallbackEntry;
-        }
-    };
-
-    /**
-     * Logs a critical error, sends an 'error' event, and closes the stream.
-     * CHANGE 7: Update `logErrorAndClose` similarly
-     * @param {string} errorMessage - The final error message.
-     * @param {string} [errorCode="SERVER_FAULT_PLAN"] - A machine-readable error code.
-     */
-    const logErrorAndClose = (errorMessage, errorCode = "SERVER_FAULT_PLAN") => {
-        log(errorMessage, 'CRITICAL', 'SYSTEM');
-        writeSseEvent('error', {
-            code: errorCode,
-            message: errorMessage
-        });
-        if (responseStream && !responseStream.writableEnded) {
-            try { responseStream.end(); } catch (e) {
-                console.warn("[SSE Logger] Error closing stream after error event:", e.message);
-            }
-        }
-    };
-    
-    /**
-     * Sends the final 'plan:complete' event and closes the stream.
-     * CHANGE 6: Update `sendFinalDataAndClose` to handle disconnected client
-     * @param {object} data - The final plan data payload.
-     */
-    const sendFinalDataAndClose = (data) => {
-        log(`Generation complete, sending final payload and closing stream.`, 'INFO', 'SYSTEM');
-        // Attempt to send the final event — will no-op if client is gone
-        // (thanks to the updated writeSseEvent from Change 2).
-        writeSseEvent('plan:complete', data);
-        // Now close the stream.  This is safe even if the client is gone.
-        if (responseStream && !responseStream.writableEnded) {
-            try { responseStream.end(); } catch (e) {
-                console.warn("[SSE Logger] Error closing stream after final data:", e.message);
-            }
-        }
-    };
-    
-    /**
-     * Sends a generic SSE event.
-     * @param {string} eventType - The event name.
-     * @param {object} data - The JSON-serializable data payload.
-     */
-    const sendEvent = (eventType, data) => {
-        writeSseEvent(eventType, data);
-    };
-
-    // [FIX] Explicitly define getLogs as a function returning the logs array
-    return { log, getLogs: () => logs, logErrorAndClose, sendFinalDataAndClose, sendEvent };
-}
-// --- End Logger ---
-
-
-// --- Other Helpers ---
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-function getSanitizedFormData(formData) {
-    try {
-        if (!formData || typeof formData !== 'object') return { error: "Invalid form data received." };
-        // Redact PII
-        const { name, height, weight, age, bodyFat, ...rest } = formData;
-        return { ...rest, user_profile: "[REDACTED]" };
-    } catch (e) { return { error: "Failed to sanitize form data." }; }
-}
-
-async function concurrentlyMap(array, limit, asyncMapper) {
-    const results = [];
-    const executing = [];
-    for (const item of array) {
-        const promise = asyncMapper(item)
-            .then(result => {
-                // Remove this promise from the executing list once it's done
-                const index = executing.indexOf(promise);
-                if (index > -1) executing.splice(index, 1);
-                return result;
-            })
-            .catch(error => {
-                // Handle errors gracefully
-                console.error(`Error in concurrentlyMap item "${item?.originalIngredient || item?.name || 'unknown'}":`, error);
-                const index = executing.indexOf(promise);
-                if (index > -1) executing.splice(index, 1);
-                // Return an error object to be handled by the caller
-                return { _error: true, message: error.message || 'Unknown concurrent map error', itemKey: item?.originalIngredient || item?.name || 'unknown' };
-            });
-        executing.push(promise);
-        results.push(promise);
-        if (executing.length >= limit) {
-            // Wait for at least one promise to resolve before adding more
-            await Promise.race(executing);
-        }
-    }
-    return Promise.all(results).then(res => res.filter(r => r != null)); // Filter out null/undefined results
-}
-
-// --- fetchLLMWithRetry with JSON Guard ---
-async function fetchLLMWithRetry(url, options, log, attemptPrefix = "LLM") {
-    for (let attempt = 1; attempt <= MAX_LLM_RETRIES; attempt++) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), LLM_REQUEST_TIMEOUT_MS);
-
-        try {
-            log(`${attemptPrefix} Attempt ${attempt}: Fetching from ${url} (Timeout: ${LLM_REQUEST_TIMEOUT_MS}ms)`, 'DEBUG', 'HTTP');
-            const response = await fetch(url, { ...options, signal: controller.signal });
-            clearTimeout(timeout); // Clear the timeout as the request completed
-
-            if (response.ok) {
-                // [FIX] Read as text first to check for non-JSON
-                const rawText = await response.text();
-                if (!rawText || rawText.trim() === "") {
-                    throw new Error("Response was 200 OK but body was empty.");
-                }
-                
-                const trimmedText = rawText.trim();
-                // [FIX] Change 2.5: Reconstruct Response object
-                if (trimmedText.startsWith('{') || trimmedText.startsWith('[')) {
-                    // It looks like JSON, return a new Response object
-                    return new Response(rawText, { 
-                        status: 200, 
-                        headers: { 'Content-Type': 'application/json' } 
-                    });
-                } else {
-                    // This is a 200 OK with a non-JSON body (e.g., "I cannot..." safety refusal)
-                    log(`${attemptPrefix} Attempt ${attempt}: 200 OK with non-JSON body. Retrying...`, 'WARN', 'HTTP', { body: trimmedText.substring(0, 100) });
-                    throw new Error(`200 OK with non-JSON body: ${trimmedText.substring(0, 100)}`);
-                }
-            }
-
-            // Handle non-OK statuses
-            if (response.status === 429 || response.status >= 500) {
-                // Retryable server errors
-                log(`${attemptPrefix} Attempt ${attempt}: Received retryable error ${response.status}. Retrying...`, 'WARN', 'HTTP');
-            } else {
-                // Client errors (400, 401, etc.) - not retryable
-                const errorBody = await response.text();
-                log(`${attemptPrefix} Attempt ${attempt}: Non-retryable error ${response.status}.`, 'CRITICAL', 'HTTP', { body: errorBody });
-                throw new Error(`${attemptPrefix} call failed with status ${response.status}. Body: ${errorBody}`);
-            }
-        } catch (error) {
-             clearTimeout(timeout); // Clear timeout on error
-             
-             if (error.name === 'AbortError') {
-                 // Request timed out
-                 log(`${attemptPrefix} Attempt ${attempt}: Fetch timed out after ${LLM_REQUEST_TIMEOUT_MS}ms. Retrying...`, 'WARN', 'HTTP');
-             } else if (error instanceof SyntaxError) {
-                 // This shouldn't happen with the new guard, but as a safety net
-                log(`${attemptPrefix} Attempt ${attempt}: Failed to parse response as JSON. Retrying...`, 'WARN', 'HTTP', { error: error.message });
-             } else if (!error.message?.startsWith(`${attemptPrefix} call failed with status`)) {
-                 // General network error or the 200-non-JSON error
-                log(`${attemptPrefix} Attempt ${attempt}: Fetch failed: ${error.message}. Retrying...`, 'WARN', 'HTTP');
-             } else {
-                 // This was a non-retryable error (e.g., 400)
-                 throw error; // Rethrow non-retryable or final attempt errors
-             }
-        }
-
-        // Wait before retrying
-        if (attempt < MAX_LLM_RETRIES) {
-            // Change 2.4: Reduced backoff
-            const delayTime = Math.pow(2, attempt -1) * 1000 + Math.random() * 500;
-            log(`Waiting ${delayTime.toFixed(0)}ms before ${attemptPrefix} retry...`, 'DEBUG', 'HTTP');
-            await delay(delayTime);
-        }
-    }
-    
-    // All retries failed
-    log(`${attemptPrefix} call failed definitively after ${MAX_LLM_RETRIES} attempts.`, 'CRITICAL', 'HTTP');
-    throw new Error(`${attemptPrefix} call to ${url} failed after ${MAX_LLM_RETRIES} attempts.`);
-}
-
-
-const calculateUnitPrice = (price, size) => {
-    if (!price || price <= 0 || typeof size !== 'string' || size.length === 0) return price;
-    const sizeLower = size.toLowerCase().replace(/\s/g, '');
-    let numericSize = 0;
-    const match = sizeLower.match(/(\d+\.?\d*)(g|kg|ml|l)/);
-    if (match) {
-        numericSize = parseFloat(match[1]);
-        const unit = match[2];
-        if (numericSize > 0) {
-            // Convert to base unit (g or ml)
-            let totalUnits = (unit === 'kg' || unit === 'l') ? numericSize * 1000 : numericSize;
-            if (totalUnits >= 100) {
-                // Calculate price per 100 units
-                return (price / totalUnits) * 100;
-            }
-        }
-    }
-    return price; // Fallback to item price if unit parse fails
-};
-
-function parseSize(sizeString) {
-    if (typeof sizeString !== 'string') return null;
-    const sizeLower = sizeString.toLowerCase().replace(/\s/g, '');
-    const match = sizeLower.match(/(\d+\.?\d*)\s*(g|kg|ml|l)/);
-    if (match) {
-        const value = parseFloat(match[1]);
-        let unit = match[2];
-        let valueInBaseUnits = value;
-        if (unit === 'kg') { valueInBaseUnits *= 1000; unit = 'g'; }
-        else if (unit === 'l') { valueInBaseUnits *= 1000; unit = 'ml'; }
-        return { value: valueInBaseUnits, unit: unit };
-    }
-    return null;
-}
-
-// --- Validation Helpers ---
-function passRequiredWords(title = '', required = []) {
-  if (!required || required.length === 0) return true;
-  const t = title.toLowerCase();
-  return required.every(w => {
-    if (!w) return true; // Handle empty strings in requiredWords array
-    const base = w.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // Escape regex chars
-    // Match whole word, allow optional 's' for plural
-    const rx = new RegExp(`\\b${base}s?\\b`, 'i');
-    return rx.test(t);
-  });
-}
-
-const mean = (arr) => arr.length > 0 ? arr.reduce((acc, val) => acc + val, 0) / arr.length : 0;
-const stdev = (arr) => {
-    if (arr.length < 2) return 0;
-    const m = mean(arr);
-    const variance = arr.reduce((acc, val) => acc + Math.pow(val - m, 2), 0) / (arr.length - 1);
-    return Math.sqrt(variance);
-};
-
-function applyPriceOutlierGuard(products, log, ingredientKey) {
-    if (products.length < 3) return products; // Not enough data to check for outliers
-    const prices = products.map(p => p.product.unit_price_per_100).filter(p => p > 0);
-    if (prices.length < 3) return products;
-    
-    const m = mean(prices);
-    const s = stdev(prices);
-    if (s === 0) return products; // All prices are identical
-
-    return products.filter(p => {
-        const price = p.product.unit_price_per_100;
-        if (price <= 0) return true; // Keep items with no price data
-        const zScore = (price - m) / s;
-        if (zScore > PRICE_OUTLIER_Z_SCORE) {
-            log(`[${ingredientKey}] Demoting Price Outlier: "${p.product.name}" ($${price.toFixed(2)}/100) vs avg $${m.toFixed(2)}/100 (z=${zScore.toFixed(2)})`, 'INFO', 'PRICE_OUTLIER');
-            return false;
-        }
-        return true;
-    });
-}
-
-function passCategory(product = {}, allowed = []) {
-  if (!allowed || allowed.length === 0 || !product.product_category) return true;
-  const pc = product.product_category.toLowerCase();
-  return allowed.some(a => pc.includes(a.toLowerCase()));
-}
-
-function sizeOk(productSizeParsed, targetSize, allowedCategories = [], log, ingredientKey, checkLogPrefix) {
-    // If no target size is specified, or we can't parse the product size, it passes
-    if (!productSizeParsed || !targetSize || !targetSize.value || !targetSize.unit) return true;
-    
-    // If units mismatch (e.g., 'g' vs 'ml'), fail
-    if (productSizeParsed.unit !== targetSize.unit) {
-        log(`${checkLogPrefix}: WARN (Size Unit Mismatch ${productSizeParsed.unit} vs ${targetSize.unit})`, 'DEBUG', 'CHECKLIST');
-        return false;
-    }
-    
-    const prodValue = productSizeParsed.value;
-    const targetValue = targetSize.value;
-    
-    // Set multipliers based on category
-    const isPantry = PANTRY_CATEGORIES.some(c => allowedCategories?.some(ac => ac.toLowerCase() === c));
-    const maxMultiplier = 3.0; // Allow buying larger pantry items
-    const minMultiplier = 0.5; // Don't buy less than half the target size
-    
-    const lowerBound = targetValue * minMultiplier;
-    const upperBound = targetValue * maxMultiplier;
-
-    if (prodValue >= lowerBound && prodValue <= upperBound) return true;
-
-    // Fails size check
-    log(`${checkLogPrefix}: FAIL (Size ${prodValue}${productSizeParsed.unit} outside ${lowerBound.toFixed(0)}-${upperBound.toFixed(0)}${targetSize.unit} for ${isPantry ? 'pantry' : 'perishable'})`, 'DEBUG', 'CHECKLIST');
-    return false;
-}
-
-// --- State Hint Normalizer (New function for step 4) ---
-function normalizeStateHintForItem(item, log) {
-  const key = (item.key || '').toLowerCase();
-  let hint = (item.stateHint || '').toLowerCase().trim();
-
-  // If hint is invalid, drop it to force defaulting
-  const validHints = ['dry', 'raw', 'cooked', 'as_pack'];
-  if (!validHints.includes(hint)) {
-    if (hint) {
-      log(`Invalid stateHint '${hint}' for '${item.key}'. Clearing hint to force default/fallback.`, 'WARN', 'STATE_HINT');
-    }
-    hint = '';
-  }
-
-  // If the hint is still empty, apply defaults based on key:
-  if (!hint) {
-    // Grain / pasta default: DRY
-    const isGrain =
-      key.includes('oat') ||
-      key.includes('rice') ||
-      key.includes('pasta') ||
-      key.includes('noodle') ||
-      key.includes('quinoa') ||
-      key.includes('couscous') ||
-      key.includes('barley') ||
-      key.includes('bulgur') ||
-      key.includes('polenta') ||
-      key.includes('buckwheat') ||
-      key.includes('millet');
-
-    if (isGrain) {
-      hint = 'dry';
-    }
-
-    // Meat / fish default: RAW
-    const isMeatOrFish =
-      key.includes('chicken') ||
-      key.includes('beef') ||
-      key.includes('pork') ||
-      key.includes('lamb') ||
-      key.includes('fish') ||
-      key.includes('salmon') ||
-      key.includes('tuna') ||
-      key.includes('mince');
-
-    if (!hint && isMeatOrFish) {
-      hint = 'raw';
-    }
-
-    // Dairy / bread / packaged default: AS_PACK
-    const isPackaged =
-      key.includes('milk') ||
-      key.includes('yogurt') ||
-      key.includes('yoghurt') ||
-      key.includes('bread') ||
-      key.includes('cheese') ||
-      key.includes('wrap') ||
-      key.includes('tortilla');
-
-    if (!hint && isPackaged) {
-      hint = 'as_pack';
-    }
-
-    // Final fallback: leave empty, transforms will still handle it
-    if (!hint && log) {
-      log(`No stateHint for '${item.key}', leaving undefined (will use transforms fallback).`, 'WARN', 'STATE_HINT');
-    }
-  }
-
-  // Mutate item in place so downstream code uses normalized stateHint
-  item.stateHint = hint;
-
-  return item;
-}
-
-function synthTight(ing, store) {
-  if (!ing || !store) return null;
-  const size = ing.targetSize?.value && ing.targetSize?.unit ? ` ${ing.targetSize.value}${ing.targetSize.unit}` : "";
-  const original = typeof ing.originalIngredient === 'string' ? ing.originalIngredient : '';
-  return `${store} ${original}${size}`.toLowerCase().trim();
-}
-function synthWide(ing, store) {
-  if (!ing || !store) return null;
-  const noun = (Array.isArray(ing.requiredWords) && ing.requiredWords.length > 0 && typeof ing.requiredWords[0] === 'string')
-    ? ing.requiredWords[0]
-    : (typeof ing.originalIngredient === 'string' ? ing.originalIngredient.split(" ")[0] : '');
-  if (!noun) return null;
-  return `${store} ${noun}`.toLowerCase().trim();
-}
-/// ===== HELPERS-END ===== ////
-
-
-/// ===== API-CALLERS-START ===== \\
-
-// --- LLM System Prompt (Step A1, A2, A3) ---
-const MEAL_PLANNER_SYSTEM_PROMPT = (weight, calories, mealMax, day, perMealTargets) => `
-You are an expert dietitian. Your SOLE task is to generate the \`meals\` for ONE day (Day ${day}).
-RULES:
-1.  Generate meals ('meals') & items ('items') used TODAY.
-2.  **CRITICAL PROTEIN CAP: Never exceed 3 g/kg total daily protein (User weight: ${weight}kg).**
-3.  MEAL PORTIONS: For each meal, populate 'items' with:
-    a) 'key': (string) The generic ingredient name.
-    b) 'qty_value': (number) The portion size for the user.
-    c) 'qty_unit': (string) e.g., 'g', 'ml', 'slice', 'egg'.
-    d) 'stateHint': (string) MANDATORY. The state of the ingredient. Must be one of: "dry", "raw", "cooked", "as_pack".
-    e) 'methodHint': (string | null) MANDATORY. Cooking method if state is "cooked". Must be one of: "boiled", "pan_fried", "grilled", "baked", "steamed", or null.
-4.  **CRITICAL UNIT RULE:** You MUST provide quantities in **'g'** (grams), **'ml'** (milliliters), or a specific single unit like **'egg'** or **'slice'**. You **MUST NOT** use ambiguous units like 'medium', 'large', or 'piece' for any item.
-5.  **PER-MEAL TARGETS (A2):** Each MAIN meal (Breakfast, Lunch, Dinner) should aim for ~${perMealTargets.main.calories} kcal, ~${perMealTargets.main.protein}g protein. Each SNACK should aim for ~${perMealTargets.snack.calories} kcal, ~${perMealTargets.snack.protein}g protein.
-6.  **PORTION SCALING (A3):** CRITICAL: Scale protein portions to match per-meal targets. Example: If per-meal protein target is 40g, use ~120-130g chicken breast (not 200g).
-7.  The code will calculate total calories based on your plan; you do NOT need to estimate them.
-8.  Adhere to all user constraints.
-9.  'meals' array is MANDATORY. Do NOT include 'ingredients' array.
-10. Do NOT include calorie estimates in your response.
-
-CRITICAL STATE HINT RULES:
-- "dry": Quantity refers to dry or uncooked weight (oats, rice, pasta, noodles, lentils, quinoa, other grains).
-- "raw": Quantity refers to raw weight (meat, poultry, fish, eggs, raw vegetables).
-- "cooked": Quantity refers to cooked or prepared weight (only if the user explicitly says "cooked" or the food is eaten cooked and measured after cooking).
-- "as_pack": Quantity refers to packaged or ready-to-eat form (yogurt, milk, bread, cheese, ready-to-eat snacks).
-
-DEFAULT BY CATEGORY:
-- Grains and pasta (oats, rice, pasta, noodles, couscous, quinoa, bulgur, barley, polenta, etc.) → "dry" unless the user explicitly specifies cooked weight.
-- Meats and fish (chicken, beef, pork, lamb, fish, mince, etc.) → "raw" unless explicitly cooked.
-- Dairy, bread and packaged foods → "as_pack" unless clearly prepared differently.
-
-You MUST return a valid "stateHint" for every ingredient. Do NOT leave it null or empty.
-Valid values are only: "dry", "raw", "cooked", "as_pack".
-
-Output ONLY the valid JSON object described below. ABSOLUTELY NO PROSE OR MARKDOWN.
-
-JSON Structure:
-{
-  "meals": [
-    {
-      "type": "string",
-      "name": "string",
-      "items": [
-        {
-          "key": "string",
-          "qty_value": number,
-          "qty_unit": "string",
-          "stateHint": "string",
-          "methodHint": "string|null"
-        }
-      ]
-    }
-  ]
-}
-`;
-
-// --- Grocery Optimizer Prompt (REPLACED by ENHANCED_GROCERY_PROMPT from utils) ---
-// The prompt function definition has been removed in V13.0 and replaced by the imported version.
-
-// --- Chef AI Prompt (Consolidated Definition) ---
-const CHEF_SYSTEM_PROMPT = (store) => `
-You are an expert chef for ${store} shoppers. You write clear, safe, and appetizing recipes.
-RULES:
-1.  You will be given a meal name and a list of ingredients with quantities.
-2.  Your job is to generate an appetizing 1-sentence 'description' for the meal.
-3.  You MUST also generate a 'instructions' array, with each element being one step.
-4.  Instructions MUST be safe, clear, and logical.
-5.  **FOOD SAFETY IS CRITICAL:**
-    * ALWAYS include a step to "cook chicken/pork thoroughly until no longer pink and juices run clear."
-    * ALWAYS include a step to "wash all produce (vegetables/fruit) thoroughly."
-6.  Be concise. Aim for 4-7 steps.
-7.  Do NOT add any ingredients not in the provided list, except for "salt, pepper, and water" which are assumed.
-
-Output ONLY the valid JSON object described below. ABSOLUTELY NO PROSE OR MARKDOWN.
-
-JSON Structure:
-{
-  "description": "string",
-  "instructions": ["string"]
-}
-`;
-
-/**
- * Tries to generate a plan from an LLM, retrying on failure.
- * Change 2.4: Rewrite to use provider helpers
- */
-async function tryGenerateLLMPlan(modelName, payload, log, logPrefix, expectedJsonShape) {
-    log(`${logPrefix}: Attempting model: ${modelName} (${detectProvider(modelName)})`, 'INFO', 'LLM');
-
-    const req = buildLLMRequest(modelName, payload, { agentType: logPrefix.includes('Grocery') ? 'groceryQuery' : 'mealPlan' });
-
-    const response = await fetchLLMWithRetry(req.url, {
-        method: 'POST',
-        headers: req.headers,
-        body: req.body,
-    }, log, logPrefix);
-
-    const result = await response.json();
-    const { text: jsonText, finishReason } = parseLLMResponse(modelName, result);
-
-    if (finishReason === 'MAX_TOKENS') {
-        log(`${logPrefix}: Model ${modelName} failed with finishReason: MAX_TOKENS.`, 'WARN', 'LLM');
-        throw new Error(`Model ${modelName} failed: MAX_TOKENS.`);
-    }
-    if (finishReason !== 'STOP') {
-        log(`${logPrefix}: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM', { result });
-        throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
-    }
-
-    log(`${logPrefix} Raw JSON Text`, 'DEBUG', 'LLM', { raw: jsonText.substring(0, 300) + '...' });
-
-    try {
-        const parsed = JSON.parse(jsonText.trim());
-        if (!parsed || typeof parsed !== 'object') throw new Error("Parsed response is not a valid object.");
-        for (const key in expectedJsonShape) {
-            if (!parsed.hasOwnProperty(key)) {
-                throw new Error(`Parsed JSON missing required top-level key: '${key}'.`);
-            }
-            if (Array.isArray(expectedJsonShape[key]) && !Array.isArray(parsed[key])) {
-                throw new Error(`Parsed JSON key '${key}' was not an array.`);
-            }
-        }
-        log(`${logPrefix}: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM');
-        return parsed;
-    } catch (parseError) {
-        log(`Failed to parse/validate ${logPrefix} JSON from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM', { jsonText: jsonText.substring(0, 300) });
-        throw new Error(`Model ${modelName} failed: Invalid JSON response. ${parseError.message}`);
-    }
-}
-
-
-/**
- * Generates a meal plan for a *single* day.
- * (Step A1, A4: Update signature and user query)
- */
-async function generateMealPlan_Single(day, formData, nutritionalTargets, log, perMealTargets, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
-    const { name, height, weight, age, gender, goal, dietary, store, eatingOccasions, costPriority, mealVariety, cuisine } = formData;
-    const { calories, protein, fat, carbs } = nutritionalTargets;
-    
-    const mainMealCal = Math.round(perMealTargets.main.calories);
-    const mainMealP = Math.round(perMealTargets.main.protein);
-    const snackCal = Math.round(perMealTargets.snack.calories);
-    const snackP = Math.round(perMealTargets.snack.protein);
-
-    // Change 2.11: Removed plan caching
-    // const profileHash = hashString(JSON.stringify({ formData, nutritionalTargets, perMealTargets })); 
-    // const cacheKey = `${CACHE_PREFIX}:meals:day${day}:${profileHash}`;
-    // const cached = await cacheGet(cacheKey, log);
-    // if (cached) return { dayNumber: day, meals: cached.meals }; 
-    // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
-
-    // 2. Prepare Prompt
-    const mealTypesMap = {'3':['B','L','D'],'4':['B','L','D','S1'],'5':['B','L','D','S1','S2']};
-    const requiredMeals = mealTypesMap[eatingOccasions]||mealTypesMap['3'];
-    const cuisineInstruction = cuisine && cuisine.trim() ? `Focus: ${cuisine}.` : 'Neutral.';
-
-    // Removed outdated mealAvg/mealMax calculation
-
-    const systemPrompt = MEAL_PLANNER_SYSTEM_PROMPT(weight, calories, 0, day, perMealTargets); // mealMax parameter is now obsolete, passed 0
-    let userQuery = `Gen plan Day ${day} for ${name||'Guest'}. Profile: ${age}yo ${gender}, ${height}cm, ${weight}kg. Act: ${formData.activityLevel}. Goal: ${goal}. Store: ${store}. Day ${day} Targets: DAILY ~${calories} kcal. PER MAIN MEAL: ~${mainMealCal} kcal, ~${mainMealP}g protein. PER SNACK: ~${snackCal} kcal, ~${snackP}g protein. Dietary: ${dietary}. Meals: ${eatingOccasions} (${Array.isArray(requiredMeals) ? requiredMeals.join(', ') : '3 meals'}). Spend: ${costPriority}. Cuisine: ${cuisineInstruction}.`;
-
-    const logPrefix = `MealPlannerDay${day}`;
-    log(`Meal Planner AI Prompt for Day ${day}`, 'INFO', 'LLM_PROMPT', {
-        systemPromptStart: systemPrompt.substring(0, 200) + '...',
-        userQuery: userQuery,
-        targets: nutritionalTargets,
-    });
-
-    const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: {
-            temperature: 0.3, topK: 32, topP: 0.9, responseMimeType: "application/json",
-        }
-    };
-    const expectedShape = { "meals": [] };
-    
-    // 3. Execute LLM Call (V3.1: GPT-5.1 primary with fallback)
-    let parsedResult;
-    try {
-        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
-    } catch (primaryError) {
-        if (fallbackModel) {
-            log(`${logPrefix}: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
-            try {
-                parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
-            } catch (fallbackError) {
-                log(`${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-                throw new Error(`Grocery Query generation failed: All models failed. Last error: ${fallbackError.message}`);
-            }
-        } else {
-            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. No fallback configured.`, 'CRITICAL', 'LLM');
-            throw new Error(`Grocery Query generation failed: ${primaryModel} failed. ${primaryError.message}`);
-        }
-    }
-    
-    // Change 2.11: Removed plan caching
-    // if (parsedResult && parsedResult.meals && parsedResult.meals.length > 0) {
-    //     await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
-    // }
-    return { dayNumber: day, meals: parsedResult.meals || [] };
-}
-
-
-/**
- * Generates grocery query details for the *entire* aggregated list.
- */
-// --- [MODIFIED V13.1] Added Preprocessing & Enhanced Prompt ---
-async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gpt-5.1', fallbackModel = 'gemini-2.0-flash') {
-    if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
-        log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
-        return { ingredients: [] };
-    }
-
-    // 1. Check Cache
-    // Change 2.13: Keep ingredient-level caching
-    const keysHash = hashString(JSON.stringify(aggregatedIngredients));
-    const cacheKey = `${CACHE_PREFIX}:queries-batched:${store}:${keysHash}`;
-    const cached = await cacheGet(cacheKey, log);
-    if (cached) return cached;
-    log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
-    
-    // PREPROCESSING (V13.1)
-    const preprocessedIngredients = cleanIngredientBatch(aggregatedIngredients);
-    const llmInput = preprocessedIngredients.map(item => ({
-        originalIngredient: item.originalIngredient,
-        cleanName: item._cleanName,
-        requested_total_g: item.requested_total_g,
-        _autoNegatives: item._autoNegatives
-    }));
-
-    // 2. Prepare Prompt
-    const isAustralianStore = (store === 'Coles' || store === 'Woolworths');
-    const australianTermNote = isAustralianStore ? " Use common Australian terms (e.g., 'spring onion', 'capsicum')." : "";
-
-    // Use ENHANCED_GROCERY_PROMPT imported from utils
-    const systemPrompt = ENHANCED_GROCERY_PROMPT(store, australianTermNote);
-    
-    let userQuery = `Generate query JSON for the following ingredients.
-Use "cleanName" for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
-${JSON.stringify(llmInput)}`;
-
-    const logPrefix = `GroceryOptimizerFullPlan`;
-    log(`Grocery Optimizer AI Prompt`, 'INFO', 'LLM_PROMPT', {
-        systemPromptStart: systemPrompt.substring(0, 200) + '...',
-        userQuery: userQuery,
-    });
-
-    const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: {
-            temperature: 0.05, topK: 20, topP: 0.85, responseMimeType: "application/json",
-        }
-    };
-    const expectedShape = { "ingredients": [] };
-
-    // 3. Execute LLM Call (Change 2.7: Added Fallback)
-    let parsedResult;
-    try {
-        parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
-    } catch (primaryError) {
-        if (fallbackModel) {
-            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
-            try {
-                parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
-            } catch (fallbackError) {
-                log(`${logPrefix}: Fallback ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-                throw new Error(`Grocery Query generation failed. Last error: ${fallbackError.message}`);
-            }
-        } else {
-            throw new Error(`Grocery Query generation failed: ${primaryError.message}`);
-        }
-    }
-    
-    // 4. Post-process and Cache
-    if (parsedResult && parsedResult.ingredients && parsedResult.ingredients.length > 0) {
-        // --- Sanity Check & Fix ---
-        // The LLM sometimes ignores the 'totalGramsRequired' from the prompt.
-        // We must overwrite its estimate with our *actual* aggregated total.
-        const inputMap = new Map(aggregatedIngredients.map(item => [item.originalIngredient, item.requested_total_g]));
-        parsedResult.ingredients.forEach(ing => {
-            const requestedGrams = inputMap.get(ing.originalIngredient);
-            if (requestedGrams && ing.totalGramsRequired !== requestedGrams) {
-                log(`Grocery Optimizer mismatch for "${ing.originalIngredient}". LLM returned ${ing.totalGramsRequired}g, but plan needs ${requestedGrams}g. Overwriting.`, 'DEBUG', 'LLM');
-                ing.totalGramsRequired = requestedGrams;
-            }
-
-            // ENHANCEMENT: Merge auto-negative keywords & attach preprocessed data (V13.1)
-            const preprocessedItem = preprocessedIngredients.find(
-                pi => pi.originalIngredient === ing.originalIngredient
-            );
-            if (preprocessedItem) {
-                 // Attach preprocessed data for later use in scoring (Checker needs cleanName and isWholeFood)
-                 ing._cleanName = preprocessedItem._cleanName;
-                 ing._isWholeFood = preprocessedItem._isWholeFood;
-
-                 // Merge auto-negative keywords
-                 if (preprocessedItem._autoNegatives && preprocessedItem._autoNegatives.length > 0) {
-                    const existingNeg = new Set((ing.negativeKeywords || []).map(k => k.toLowerCase()));
-                    const autoNeg = preprocessedItem._autoNegatives
-                        .filter(k => !existingNeg.has(k.toLowerCase()));
-                    if (autoNeg.length > 0) {
-                        ing.negativeKeywords = [...(ing.negativeKeywords || []), ...autoNeg];
-                        log(`Enhanced negativeKeywords for "${ing.originalIngredient}": added [${autoNeg.join(', ')}]`, 'DEBUG', 'PREPROCESS');
-                    }
-                }
-            }
-        });
-        // --- End Sanity Check ---
-        
-        // Change 2.13: Keep ingredient-level caching
-        await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
-    }
-    
-    return parsedResult;
-}
-
-/**
- * Tries to generate a recipe from an LLM, retrying on failure.
- * Change 2.5: Rewrite to use provider helpers
- */
-async function tryGenerateChefRecipe(modelName, payload, mealName, log) {
-    log(`Chef AI [${mealName}]: Attempting model: ${modelName} (${detectProvider(modelName)})`, 'INFO', 'LLM_CHEF');
-
-    const req = buildLLMRequest(modelName, payload, { agentType: 'chefRecipe' });
-
-    const response = await fetchLLMWithRetry(req.url, {
-        method: 'POST',
-        headers: req.headers,
-        body: req.body,
-    }, log, `Chef-${mealName}`);
-
-    const result = await response.json();
-    const { text: jsonText, finishReason } = parseLLMResponse(modelName, result);
-
-    if (finishReason !== 'STOP') {
-        log(`Chef AI [${mealName}]: Model ${modelName} failed with non-STOP finishReason: ${finishReason}`, 'WARN', 'LLM_CHEF', { result });
-        throw new Error(`Model ${modelName} failed: FinishReason was ${finishReason}.`);
-    }
-
-    try {
-        const trimmedText = jsonText.trim();
-        if (!trimmedText.startsWith('{') || !trimmedText.endsWith('}')) {
-            throw new Error(`Response text was not a JSON object. (Likely a safety refusal)`);
-        }
-        const parsed = JSON.parse(trimmedText);
-        validateChefRecipeShape(parsed);
-        log(`Chef AI [${mealName}]: Model ${modelName} succeeded.`, 'SUCCESS', 'LLM_CHEF');
-        return parsed;
-    } catch (parseError) {
-        log(`Failed to parse/validate Chef AI JSON for [${mealName}] from ${modelName}: ${parseError.message}`, 'CRITICAL', 'LLM_CHEF', { jsonText: jsonText.substring(0, 300) });
-        throw new Error(`Model ${modelName} failed: Invalid JSON response. ${parseError.message}`);
-    }
-}
-
-async function generateChefInstructions(meal, store, log, primaryModel = PLAN_MODEL_NAME_PRIMARY, fallbackModel = PLAN_MODEL_NAME_FALLBACK) {
-    const mealName = meal.name || 'Unnamed Meal';
-    try {
-        // Change 2.12: Removed chef caching
-        // const mealHash = hashString(JSON.stringify(meal.items || []));
-        // const cacheKey = `${CACHE_PREFIX}:recipe:${mealHash}`;
-        // const cached = await cacheGet(cacheKey, log);
-        // if (cached) return { ...meal, ...cached }; 
-        // log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
-
-        // 2. Prepare Prompt
-        const systemPrompt = CHEF_SYSTEM_PROMPT(store);
-        const ingredientList = meal.items.map(item => `- ${item.qty_value}${item.qty_unit} ${item.key}`).join('\n');
-        const userQuery = `Generate a recipe for "${meal.name}" using only these ingredients:\n${ingredientList}`;
-        
-        log(`Chef AI Prompt for [${mealName}]`, 'INFO', 'LLM_PROMPT', {
-            systemPromptStart: systemPrompt.substring(0, 200) + '...',
-            userQuery: userQuery
-        });
-
-        const payload = {
-            contents: [{ parts: [{ text: userQuery }] }],
-            systemInstruction: { parts: [{ text: systemPrompt }] },
-            generationConfig: {
-                temperature: 0.4, topK: 32, topP: 0.9, responseMimeType: "application/json", 
-            }
-        };
-
-        // 3. Execute LLM Call (Change 2.8: Added Fallback)
-        let recipeResult;
-        try {
-            recipeResult = await tryGenerateChefRecipe(primaryModel, payload, mealName, log);
-        } catch (primaryError) {
-            log(`Chef AI [${mealName}]: Primary model ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
-            try {
-                recipeResult = await tryGenerateChefRecipe(fallbackModel, payload, mealName, log);
-            } catch (fallbackError) {
-                log(`Chef AI [${mealName}]: Fallback model ${fallbackModel} also failed: ${fallbackError.message}. Using mock recipe.`, 'CRITICAL', 'LLM_CHEF');
-                recipeResult = MOCK_RECIPE_FALLBACK;
-            }
-        }
-        
-        // Change 2.12: Removed chef caching
-        // if (recipeResult && recipeResult.description) {
-        //     await cacheSet(cacheKey, recipeResult, TTL_PLAN_MS, log);
-        // }
-        return { ...meal, ...recipeResult }; // Return the modified meal object
-    } catch (error) {
-        log(`CRITICAL Error in generateChefInstructions for [${mealName}]: ${error.message}`, 'CRITICAL', 'LLM_CHEF');
-        return { ...meal, ...MOCK_RECIPE_FALLBACK };
-    }
-}
-
-
-/// ===== API-CALLERS-END ===== ////
-
-
-// --- Market Run Logic (Copied from day.js) ---
-/* The processSingleIngredientOptimized function was here but has been moved
-   inside the main handler (module.exports) where the 'log' and 'store' variables
-   are correctly scoped to fix the "log is not defined" error. 
-*/
-
-// --- End Market Run Logic ---
-
-
 /// ===== MAIN-HANDLER-START ===== \\
-module.exports = async (request, response) => {
-    const planStartTime = Date.now();
-    let dietitian_ms = 0, market_run_ms = 0, nutrition_ms = 0, solver_ms = 0, writer_ms = 0; // Telemetry timers
-    
+
+/**
+ * Main Vercel Serverless Function Handler.
+ * Orchestrates the full meal plan generation pipeline over SSE.
+ */
+module.exports = async function handler(request, response) {
+    // --- SSE Setup ---
     const run_id = crypto.randomUUID();
+    response.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+    });
 
-    // --- FIX: Handle OPTIONS and method validation BEFORE setting headers ---
-    if (request.method === 'OPTIONS') {
-        response.setHeader('Access-Control-Allow-Origin', '*');
-        response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-        response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-        response.status(200).end();
-        return;
-    }
-
-    if (request.method !== 'POST') {
-        response.setHeader('Access-Control-Allow-Origin', '*');
-        response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-        response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-        response.setHeader('Allow', 'POST, OPTIONS');
-        response.status(405).json({
-            message: `Method ${request.method} Not Allowed.`,
-            code: "METHOD_NOT_ALLOWED"
-        });
-        return;
-    }
-
-    // --- Setup SSE Stream (AFTER method validation) ---
-    response.setHeader('Content-Type', 'text/event-stream');
-    response.setHeader('Cache-Control', 'no-cache');
-    response.setHeader('Connection', 'keep-alive');
-    response.setHeader('Access-Control-Allow-Origin', '*');
-    response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS'); 
-    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization'); 
-    
-    // ── PERSISTENCE FIX: Send run_id as a header so the frontend gets it
-    // even if the SSE stream hasn't been parsed yet (e.g. on slow connections
-    // or if the browser buffers the initial SSE frames). ──
-    response.setHeader('X-Cheffy-Run-Id', run_id);
-
-    // Expose this custom header to the browser (CORS)
-    response.setHeader('Access-Control-Expose-Headers', 'X-Cheffy-Run-Id');
-
-    // [FIX] Pass `run_id` to logger
     const { log, getLogs, logErrorAndClose, sendFinalDataAndClose, sendEvent } = createLogger(run_id, response);
-    
-    await setRunStatus(run_id, 'running', null, log);
 
-    // ── PERSISTENCE FIX: Detect client disconnect ──
-    // When the browser tab closes, refreshes, or the SSE connection drops,
-    // this fires.  We set a flag so the pipeline continues to run but
+    // Timing metrics
+    let dietitian_ms = 0, market_run_ms = 0, nutrition_ms = 0, solver_ms = 0;
+    const dietitianStartTime = Date.now();
+
+    // Track full meal plan across days
+    const fullMealPlan = [];
+
+    // We set a flag so the pipeline continues to run but
     // SSE writes are skipped (they already are via the writableEnded check
     // in writeSseEvent, but this avoids noisy error logs and lets us
     // update the KV status).
@@ -1220,10 +212,7 @@ module.exports = async (request, response) => {
         // CHANGE 4: Persist `lastPhase` to KV
         await setRunStatus(run_id, 'running', null, log, 'meals');
 
-        const dietitianStartTime = Date.now();
-        const fullMealPlan = []; // This is the master list of day objects
-        
-        sendEvent('plan:progress', { pct: 10, message: `Generating ${numDays} days in parallel...` });
+        sendEvent('plan:progress', { message: `Generating ${numDays} days in parallel...` });
         const dayPromises = [];
         
         for (let day = 1; day <= numDays; day++) {
@@ -1256,20 +245,6 @@ module.exports = async (request, response) => {
         if (fullMealPlan.length !== numDays) {
             throw new Error(`Meal Planner AI failed: Expected ${numDays} days, but processed ${fullMealPlan.length}.`);
         }
-
-        // --- [PERF V2] Phase 1.5: Launch Chef AI early (parallel with market run) ---
-        // Chef AI only needs meal names + ingredient lists, NOT solved quantities.
-        // By starting it here, it runs in parallel with aggregation + market run + nutrition + solver.
-        // We await the promise later in Phase 6.
-        log('Phase 1.5: Launching Chef AI early (parallel with market run)...', 'INFO', 'PHASE');
-        const earlyChefStartTime = Date.now();
-        const allMealsForChef = fullMealPlan.flatMap(day => 
-            day.meals.map(meal => ({ ...meal, _dayNumber: day.dayNumber }))
-        );
-        const earlyChefPromise = concurrentlyMap(allMealsForChef, 6, (meal) => 
-            generateChefInstructions(meal, store, log, requestPrimary, requestFallback)
-                .then(result => ({ ...result, _dayNumber: meal._dayNumber, _originalName: meal.name }))
-        );
 
         // --- Phase 2: Aggregate Ingredients ---
         sendEvent('phase:start', { name: 'aggregate', description: 'Aggregating ingredient list...' });
@@ -1363,239 +338,113 @@ module.exports = async (request, response) => {
          * Note: 'log' and 'store' are now correctly in scope from the enclosing handler.
          */
         const processSingleIngredientOptimized = async (ingredient) => {
-            let telemetry = { name: ingredient.originalIngredient, used: 'none', score: 0, page: 1 };
+            const ingredientKey = ingredient.originalIngredient;
             try {
-                if (!ingredient || !ingredient.originalIngredient) {
-                    log(`Market Run: Skipping invalid ingredient data`, 'WARN', 'MARKET_RUN', { ingredient });
-                    return { _error: true, itemKey: 'unknown_invalid', message: 'Invalid ingredient data' };
-                }
-                const ingredientKey = ingredient.originalIngredient;
-                
-                if (!ingredient.normalQuery || !Array.isArray(ingredient.requiredWords) || !Array.isArray(ingredient.negativeKeywords) || !Array.isArray(ingredient.allowedCategories) || ingredient.allowedCategories.length === 0) {
-                    log(`[${ingredientKey}] Skipping: Missing critical fields (normalQuery/validation)`, 'ERROR', 'MARKET_RUN', ingredient);
-                    return { [ingredientKey]: { ...ingredient, source: 'error', error: 'Missing critical query/validation fields', allProducts:[], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url } };
-                }
-                
-                const result = { ...ingredient, allProducts: [], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url, source: 'failed', searchAttempts: [] };
-                
-                // --- MATCH TRACE ---
-                const trace = createMatchTrace(ingredientKey, ingredient);
-
-                const qn = ingredient.normalQuery;
-                const qt = (ingredient.tightQuery && ingredient.tightQuery.trim()) ? ingredient.tightQuery : synthTight(ingredient, ingredient.store); // Use ingredient.store (passed from LLM) or infer from outer scope
-                const qw = (ingredient.wideQuery && ingredient.wideQuery.trim()) ? ingredient.wideQuery : synthWide(ingredient, ingredient.store);
-                
-                const queriesToTry = [ { type: 'tight', query: qt }, { type: 'normal', query: qn }, { type: 'wide', query: qw } ].filter(q => q.query && q.query.trim());
-                
-                log(`[${ingredientKey}] Queries: Tight (${qt ? (ingredient.tightQuery ? 'AI' : 'Synth') : 'N/A'}), Normal (AI), Wide (${qw ? (ingredient.wideQuery ? 'AI' : 'Synth') : 'N/A'})`, 'DEBUG', 'MARKET_RUN');
-                
-                let acceptedQueryType = 'none';
+                const matchTrace = createMatchTrace ? createMatchTrace(ingredientKey) : null;
+                const telemetry = { tight: null, normal: null, wide: null, fallback: null, used: null, score: 0 };
+                let result = { source: 'failed', allProducts: [], currentSelectionURL: MOCK_PRODUCT_TEMPLATE.url };
                 let bestScore = 0;
+                let acceptedQueryType = null;
 
-                for (const [index, { type, query }] of queriesToTry.entries()) {
-                    if (type === 'normal' && acceptedQueryType !== 'none') {
-                        continue; 
-                    }
-                    if (type === 'wide') {
-                        if (acceptedQueryType !== 'none') continue;
-                        const isFailFastCategory = ingredient.allowedCategories.some(c => FAIL_FAST_CATEGORIES.includes(c));
-                        if (isFailFastCategory) {
-                            log(`[${ingredientKey}] Skipping "wide" query due to fail-fast category.`, 'DEBUG', 'MARKET_RUN');
-                            continue;
-                        }
-                    }
+                // Build query variants
+                const queries = {
+                    tight: synthTight(ingredient, store),
+                    normal: ingredient.normalQuery || `${store} ${ingredientKey}`,
+                    wide: synthWide(ingredient, store),
+                };
 
-                    log(`[${ingredientKey}] Attempting "${type}" query: "${query}"`, 'DEBUG', 'HTTP');
-                    const attemptRecorder = trace.startAttempt(type, query);
-                    result.searchAttempts.push({ queryType: type, query: query, status: 'pending', foundCount: 0});
-                    const currentAttemptLog = result.searchAttempts.at(-1);
-
-                    // NOTE: The store variable from the outer scope is correctly captured here.
-                    const { data: priceData } = await fetchPriceData(store, query, 1, log);
-
-                    if (priceData.error) {
-                        log(`[${ingredientKey}] Fetch failed (${type}): ${priceData.error.message}`, 'WARN', 'HTTP', { status: priceData.error.status });
-                        attemptRecorder.finalize('fetch_error', 0);
-                        currentAttemptLog.status = 'fetch_error'; 
-                        continue;
-                    }
+                for (const type of ['tight', 'normal', 'wide']) {
+                    const query = queries[type];
+                    if (!query) { telemetry[type] = 'skipped'; continue; }
                     
-                    const rawProducts = priceData.results || [];
-                    currentAttemptLog.rawCount = rawProducts.length;
-                    const validProductsOnPage = [];
+                    const currentAttemptLog = { query, status: 'pending' };
+                    telemetry[type] = currentAttemptLog;
                     
-                    for (const rawProduct of rawProducts) {
-                        if (!rawProduct || !rawProduct.product_name) continue;
-                        // log is correctly scoped here
-                        // [MODIFIED V13.1] Use Enhanced Checklist with Trace
-                        const checklistResult = tracedScoring(runEnhancedChecklist, rawProduct, ingredient, log, attemptRecorder);
-                        if (checklistResult.pass) {
-                            validProductsOnPage.push({ 
-                                product: { 
-                                    name: rawProduct.product_name, 
-                                    brand: rawProduct.product_brand, 
-                                    price: rawProduct.current_price, 
-                                    size: rawProduct.product_size, 
-                                    url: rawProduct.url, 
-                                    barcode: rawProduct.barcode, 
-                                    // calculateUnitPrice is module-scoped, fine
-                                    unit_price_per_100: calculateUnitPrice(rawProduct.current_price, rawProduct.product_size) 
-                                }, 
-                                score: checklistResult.score
-                            });
-                        }
-                    }
-                    
-                    // log is correctly scoped here
-                    const filteredProducts = applyPriceOutlierGuard(validProductsOnPage, log, ingredientKey); 
-                    // Syntax Fix applied previously: (max, p => Math.max...) -> (max, p) => Math.max...
-                    const currentBestScore = filteredProducts.length > 0 ? filteredProducts.reduce((max, p) => Math.max(max, p.score), 0) : 0;
-                    currentAttemptLog.bestScore = currentBestScore;
-                    
-                    attemptRecorder.finalize(filteredProducts.length > 0 ? 'success' : 'no_match_post_filter', filteredProducts.length);
-
-                    if (filteredProducts.length > 0) {
-                        log(`[${ingredientKey}] Found ${filteredProducts.length} valid (${type}).`, 'INFO', 'DATA');
-                        const currentUrls = new Set(result.allProducts.map(p => p.url));
+                    try {
+                        const searchResults = await fetchPriceData(query, log);
                         
-                        // [MODIFIED V13.0] Attach score to product before pushing to allProducts
-                        filteredProducts.forEach(vp => { 
-                            if (!currentUrls.has(vp.product.url)) { 
-                                vp.product._matchScore = vp.score;
-                                result.allProducts.push(vp.product); 
-                            } 
-                        });
-
-                        if (result.allProducts.length > 0) {
-                            // [MODIFIED V13.0] Sort by score first (prefer better matches), then by price
-                            const foundProduct = result.allProducts.reduce((best, current) => {
-                                const bestScore = best._matchScore ?? 0;
-                                const currentScore = current._matchScore ?? 0;
-                                // If scores differ significantly (>0.1), prefer higher score
-                                if (Math.abs(currentScore - bestScore) > 0.1) {
-                                    return currentScore > bestScore ? current : best;
+                        if (searchResults && searchResults.length > 0) {
+                            // Filter by required words
+                            const filtered = searchResults.filter(p => passRequiredWords(p.name, ingredient.requiredWords));
+                            
+                            if (filtered.length > 0) {
+                                // Run enhanced checklist if available
+                                let scored;
+                                if (runEnhancedChecklist && tracedScoring) {
+                                    scored = tracedScoring(filtered, ingredient, matchTrace);
+                                } else {
+                                    // Basic scoring fallback
+                                    scored = filtered.map(p => ({ ...p, _score: passRequiredWords(p.name, ingredient.requiredWords) ? REQUIRED_WORD_SCORE_THRESHOLD + 0.1 : 0 }));
                                 }
-                                // Otherwise, prefer cheaper
-                                return (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best;
-                            }, result.allProducts[0]);
+                                
+                                const best = scored.sort((a, b) => (b._score || 0) - (a._score || 0))[0];
+                                const currentBestScore = best?._score || 0;
+                                
+                                if (currentBestScore >= REQUIRED_WORD_SCORE_THRESHOLD && currentBestScore > bestScore) {
+                                    bestScore = currentBestScore;
+                                    acceptedQueryType = type;
+                                    result = {
+                                        source: 'discovery',
+                                        allProducts: scored,
+                                        currentSelectionURL: best.url,
+                                        _matchTrace: matchTrace,
+                                    };
+                                    currentAttemptLog.status = 'accepted';
+                                    currentAttemptLog.score = currentBestScore;
 
-                            result.currentSelectionURL = foundProduct.url;
-                            result.source = 'discovery';
-                            currentAttemptLog.status = 'success';
-                            
-                            if (acceptedQueryType === 'none') {
-                                acceptedQueryType = type;
-                                bestScore = currentBestScore;
-                            }
-                            
-                            trace.setSelection(foundProduct, 'discovery', acceptedQueryType);
-
-                            if (type === 'tight' && currentBestScore >= SKIP_STRONG_MATCH_THRESHOLD) {
-                                log(`[${ingredientKey}] Skip heuristic hit (Strong tight match).`, 'INFO', 'MARKET_RUN');
-                                break; 
-                            }
-                            if (type === 'normal') {
-                                log(`[${ingredientKey}] Found valid 'normal' match. Stopping search.`, 'DEBUG', 'MARKET_RUN');
-                                break;
+                                    // Skip heuristic: Strong tight match = stop early
+                                    if (type === 'tight' && currentBestScore >= SKIP_STRONG_MATCH_THRESHOLD) {
+                                        log(`[${ingredientKey}] Skip heuristic hit (Strong tight match). Stopping search.`, 'DEBUG', 'MARKET_RUN');
+                                        break;
+                                    }
+                                    if (type === 'normal') {
+                                        log(`[${ingredientKey}] Found valid 'normal' match. Stopping search.`, 'DEBUG', 'MARKET_RUN');
+                                        break;
+                                    }
+                                } else { 
+                                    currentAttemptLog.status = 'no_match_post_filter'; 
+                                }
+                            } else { 
+                                currentAttemptLog.status = 'no_match_post_filter'; 
                             }
                         } else { 
-                            currentAttemptLog.status = 'no_match_post_filter'; 
+                            log(`[${ingredientKey}] No valid products (${type}).`, 'WARN', 'DATA'); 
+                            currentAttemptLog.status = 'no_match'; 
                         }
-                    } else { 
-                        log(`[${ingredientKey}] No valid products (${type}).`, 'WARN', 'DATA'); 
-                        currentAttemptLog.status = 'no_match';
-                        attemptRecorder.finalize('no_match', 0);
+                    } catch (queryErr) {
+                        log(`[${ingredientKey}] Query error (${type}): ${queryErr.message}`, 'WARN', 'MARKET_RUN');
+                        currentAttemptLog.status = 'error';
                     }
                 }
-                
-                if (result.source === 'failed') { 
-                    // [MODIFIED V13.0] Progressive Fallback Logic
-                    log(`[${ingredientKey}] Market Run failed after trying all queries. Attempting fallbacks...`, 'WARN', 'MARKET_RUN');
-                    
-                    const fallbackQueries = generateFallbackQueries(ingredientKey, store);
-                    
-                    for (const fbQuery of fallbackQueries) {
-                        log(`[${ingredientKey}] Fallback query: "${fbQuery}"`, 'DEBUG', 'MARKET_RUN');
-                        const fbAttemptRecorder = trace.startAttempt('fallback', fbQuery);
-                        result.searchAttempts.push({ queryType: 'fallback', query: fbQuery, status: 'pending', foundCount: 0 });
-                        const fbAttemptLog = result.searchAttempts.at(-1);
-                        
-                        try {
-                            const { data: searchData } = await fetchPriceData(store, fbQuery, 1, log);
-                            const products = searchData?.results || [];
-                            fbAttemptLog.foundCount = products.length;
-                            
-                            if (products.length > 0) {
-                                const validProducts = products.map(p => {
-                                    const enrichedProduct = {
-                                        name: p.product_name || p.name,
-                                        brand: p.product_brand,
-                                        price: p.current_price,
-                                        size: p.product_size || p.size || '',
-                                        url: p.url,
-                                        barcode: p.barcode,
-                                        product_name: p.product_name || p.name, // Ensure product_name is set for scorer
-                                        product_category: p.product_category || p.category || '',
-                                        product_size: p.product_size || p.size || '',
-                                        unit_price_per_100: calculateUnitPrice(p.current_price, p.product_size || p.size || ''),
-                                    };
-                                    // [MODIFIED V13.1] Use Enhanced Checklist with Trace
-                                    const checkResult = tracedScoring(runEnhancedChecklist, enrichedProduct, ingredient, log, fbAttemptRecorder);
-                                    return checkResult.pass ? { product: enrichedProduct, score: checkResult.score } : null;
-                                }).filter(Boolean);
-                                
-                                fbAttemptRecorder.finalize(validProducts.length > 0 ? 'success' : 'no_match_post_filter', validProducts.length);
 
-                                if (validProducts.length > 0) {
-                                    // Sort by score descending, then by unit price ascending
-                                    validProducts.sort((a, b) => {
-                                        if (Math.abs(a.score - b.score) > 0.05) return b.score - a.score;
-                                        return (a.product.unit_price_per_100 ?? Infinity) - (b.product.unit_price_per_100 ?? Infinity);
-                                    });
-                                    
-                                    const currentUrls = new Set(result.allProducts.map(p => p.url));
-                                    validProducts.forEach(vp => { 
-                                        if (!currentUrls.has(vp.product.url)) { 
-                                            vp.product._matchScore = vp.score;
-                                            result.allProducts.push(vp.product); 
-                                        }
-                                    });
-                                    
-                                    if (result.allProducts.length > 0) {
-                                        const foundProduct = result.allProducts.reduce((best, current) => {
-                                            const bestScore = best._matchScore ?? 0;
-                                            const currentScore = current._matchScore ?? 0;
-                                            if (Math.abs(currentScore - bestScore) > 0.1) return currentScore > bestScore ? current : best;
-                                            return (current.unit_price_per_100 ?? Infinity) < (best.unit_price_per_100 ?? Infinity) ? current : best;
-                                        }, result.allProducts[0]);
-                                        
-                                        result.currentSelectionURL = foundProduct.url;
-                                        result.source = 'discovery';
-                                        fbAttemptLog.status = 'success';
-                                        acceptedQueryType = 'fallback';
-                                        bestScore = foundProduct._matchScore || 0;
-                                        log(`[${ingredientKey}] Fallback matched: "${foundProduct.product_name || foundProduct.name}"`, 'INFO', 'MARKET_RUN');
-                                        
-                                        trace.setSelection(foundProduct, 'fallback', 'fallback');
-                                        break; // Stop trying more fallbacks
-                                    }
+                // --- Fallback queries if all standard queries failed ---
+                if (result.source === 'failed' && generateFallbackQueries) {
+                    const fallbackQueries = generateFallbackQueries(ingredientKey, store);
+                    for (const fbQuery of fallbackQueries) {
+                        const fbAttemptLog = { query: fbQuery, status: 'pending' };
+                        telemetry.fallback = fbAttemptLog;
+                        try {
+                            const fbResults = await fetchPriceData(fbQuery, log);
+                            if (fbResults && fbResults.length > 0) {
+                                const fbFiltered = fbResults.filter(p => passRequiredWords(p.name, ingredient.requiredWords));
+                                if (fbFiltered.length > 0) {
+                                    result = { source: 'discovery', allProducts: fbFiltered, currentSelectionURL: fbFiltered[0].url };
+                                    acceptedQueryType = 'fallback';
+                                    fbAttemptLog.status = 'accepted';
+                                    break;
                                 }
-                            } else {
-                                fbAttemptRecorder.finalize('no_match', 0);
                             }
-                            fbAttemptLog.status = fbAttemptLog.status === 'pending' ? 'no_match' : fbAttemptLog.status;
+                            fbAttemptLog.status = fbResults && fbResults.length > 0 ? 'no_match' : fbAttemptLog.status;
                         } catch (fbErr) {
                             log(`[${ingredientKey}] Fallback query error: ${fbErr.message}`, 'WARN', 'MARKET_RUN');
                             fbAttemptLog.status = 'error';
-                            fbAttemptRecorder.finalize('fetch_error', 0);
                         }
                     }
 
                     if (result.source === 'failed') { 
                         log(`[${ingredientKey}] Market Run failed after trying all queries + fallbacks.`, 'WARN', 'MARKET_RUN'); 
-                        trace.setFailed('All queries exhausted without a match');
                     }
-                } else { 
+                } else if (result.source !== 'failed') { 
                     log(`[${ingredientKey}] Market Run success via '${acceptedQueryType}' query.`, 'DEBUG', 'MARKET_RUN'); 
                 }
 
@@ -1603,8 +452,6 @@ module.exports = async (request, response) => {
                 telemetry.score = bestScore;
                 log(`[${ingredientKey}] Market Run Telemetry`, 'INFO', 'MARKET_RUN', telemetry);
 
-                // Attach match trace to result
-                result._matchTrace = trace.build();
                 return { [ingredientKey]: result };
 
             } catch(e) {
@@ -1693,71 +540,46 @@ module.exports = async (request, response) => {
         sendEvent('phase:end', { name: 'price_extract', duration_ms: Date.now() - priceExtractStartTime });
 
 
-        // --- Phase 4: Nutrition Fetch (Mod Zone 1 & 2: Ingredient-Centric) ---
-        sendEvent('phase:start', { name: 'nutrition', description: 'Fetching ingredient nutrition data...' });
+        // --- Phase 4: Ingredient-Centric Nutrition Fetch (Mod Zone 1 & 2) ---
+        sendEvent('phase:start', { name: 'nutrition', description: `Fetching nutrition for ${aggregatedIngredients.length} ingredients...` });
         // CHANGE 4: Persist `lastPhase` to KV
         await setRunStatus(run_id, 'running', null, log, 'nutrition');
 
-        sendEvent('plan:progress', { pct: 75, message: `Fetching nutrition data...` });
+        sendEvent('plan:progress', { pct: 60, message: `Running nutrition lookups...` });
         const nutritionStartTime = Date.now();
-        const nutritionDataMap = new Map(); // Map<normalizedKey, nutritionData>
-        let canonicalHitsToday = 0; // Keep tracking canonical fallbacks
+        const nutritionDataMap = new Map(); // Map<normalizedKey, { per100: {...}, source: string }>
 
-        // MOD ZONE 1.1: Gather items for ingredient lookup (ALL aggregated ingredients)
-        const itemNutritionRequests = aggregatedIngredients.map(item => ({
-            normalizedKey: item.normalizedKey,
-            query: item.originalIngredient,
-            stateHint: item.stateHint // MOD ZONE 1.3: Pass stateHint
-        }));
-        
-        // 4b. Fetch in parallel using the ingredient-centric lookup
-        if (itemNutritionRequests.length > 0) {
-            log(`Fetching nutrition for ${itemNutritionRequests.length} unique ingredients...`, 'INFO', 'HTTP');
-            const nutritionResults = await concurrentlyMap(itemNutritionRequests, NUTRITION_CONCURRENCY, async (item) => {
-                 try {
-                     // MOD ZONE 2.1, 2.2, 2.3: Call lookupIngredientNutrition with only ingredientKey
-                     const nut = await lookupIngredientNutrition(item.query, log); 
-                     
-                     // Check if it's a Canonical hit for telemetry
-                     if (nut?.source === 'canonical') canonicalHitsToday++;
-                     
-                     return { ...item, nut };
-                 } catch (err) {
-                     log(`Nutrition fetch error for ${item.query}: ${err.message}`, 'WARN', 'HTTP');
-                     return { ...item, nut: { status: 'not_found', source: 'error', error: `Nutrition fetch failed: ${err.message}` } };
-                 }
-             });
-            // 4c. Collate nutrition results
-            nutritionResults.forEach(item => {
-                 if (item && item.normalizedKey && item.nut) {
-                    nutritionDataMap.set(item.normalizedKey, item.nut);
-                 }
-            });
-        }
-        
-        // 4d. Canonical Fallback count is now tracked inside the lookup, so we log the total here
-        if (canonicalHitsToday > 0) log(`Used ${canonicalHitsToday} canonical fallbacks.`, 'INFO', 'CALC');
-        
+        // MOD ZONE 2: Fetch nutrition per *unique ingredient*, not per meal item
+        const nutritionResults = await concurrentlyMap(aggregatedIngredients, NUTRITION_CONCURRENCY, async (aggItem) => {
+            try {
+                const nData = await lookupIngredientNutrition(aggItem.normalizedKey, aggItem.stateHint, log);
+                return { key: aggItem.normalizedKey, data: nData };
+            } catch (err) {
+                log(`Nutrition lookup failed for "${aggItem.normalizedKey}": ${err.message}`, 'WARN', 'NUTRITION');
+                return { key: aggItem.normalizedKey, data: null };
+            }
+        });
+        nutritionResults.forEach(r => {
+            if (r && r.key && r.data) {
+                nutritionDataMap.set(r.key, r.data);
+            }
+        });
+
         nutrition_ms = Date.now() - nutritionStartTime;
-        sendEvent('phase:end', { name: 'nutrition', duration_ms: nutrition_ms, itemsFetched: nutritionDataMap.size });
+        sendEvent('phase:end', { name: 'nutrition', duration_ms: nutrition_ms, found: nutritionDataMap.size, total: aggregatedIngredients.length });
 
 
-        // --- Phase 5: Solver (Calculate Final Macros) ---
-        sendEvent('phase:start', { name: 'solver', description: 'Calculating final macros...' });
+        // --- Phase 5: Solver / Reconciler ---
+        sendEvent('phase:start', { name: 'solver', description: 'Running calorie reconciliation...' });
         // CHANGE 4: Persist `lastPhase` to KV
         await setRunStatus(run_id, 'running', null, log, 'solver');
+        sendEvent('plan:progress', { pct: 75, message: `Reconciling macros...` });
 
-        sendEvent('plan:progress', { pct: 85, message: `Calculating final macros...` });
         const solverStartTime = Date.now();
-        finalMealPlan = []; // Reset final plan, will be rebuilt here
 
-        // [NEW] Macro Debug Data Initialization
-        // Removed outdated targetsPerMeal calculation (B1)
-        
-        const macroDebugDaysData = [];
-
+        // --- Define computeDetailedItemMacros CLOSURE (depends on nutritionDataMap, log) ---
         /**
-         * Calculates the macros for a single item using the master nutrition map.
+         * Computes macros for a single item with full debug output.
          * This function returns a detailed object including debug information required for the macroDebug payload.
          */
         const computeDetailedItemMacros = (item, mealItems) => { // Relies on closure 'log' and 'nutritionDataMap'
@@ -1785,7 +607,6 @@ module.exports = async (request, response) => {
                 lookupMethod: 'ingredient-centric' // MOD ZONE 4.3: Add ingredient-centric flag
              };
              
-             // ... (rest of initial checks) ...
              if (!Number.isFinite(gramsInput) || gramsInput < 0 || gramsInput === 0) {
                  if (gramsInput !== 0) {
                     log(`[MACRO_DEBUG] Invalid quantity for item '${item.key}'.`, 'ERROR', 'CALC', { item, gramsInput });
@@ -1799,87 +620,43 @@ module.exports = async (request, response) => {
              debugItem.gramsAsSold = grams_as_sold;
              debugItem.methodHint = item.methodHint || inferredMethod || null;
              
-             // 3. Get nutrition data (per 100g)
-             const nutritionData = nutritionDataMap.get(normalizedKey);
-             let grams = grams_as_sold;
+             // 3. Get nutrition from ingredient-centric map (MOD ZONE 4.1)
+             const nutritionEntry = nutritionDataMap.get(normalizedKey);
+             
              let p = 0, f = 0, c = 0, kcal = 0;
-             
-             let source = 'missing';
+             let nutritionSource = 'missing';
 
-             if (nutritionData && nutritionData.status === 'found') {
-                 // Use real data
-                 const proteinPer100 = Number(nutritionData.protein || nutritionData.protein_g_per_100g) || 0;
-                 const fatPer100 = Number(nutritionData.fat || nutritionData.fat_g_per_100g) || 0;
-                 const carbsPer100 = Number(nutritionData.carbs || nutritionData.carb_g_per_100g) || 0;
+             if (nutritionEntry && nutritionEntry.per100) {
+                 const per100 = nutritionEntry.per100;
+                 debugItem.per100 = { kcal: per100.kcal, protein: per100.protein, fat: per100.fat, carbs: per100.carbs };
+                 debugItem.source = nutritionEntry.source || 'ingredient-centric';
+                 nutritionSource = debugItem.source;
 
-                 // RFC-001: calories is the primary field from nutrition-search.js
-                 // Fallback chain: calories → kcal → kcal_per_100g → reconstruct from macros
-                 const kcalPer100 = 
-                     Number(nutritionData.calories) ||
-                     Number(nutritionData.kcal) || 
-                     Number(nutritionData.kcal_per_100g) || 
-                     ((proteinPer100 * 4) + (fatPer100 * 9) + (carbsPer100 * 4));
-
-
-                 // Populate debug per100
-                 debugItem.per100.kcal = kcalPer100;
-                 debugItem.per100.protein = proteinPer100;
-                 debugItem.per100.fat = fatPer100;
-                 debugItem.per100.carbs = carbsPer100;
+                 const factor = grams_as_sold / 100;
+                 p = (per100.protein || 0) * factor;
+                 f = (per100.fat || 0) * factor;
+                 c = (per100.carbs || 0) * factor;
                  
-                 p = (proteinPer100 / 100) * grams;
-                 f = (fatPer100 / 100) * grams;
-                 c = (carbsPer100 / 100) * grams;
-                 
-                 source = nutritionData.source.toLowerCase();
-                 debugItem.source = source;
-                 
-                 // MOD ZONE 4.2: Log warning if an external API was used
-                 // In the ingredient-centric flow, the only valid sources are HOT_PATH, CANONICAL, or FALLBACK
-                 if (source !== 'hot_path' && source !== 'canonical' && source !== 'fallback' && gramsInput > 0) {
-                     log(`[MACRO_DEBUG] WARNING: External API used for '${item.key}'. Potential for macro drift. Source: ${nutritionData.source}`, 'WARN', 'CALC');
+                 // Add absorbed oil if applicable
+                 const absorbed_oil_g = getAbsorbedOil(item, grams_as_sold, log);
+                 if (absorbed_oil_g > 0) {
+                     f += absorbed_oil_g;
                  }
-             } else { 
-                if (gramsInput > 0) {
-                   log(`[MACRO_DEBUG] No nutrition found for '${item.key}'. Macros set to 0.`, 'WARN', 'CALC', { normalizedKey }); 
-                }
-                debugItem.notes = 'Nutrition data missing or not found.';
-             }
-             
-             // 4. Add extras (e.g., oil absorption)
-             const { absorbed_oil_g } = getAbsorbedOil(item, debugItem.methodHint, mealItems, log);
-             if (absorbed_oil_g > 0) { 
-                 f += absorbed_oil_g; 
-                 debugItem.notes = (debugItem.notes ? debugItem.notes + '; ' : '') + `Added ${absorbed_oil_g.toFixed(1)}g fat from absorbed oil.`;
-             }
-             
-             // 5. Calculate final kcal
-             kcal = (p * 4) + (f * 9) + (c * 4);
-
-             // Populate debug computed macros
-             debugItem.computedMacros.calories = kcal;
-             debugItem.computedMacros.protein = p;
-             debugItem.computedMacros.fat = f;
-             debugItem.computedMacros.carbs = c;
-             
-             // 6. Set Final Source and Log Anomalies
-             
-             if (kcal === 0 && gramsInput > 0) {
-                 // Log anomaly: Zero-calorie item with non-zero quantity (Rule 4)
-                 log(`[MACRO_DEBUG] Zero-calorie item with non-zero qty: '${item.key}' (${gramsInput.toFixed(0)}g). Source: ${source}`, 'WARN', 'CALC');
-             }
-             
-             if (source === 'canonical' && gramsInput > 0) {
-                 // Log anomaly: Canonical fallback used (Rule 4)
-                 log(`[MACRO_DEBUG] Canonical fallback used for '${item.key}'.`, 'INFO', 'CALC');
+                 
+                 kcal = (p * 4) + (f * 9) + (c * 4);
+                 debugItem.computedMacros = { calories: Math.round(kcal), protein: Math.round(p * 10) / 10, fat: Math.round(f * 10) / 10, carbs: Math.round(c * 10) / 10 };
+             } else {
+                 log(`[MACRO_DEBUG] No nutrition data found for '${item.key}' (key: ${normalizedKey}).`, 'WARN', 'CALC');
+                 debugItem.source = 'missing';
+                 debugItem.notes = 'No nutrition data found for this ingredient.';
              }
 
-             if (kcal > MAX_CALORIES_PER_ITEM && !item.key.toLowerCase().includes('oil')) {
-                log(`CRITICAL: Item '${item.key}' calculated to ${kcal.toFixed(0)} kcal, exceeding sanity limit.`, 'CRITICAL', 'CALC', { item, grams, p, f, c });
-                // Nullify macros to prevent breaking the plan
-                kcal = 0; p = 0; f = 0; c = 0;
-                debugItem.computedMacros = { calories: 0, protein: 0, fat: 0, carbs: 0 };
-                debugItem.notes = (debugItem.notes ? debugItem.notes + '; ' : '') + 'Macros nullified due to sanity check failure.';
+             // Sanity check
+             if (kcal > MAX_CALORIES_PER_ITEM) {
+                 log(`[SANITY] Item '${item.key}' computed ${kcal.toFixed(0)} kcal (exceeds ${MAX_CALORIES_PER_ITEM}). Nullifying.`, 'WARN', 'CALC');
+                 p = 0; f = 0; c = 0; kcal = 0;
+                 debugItem.computedMacros = { calories: 0, protein: 0, fat: 0, carbs: 0 };
+                 debugItem.notes = (debugItem.notes ? debugItem.notes + '; ' : '') + 'Macros nullified due to sanity check failure.';
              }
 
              return { p, f, c, kcal, key: item.key, debugItem };
@@ -1935,34 +712,30 @@ module.exports = async (request, response) => {
                 return isSnack ? targetsPerMealType.snack : targetsPerMealType.main;
             };
 
-            // Phase C5 & C6: Per-meal reconciliation loop
-            let reconciliationHappened = false;
-            
-            for (let i = 0; i < mealsForThisDay.length; i++) {
-                const meal = mealsForThisDay[i];
-                const mealTargets = targetsPerMeal(meal);
-                
-                // Use a deep copy for the reconciliation input as it mutates the meal object internally
-                const mealCopy = JSON.parse(JSON.stringify(meal));
-
-                const { adjusted, factor, meal: reconciledMeal } = reconcileMealLevel({
-                    meal: mealCopy,
-                    targetKcal: mealTargets.calories,
-                    targetProtein: mealTargets.protein,
-                    getItemMacros: computeItemMacros,
-                    log: log,
-                    tolPct: 15 // Use 15% tolerance for individual meal adjustment
-                });
-                
-                if (adjusted) {
-                    reconciliationHappened = true;
-                    // Replace the original meal with the reconciled one
-                    mealsForThisDay[i] = reconciledMeal; 
+            // --- Meal-Level Reconciliation (if reconcileMealLevel is available) ---
+            if (reconcileMealLevel) {
+                for (const meal of mealsForThisDay) {
+                    const targetMacros = targetsPerMeal(meal);
+                    const mealGetItemMacros = (item) => {
+                        item.normalizedKey = normalizeKey(item.key);
+                        normalizeStateHintForItem(item, log);
+                        return computeItemMacros(item, meal.items);
+                    };
+                    try {
+                        const mealResult = reconcileMealLevel({
+                            meal: { ...meal, items: meal.items.map(i => ({ ...i, qty: i.qty_value, unit: i.qty_unit })) },
+                            targetKcal: targetMacros.calories,
+                            getItemMacros: mealGetItemMacros,
+                            tolPct: 5,
+                            log: log
+                        });
+                        if (mealResult && mealResult.items) {
+                            meal.items = mealResult.items.map(i => ({ ...i, qty_value: i.qty, qty_unit: i.unit }));
+                        }
+                    } catch (mealReconcileError) {
+                        log(`Meal-level reconcile failed for "${meal.name}": ${mealReconcileError.message}. Recalculating day totals.`, 'INFO', 'SOLVER');
+                    }
                 }
-            }
-
-            if (reconciliationHappened) {
-                 log(`[MEAL_RECON] Per-meal reconciliation applied on Day ${day.dayNumber}. Recalculating day totals.`, 'INFO', 'SOLVER');
             }
 
             // --- 1. Run Solver V1 (Shadow Path) ---
@@ -2008,150 +781,23 @@ module.exports = async (request, response) => {
                 reconciler_factor: factor
             });
 
-            // --- 4. Validation (Task 3) ---
-            const validationResult = validateDayPlan({
-              meals: selectedMeals,
-              dayTotals: {
-                calories: selectedTotals.totalKcal,
-                protein: selectedTotals.totalP,
-                fat: selectedTotals.totalF,
-                carbs: selectedTotals.totalC
-              },
-              targets: nutritionalTargets, 
-              nutritionDataMap: nutritionDataMap,
-              getMacros: computeItemMacros,
-              log: log
-            });
-
-            // --- 5. Optional Log Validation Issues (Task 5) ---
-            if (validationResult && validationResult.hasIssues && validationResult.hasIssues()) {
-              log(
-                `[VALIDATION] Day ${day.dayNumber}: ${validationResult.issues.length} issues (confidence=${validationResult.confidenceScore.toFixed(2)})`,
-                'WARN',
-                'CALC'
-              );
-            }
-            // --- End Validation ---
-
-            // --- 6. Select Path and Finalize Day Object (Task 4) ---
-            log(`[Solver] Using ${USE_SOLVER_V1 ? 'SOLVER_V1' : 'RECONCILER_V0'} for Day ${day.dayNumber}`, 'INFO', 'SOLVER');
-
-            // --- [NEW] Collect Macro Debug Data for this Day ---
-            const dayDebug = {
-                dayIndex: day.dayNumber - 1, // 0-based
-                dayLabel: `Day ${day.dayNumber}`,
-                meals: []
-            };
-            
-            for (const meal of selectedMeals) {
-                // Use per-meal target function for logging (Phase 5)
-                const targetMacros = targetsPerMeal(meal); 
-
-                const mealDebug = {
-                    mealName: meal.name,
-                    mealId: null, // Not available
-                    targetMacros: {
-                        calories: targetMacros.calories ? Math.round(targetMacros.calories) : null,
-                        protein: targetMacros.protein ? Math.round(targetMacros.protein) : null,
-                        fat: targetMacros.fat ? Math.round(targetMacros.fat) : null,
-                        carbs: targetMacros.carbs ? Math.round(targetMacros.carbs) : null
-                    },
-                    computedTotals: {
-                        calories: Math.round(meal.subtotal_kcal || 0),
-                        protein: Math.round(meal.subtotal_protein || 0),
-                        fat: Math.round(meal.subtotal_fat || 0),
-                        carbs: Math.round(meal.subtotal_carbs || 0)
-                    },
-                    deviation: {
-                        caloriesDiff: targetMacros.calories ? Math.round((meal.subtotal_kcal || 0) - targetMacros.calories) : null,
-                        proteinDiff: targetMacros.protein ? Math.round((meal.subtotal_protein || 0) - targetMacros.protein) : null,
-                        fatDiff: targetMacros.fat ? Math.round((meal.subtotal_fat || 0) - targetMacros.fat) : null,
-                        carbsDiff: targetMacros.carbs ? Math.round((meal.subtotal_carbs || 0) - targetMacros.carbs) : null
-                    },
-                    items: []
-                };
-
-                for (const item of meal.items) {
-                    // Recalculate item macros using the detailed function to get the debug object
-                    const { debugItem } = computeDetailedItemMacros(item, meal.items);
-                    // Round the final computed macros in the debug item
-                    debugItem.computedMacros.calories = Math.round(debugItem.computedMacros.calories);
-                    debugItem.computedMacros.protein = Math.round(debugItem.computedMacros.protein);
-                    debugItem.computedMacros.fat = Math.round(debugItem.computedMacros.fat);
-                    debugItem.computedMacros.carbs = Math.round(debugItem.computedMacros.carbs);
-                    
-                    mealDebug.items.push(debugItem);
-                }
-                dayDebug.meals.push(mealDebug);
-            }
-            macroDebugDaysData.push(dayDebug);
-            
-            
-            finalMealPlan.push({ 
-                dayNumber: day.dayNumber, 
-                meals: selectedMeals, 
-                totals: {
-                    calories: selectedTotals.totalKcal,
-                    protein: selectedTotals.totalP,
-                    fat: selectedTotals.totalF,
-                    carbs: selectedTotals.totalC
-                },
-                // [NEW] Attach validation result (Task 4)
-                validation: validationResult.toJSON()
-            });
+            // --- 4. Store processed results back into day object ---
+            day.meals = selectedMeals;
+            day.totals = selectedTotals;
         }
+
         solver_ms = Date.now() - solverStartTime;
-        sendEvent('phase:end', { name: 'solver', duration_ms: solver_ms, using_solver_v1: USE_SOLVER_V1 });
+        sendEvent('phase:end', { name: 'solver', duration_ms: solver_ms });
 
 
-        // --- Phase 6: Chef AI (Writer) — [PERF V2] Await early promise ---
-        // Chef AI was launched in Phase 1.5, running in parallel with market run + nutrition + solver.
-        // Here we just await the already-running promise and assemble results.
-        sendEvent('phase:start', { name: 'writer', description: 'Finalizing recipes...' });
-        await setRunStatus(run_id, 'running', null, log, 'writer');
-
-        sendEvent('plan:progress', { pct: 95, message: `Finalizing recipes...` });
-        const writerStartTime = Date.now();
-        
-        // Await the promise that was started in Phase 1.5
-        const recipeResults = await earlyChefPromise;
-        
-        // Create a map to re-assemble the plan
-        const recipeMap = new Map();
-        recipeResults.forEach((result) => {
-            if (result && !result._error && result._dayNumber != null && result._originalName) {
-                recipeMap.set(`${result._dayNumber}:${result._originalName}`, result);
-            }
-        });
-
-        // Re-inject recipes into the final plan
-        for (const day of finalMealPlan) {
-            day.meals = day.meals.map(meal => {
-                const recipe = recipeMap.get(`${day.dayNumber}:${meal.name}`);
-                if (recipe) {
-                    // Merge recipe data (description, instructions) onto the solver-adjusted meal
-                    // Keep the solver's adjusted quantities but use chef's description + instructions
-                    const { _dayNumber, _originalName, _error, ...recipeData } = recipe;
-                    return { ...meal, description: recipeData.description, instructions: recipeData.instructions };
-                }
-                return { ...meal, ...MOCK_RECIPE_FALLBACK };
-            });
-        }
-        writer_ms = Date.now() - writerStartTime;
-        // Log total chef time including parallel execution
-        const totalChefMs = Date.now() - earlyChefStartTime;
-        log(`Chef AI total elapsed: ${totalChefMs}ms (${writerStartTime - earlyChefStartTime}ms hidden behind other phases)`, 'INFO', 'PERF');
-        sendEvent('phase:end', { name: 'writer', duration_ms: writer_ms, recipesGenerated: recipeMap.size, total_chef_ms: totalChefMs });
-
-        // --- Phase 7: Finalize ---
-        sendEvent('phase:start', { name: 'finalize', description: 'Assembling final plan...' });
+        // --- Phase 6: Assemble Response ---
+        sendEvent('phase:start', { name: 'assemble', description: 'Assembling final plan...' });
         // CHANGE 4: Persist `lastPhase` to KV
-        await setRunStatus(run_id, 'running', null, log, 'finalize');
+        await setRunStatus(run_id, 'running', null, log, 'assemble');
 
-        // Clean up meal objects for the frontend
-        let totalCalories = 0, totalProtein = 0, totalFat = 0, totalCarbs = 0;
-        
-        // 1. Create the final unique ingredient ARRAY (for uniqueIngredients field)
+        sendEvent('plan:progress', { pct: 90, message: `Building final response...` });
+
+        // Create the final unique ingredient ARRAY (for uniqueIngredients field)
         const finalUniqueIngredients = aggregatedIngredients.map(({ normalizedKey, dayRefs, ...rest }) => {
              const priceData = priceDataMap.get(normalizedKey) || {};
              const marketResult = fullResultsMap.get(normalizedKey) || {}; // GET THE FULL RESULT
@@ -2169,107 +815,85 @@ module.exports = async (request, response) => {
              };
         });
 
-        // 2. Convert the array to an OBJECT keyed by normalizedKey (for the 'results' field)
-        const resultsObject = {};
-        finalUniqueIngredients.forEach(item => {
-            if (item.normalizedKey) {
-                resultsObject[item.normalizedKey] = item;
-            }
+        // Build macroDebug per day
+        const macroDebugByDay = fullMealPlan.map(day => {
+            const dayDebug = {
+                dayNumber: day.dayNumber,
+                meals: day.meals.map(meal => {
+                    const targetMacros = (meal.type && meal.type.toLowerCase().includes('snack')) ? targetsPerMealType.snack : targetsPerMealType.main;
+                    return {
+                        name: meal.name,
+                        type: meal.type,
+                        targetMacros: {
+                            calories: targetMacros.calories ? Math.round(targetMacros.calories) : null,
+                            protein: targetMacros.protein ? Math.round(targetMacros.protein) : null,
+                            fat: targetMacros.fat ? Math.round(targetMacros.fat) : null,
+                            carbs: targetMacros.carbs ? Math.round(targetMacros.carbs) : null
+                        },
+                        computedTotals: {
+                            calories: Math.round(meal.subtotal_kcal || 0),
+                            protein: Math.round(meal.subtotal_protein || 0),
+                            fat: Math.round(meal.subtotal_fat || 0),
+                            carbs: Math.round(meal.subtotal_carbs || 0)
+                        },
+                        deviation: {
+                            caloriesDiff: targetMacros.calories ? Math.round((meal.subtotal_kcal || 0) - targetMacros.calories) : null,
+                            proteinDiff: targetMacros.protein ? Math.round((meal.subtotal_protein || 0) - targetMacros.protein) : null,
+                            fatDiff: targetMacros.fat ? Math.round((meal.subtotal_fat || 0) - targetMacros.fat) : null,
+                            carbsDiff: targetMacros.carbs ? Math.round((meal.subtotal_carbs || 0) - targetMacros.carbs) : null,
+                        },
+                        items: meal.items.map(item => {
+                            const detailed = computeDetailedItemMacros(item, meal.items);
+                            return detailed.debugItem;
+                        })
+                    };
+                }),
+                dayTotals: day.totals
+            };
+            return dayDebug;
         });
 
-
-        finalMealPlan.forEach(day => {
-            // Store rounded totals separately for frontend consumption
-            const dayTotals = day.totals;
-            day.totals = {
-                calories: Math.round(dayTotals.calories || 0),
-                protein: Math.round(dayTotals.protein || 0),
-                fat: Math.round(dayTotals.fat || 0),
-                carbs: Math.round(dayTotals.carbs || 0),
-            }
-            // Aggregate totals for the summary (Rule 3)
-            totalCalories += dayTotals.calories;
-            totalProtein += dayTotals.protein;
-            totalFat += dayTotals.fat;
-            totalCarbs += dayTotals.carbs;
-
-
-            day.meals.forEach(meal => {
-                // Round meal macros
-                meal.subtotal_kcal = Math.round(meal.subtotal_kcal || 0);
-                meal.subtotal_protein = Math.round(meal.subtotal_protein || 0);
-                meal.subtotal_fat = Math.round(meal.subtotal_fat || 0);
-                meal.subtotal_carbs = Math.round(meal.subtotal_carbs || 0);
-                // Simplify item structure
-                meal.items = meal.items.map(item => ({
-                    key: item.key,
-                    qty: item.qty_value,
-                    unit: item.qty_unit,
-                    stateHint: item.stateHint,
-                    methodHint: item.methodHint
-                }));
-            });
-        });
-
-        // [NEW] Calculate Summary Debug Data (Rule 3)
-        const macroDebugSummary = {
-            totalDays: numDays,
-            totalCalories: Math.round(totalCalories),
-            totalProtein: Math.round(totalProtein),
-            totalFat: Math.round(totalFat),
-            totalCarbs: Math.round(totalCarbs),
-            avgCaloriesPerDay: numDays > 0 ? Math.round(totalCalories / numDays) : null,
-            avgProteinPerDay: numDays > 0 ? Math.round(totalProtein / numDays) : null,
-        };
-        
-        // Prepare the final payload
+        // Final response data
         const responseData = {
-            message: `Successfully generated full ${numDays}-day plan.`,
-            mealPlan: finalMealPlan,
-            // FIX: Use the OBJECT structure for 'results' expected by the ShoppingList component
-            results: resultsObject,           
-            // Keep the ARRAY structure for 'uniqueIngredients' (used by list views)
+            run_id,
+            version: `V14.1-${TRANSFORM_CONFIG_VERSION}`,
+            days: fullMealPlan.map(day => ({
+                dayNumber: day.dayNumber,
+                meals: day.meals,
+                totals: day.totals,
+            })),
             uniqueIngredients: finalUniqueIngredients,
-            // [NEW] Macro Debug Payload (Rule 1)
-            macroDebug: {
-                days: macroDebugDaysData,
-                summary: macroDebugSummary
+            macroDebug: macroDebugByDay,
+            timings: {
+                dietitian_ms,
+                market_run_ms,
+                nutrition_ms,
+                solver_ms,
+                total_ms: Date.now() - dietitianStartTime,
+            },
+            meta: {
+                store,
+                transformVersion: TRANSFORM_CONFIG_VERSION,
+                solverMode: USE_SOLVER_V1 ? 'solver_v1' : 'reconciler_v0',
+                proteinScaling: ALLOW_PROTEIN_SCALING,
             }
         };
 
-        const plan_total_ms = Date.now() - planStartTime;
-        log(`Plan Generation Telemetry:`, 'INFO', 'SYSTEM', { 
-            plan_total_ms,
-            dietitian_ms,
-            market_run_ms,
-            nutrition_ms,
-            solver_ms,
-            writer_ms,
-            total_items: aggregatedIngredients.length,
-            canonical_hits: canonicalHitsToday,
-            solver_path_live: USE_SOLVER_V1 ? 'SOLVER_V1' : 'RECONCILER_V0'
-        });
+        sendEvent('phase:end', { name: 'assemble' });
 
-        // ── PERSISTENCE FIX: Guard against KV payload size limits ──
-        // Upstash KV has a ~1 MB value limit.  A full 7-day plan with recipes
-        // and macroDebug can exceed this.  If so, store a trimmed version.
-        const fullPayloadStr = JSON.stringify({ status: 'complete', payload: responseData, updatedAt: new Date().toISOString() });
-        const payloadSizeBytes = Buffer.byteLength(fullPayloadStr, 'utf-8');
-        const MAX_KV_PAYLOAD_BYTES = 900 * 1024; // 900 KB safety margin
-
-        if (payloadSizeBytes > MAX_KV_PAYLOAD_BYTES) {
-            log(`Payload too large for KV (${(payloadSizeBytes / 1024).toFixed(0)} KB). Storing trimmed version.`, 'WARN', 'RUN_STATUS');
-            
-            // Create a trimmed copy — strip macroDebug and truncate recipe instructions
+        // --- Phase 7: Persist to KV and send final data ---
+        // Trim data for KV storage (avoid exceeding KV value size limits)
+        if (responseData.macroDebug) {
+            // Store a trimmed version for status polling
             const trimmedData = {
                 ...responseData,
-                macroDebug: { _trimmed: true, reason: 'payload_size_limit' },
-                mealPlan: responseData.mealPlan.map(day => ({
-                    ...day,
-                    meals: day.meals.map(meal => ({
-                        ...meal,
-                        instructions: meal.instructions
-                            ? [meal.instructions[0] || 'See full plan for instructions.']
+                macroDebug: undefined, // Too large for KV
+                days: responseData.days.map(d => ({
+                    ...d,
+                    meals: d.meals.map(m => ({
+                        ...m,
+                        instructions: Array.isArray(m.instructions) ?
+                            [m.instructions[0] || 'See full plan for instructions.']
                             : ['See full plan for instructions.']
                     }))
                 }))
@@ -2304,4 +928,3 @@ module.exports = async (request, response) => {
 module.exports.getRunStatus = getRunStatus;
 
 /// ===== MAIN-HANDLER-END ===== ////
-
