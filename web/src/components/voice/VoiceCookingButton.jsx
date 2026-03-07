@@ -2,6 +2,8 @@
 // =============================================================================
 // VoiceCookingButton — "Voice Cooking" CTA for recipe cards / modals
 //
+// REVAMP v3.0: Friendlier copy, subtle cooking-themed shimmer
+//
 // [FIX v2.1] Import includes explicit .jsx extension for Vercel Linux compat.
 // =============================================================================
 
@@ -12,6 +14,11 @@ const BUTTON_KEYFRAMES = `
 @keyframes vcb-shimmer {
   0% { background-position: -200% center; }
   100% { background-position: 200% center; }
+}
+@keyframes vcb-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-3deg); }
+  75% { transform: rotate(3deg); }
 }
 `;
 
@@ -36,27 +43,28 @@ const VoiceCookingButton = ({ meal, isDark = false }) => {
         style={{
           display: 'inline-flex',
           alignItems: 'center',
-          gap: '8px',
-          padding: '10px 20px',
-          borderRadius: '12px',
+          gap: '10px',
+          padding: '12px 24px',
+          borderRadius: '14px',
           border: 'none',
           background: isDark
             ? 'linear-gradient(135deg, rgba(99,102,241,0.2), rgba(139,92,246,0.2))'
             : 'linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.1))',
           color: isDark ? '#a5b4fc' : '#6366f1',
-          fontSize: '0.85rem',
+          fontSize: '0.88rem',
           fontWeight: 700,
           cursor: 'pointer',
           transition: 'all 0.2s ease',
           position: 'relative',
           overflow: 'hidden',
+          fontFamily: 'inherit',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = isDark
             ? 'linear-gradient(135deg, rgba(99,102,241,0.3), rgba(139,92,246,0.3))'
             : 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15))';
           e.currentTarget.style.transform = 'translateY(-1px)';
-          e.currentTarget.style.boxShadow = '0 4px 12px rgba(99,102,241,0.2)';
+          e.currentTarget.style.boxShadow = '0 6px 16px rgba(99,102,241,0.2)';
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = isDark
@@ -65,25 +73,28 @@ const VoiceCookingButton = ({ meal, isDark = false }) => {
           e.currentTarget.style.transform = 'translateY(0)';
           e.currentTarget.style.boxShadow = 'none';
         }}
-        aria-label="Start voice cooking"
+        aria-label="Start hands-free voice cooking"
       >
+        {/* Chef hat icon */}
+        <span style={{ fontSize: '1.1rem', display: 'inline-flex' }}>👨‍🍳</span>
+        Cook Hands-Free
         {/* Mic icon */}
         <svg
-          width="16"
-          height="16"
+          width="15"
+          height="15"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           strokeWidth="2.5"
           strokeLinecap="round"
           strokeLinejoin="round"
+          style={{ opacity: 0.7 }}
         >
           <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
           <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
           <line x1="12" y1="19" x2="12" y2="23" />
           <line x1="8" y1="23" x2="16" y2="23" />
         </svg>
-        Voice Cooking
       </button>
 
       {/* Full-screen voice cooking overlay */}
