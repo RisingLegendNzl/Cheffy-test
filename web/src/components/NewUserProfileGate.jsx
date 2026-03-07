@@ -1,6 +1,10 @@
 // web/src/components/NewUserProfileGate.jsx
 // Full-screen onboarding gate shown to new users on first login.
 // Requires the user to enter a name before they can proceed to the app.
+//
+// FIX Issue 5: Added `keep-light` class to the card container so that
+// dark-mode CSS overrides in theme-variables.css do not bleed into the
+// onboarding UI (input fields, labels, backgrounds).
 
 import React, { useState } from 'react';
 import { ChefHat, ArrowRight, User, Sparkles } from 'lucide-react';
@@ -40,8 +44,7 @@ const NewUserProfileGate = ({ formData, onChange, onComplete, saving = false }) 
     };
 
     const handleNameChange = (e) => {
-        setTouched(true);
-        setError('');
+        if (error) setError('');
         onChange(e);
     };
 
@@ -49,54 +52,62 @@ const NewUserProfileGate = ({ formData, onChange, onComplete, saving = false }) 
         <div
             className="fixed inset-0 flex items-center justify-center p-4"
             style={{
-                zIndex: 10000,
-                background: 'linear-gradient(135deg, #eef2ff 0%, #faf5ff 50%, #f0fdf4 100%)',
+                zIndex: 9999,
+                background: 'linear-gradient(135deg, #eef2ff 0%, #faf5ff 50%, #eff6ff 100%)',
             }}
         >
+            {/* ── Card — keep-light prevents ALL dark-mode CSS overrides ── */}
             <div
-                className="w-full max-w-md rounded-2xl overflow-hidden"
+                className="keep-light w-full max-w-md rounded-2xl overflow-hidden animate-scaleIn"
                 style={{
-                    backgroundColor: '#fff',
-                    boxShadow: SHADOWS['2xl'],
+                    backgroundColor: '#ffffff',
+                    boxShadow: SHADOWS['2xl'] || '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
                 }}
             >
-                {/* Gradient top bar */}
+                {/* Decorative top strip */}
                 <div
-                    className="h-1.5"
                     style={{
-                        background: `linear-gradient(90deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]})`,
+                        height: '4px',
+                        background: 'linear-gradient(90deg, #6366f1, #8b5cf6, #a855f7)',
                     }}
                 />
 
-                {/* Header area */}
-                <div className="pt-8 pb-4 px-8 text-center">
+                {/* Header section */}
+                <div className="keep-light text-center pt-8 pb-4 px-8">
                     <div
-                        className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center"
+                        className="mx-auto mb-4 flex items-center justify-center rounded-2xl"
                         style={{
-                            background: `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]})`,
+                            width: '64px',
+                            height: '64px',
+                            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                            boxShadow: '0 4px 14px rgba(99, 102, 241, 0.35)',
                         }}
                     >
-                        <ChefHat className="text-white" size={32} />
+                        <ChefHat size={32} color="#ffffff" />
                     </div>
-
                     <h1
                         className="text-2xl font-bold mb-2"
-                        style={{ color: COLORS.gray[900] }}
+                        style={{ color: '#111827' }}
                     >
-                        Welcome to Cheffy!
+                        Welcome to Cheffy!{' '}
+                        <Sparkles
+                            size={20}
+                            className="inline -mt-1"
+                            style={{ color: '#f59e0b' }}
+                        />
                     </h1>
-                    <p className="text-sm" style={{ color: COLORS.gray[500] }}>
+                    <p className="text-sm" style={{ color: '#6b7280' }}>
                         Let's get you started. First, tell us your name so we can personalise your experience.
                     </p>
                 </div>
 
                 {/* Form */}
-                <form onSubmit={handleSubmit} className="px-8 pb-8">
+                <form onSubmit={handleSubmit} className="keep-light px-8 pb-8">
                     <div className="mb-6">
                         <label
                             htmlFor="onboarding-name"
                             className="block text-sm font-semibold mb-2"
-                            style={{ color: COLORS.gray[700] }}
+                            style={{ color: '#374151' }}
                         >
                             <User size={14} className="inline mr-1.5 -mt-0.5" />
                             Your Name
@@ -114,29 +125,26 @@ const NewUserProfileGate = ({ formData, onChange, onComplete, saving = false }) 
                             style={{
                                 border: `2px solid ${
                                     touched && !isValid
-                                        ? COLORS.error?.main || '#ef4444'
-                                        : COLORS.gray[200]
+                                        ? '#ef4444'
+                                        : '#e5e7eb'
                                 }`,
-                                backgroundColor: COLORS.gray[50],
-                                color: COLORS.gray[900],
+                                backgroundColor: '#f9fafb',
+                                color: '#111827',
                             }}
                             onFocus={(e) => {
-                                e.target.style.borderColor = COLORS.primary[400];
-                                e.target.style.boxShadow = `0 0 0 3px ${COLORS.primary[100]}`;
+                                e.target.style.borderColor = COLORS.primary?.[400] || '#818cf8';
+                                e.target.style.boxShadow = `0 0 0 3px ${COLORS.primary?.[100] || 'rgba(99,102,241,0.15)'}`;
                             }}
                             onBlur={(e) => {
                                 e.target.style.borderColor =
                                     touched && !isValid
-                                        ? COLORS.error?.main || '#ef4444'
-                                        : COLORS.gray[200];
+                                        ? '#ef4444'
+                                        : '#e5e7eb';
                                 e.target.style.boxShadow = 'none';
                             }}
                         />
-                        {touched && error && (
-                            <p
-                                className="mt-2 text-sm"
-                                style={{ color: COLORS.error?.main || '#ef4444' }}
-                            >
+                        {touched && !isValid && error && (
+                            <p className="text-sm mt-1.5" style={{ color: '#ef4444' }}>
                                 {error}
                             </p>
                         )}
@@ -145,39 +153,25 @@ const NewUserProfileGate = ({ formData, onChange, onComplete, saving = false }) 
                     <button
                         type="submit"
                         disabled={saving}
-                        className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-white font-bold text-base transition-all duration-200"
+                        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-bold transition-all duration-200 hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
                         style={{
-                            background:
-                                saving
-                                    ? COLORS.gray[300]
-                                    : `linear-gradient(135deg, ${COLORS.primary[500]}, ${COLORS.secondary[500]})`,
+                            background: saving
+                                ? '#9ca3af'
+                                : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                             boxShadow: saving
                                 ? 'none'
-                                : `0 4px 14px rgba(99, 102, 241, 0.35)`,
-                            cursor: saving ? 'not-allowed' : 'pointer',
+                                : '0 4px 14px rgba(99, 102, 241, 0.35)',
                         }}
                     >
                         {saving ? (
-                            <>
-                                <span className="animate-spin inline-block w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
-                                Saving…
-                            </>
+                            'Setting up…'
                         ) : (
                             <>
-                                Continue to Cheffy
+                                Let's Get Started
                                 <ArrowRight size={18} />
                             </>
                         )}
                     </button>
-
-                    {/* Subtle footer note */}
-                    <p
-                        className="mt-4 text-center text-xs flex items-center justify-center gap-1"
-                        style={{ color: COLORS.gray[400] }}
-                    >
-                        <Sparkles size={12} />
-                        You can update your full profile later
-                    </p>
                 </form>
             </div>
         </div>
