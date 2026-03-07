@@ -14,6 +14,7 @@ import MainApp from './components/MainApp';
 // --- Hook Imports ---
 import useAppLogic from './hooks/useAppLogic';
 import { useResponsive } from './hooks/useResponsive';
+import { ThemeProvider } from './contexts/ThemeContext';
 
 // --- PERSISTENCE FIX: Import cache cleanup ---
 import { clearAll as clearLocalPlanCache } from './services/localPlanCache';
@@ -291,9 +292,9 @@ const App = () => {
     }
 
     return (
-        <>
+        <ThemeProvider userId={userId}>
             {showLandingPage ? (
-                <LandingPage 
+                <LandingPage
                     onSignUp={handleSignUp}
                     onSignIn={handleSignIn}
                     authLoading={authLoading}
@@ -421,7 +422,7 @@ setShowProductMatchTrace={logic.setShowProductMatchTrace || (() => {})}
                     onCompleteProfileSetup={handleCompleteProfileSetup}
                 />
             )}
-        </>
+        </ThemeProvider>
     );
 };
 
