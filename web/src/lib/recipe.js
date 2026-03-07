@@ -9,6 +9,8 @@
 //     context string that the ElevenLabs agent needs
 // =============================================================================
 
+import { humanize } from '../helpers/humanize.js';
+
 /**
  * Demo recipe used when no meal is provided (e.g. direct /voice navigation).
  */
@@ -65,7 +67,8 @@ export function formatRecipeForAgent(meal) {
     meal.items.forEach((item, i) => {
       const qty = item.qty_value ?? item.qty ?? '';
       const unit = item.qty_unit ?? item.unit ?? '';
-      const name = item.key ?? item.name ?? 'unknown';
+      // FIX Issue 7: humanize ingredient key for display
+      const name = humanize(item.key ?? item.name ?? 'unknown');
       lines.push(`  ${i + 1}. ${qty}${unit ? ' ' + unit : ''} ${name}`);
     });
   }
@@ -126,6 +129,11 @@ Remember: speak naturally, keep it short, and make cooking fun!`;
 
 /**
  * Builds the first message the agent sends when the session starts.
+ *
+ * NOTE (Issue 8 fix): This message is passed to ElevenLabs as `firstMessage`
+ * in the session overrides. The SDK will speak it and also fire an onMessage
+ * event for it. We no longer manually inject it into the transcript in the
+ * hook — the onMessage handler takes care of it — to avoid duplication.
  *
  * @param {object} meal - A Cheffy meal object
  * @returns {string} First message string
