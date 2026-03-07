@@ -790,8 +790,9 @@ RULES:
 3.  You MUST also generate a 'instructions' array, with each element being one step.
 4.  Instructions MUST be safe, clear, and logical.
 5.  **FOOD SAFETY IS CRITICAL:**
-    * ALWAYS include a step to "cook chicken/pork thoroughly until no longer pink and juices run clear."
-    * ALWAYS include a step to "wash all produce (vegetables/fruit) thoroughly."
+    * If the recipe contains ANY meat or poultry (chicken, pork, beef, lamb, turkey, mince, etc.), include a step to cook it thoroughly to a safe internal temperature.
+    * If the recipe contains ANY produce (vegetables or fruit), include a step to wash them thoroughly.
+    * Do NOT include meat cooking safety instructions for recipes that contain NO meat (e.g. oatmeal, salads, smoothies).
 6.  Be concise. Aim for 4-7 steps.
 7.  Do NOT add any ingredients not in the provided list, except for "salt, pepper, and water" which are assumed.
 
