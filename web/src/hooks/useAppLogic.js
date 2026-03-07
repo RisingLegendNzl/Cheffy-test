@@ -207,16 +207,6 @@ const useAppLogic = ({
                         nutritionalTargets: nutritionalTargets
                     });
 
-                    if (planPersistence && planPersistence.autoSavePlan) {
-                        planPersistence.autoSavePlan({
-                            mealPlan: recovered.mealPlan || [],
-                            results: recovered.results || {},
-                            uniqueIngredients: recovered.uniqueIngredients || [],
-                            formData: formData,
-                            nutritionalTargets: nutritionalTargets
-                        }).catch(err => console.warn('[AUTO_SAVE] Post-refresh recovery save failed:', err.message));
-                    }
-
                     showToast('Plan recovered after refresh!', 'success');
                 } else {
                     setGenerationStatus('Previous generation could not be recovered. You can start a new one.');
@@ -273,21 +263,6 @@ const useAppLogic = ({
 
                     showToast('Plan recovered from previous session!', 'success');
 
-                    // Auto-save the recovered plan
-                    if (planPersistence && planPersistence.autoSavePlan) {
-                        try {
-                            await planPersistence.autoSavePlan({
-                                mealPlan: recovered.mealPlan || [],
-                                results: recovered.results || {},
-                                uniqueIngredients: recovered.uniqueIngredients || [],
-                                formData: formData,
-                                nutritionalTargets: nutritionalTargets
-                            });
-                        } catch (err) {
-                            console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
-                            showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
-                        }
-                    }
                 } else {
                     console.warn('[RECOVERY] Polling timed out for pending run:', pendingRun.runId);
                     setGenerationStepKey(null);
@@ -855,21 +830,8 @@ const useAppLogic = ({
                                   setShowSuccessModal(true);
                                 }, 500);
 
-                                if (planPersistence && planPersistence.autoSavePlan) {
-                                    try {
-                                        await planPersistence.autoSavePlan({
-                                            mealPlan: eventData.mealPlan || [],
-                                            results: eventData.results || {},
-                                            uniqueIngredients: eventData.uniqueIngredients || [],
-                                            formData: formData,
-                                            nutritionalTargets: nutritionalTargets
-                                        });
-                                    } catch (err) {
-                                        console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
-                                        showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
-                                    }
-                                }
-
+                                // [FIX] Auto-save removed — plans save only when user clicks "Save Plan".
+                                // cachePlan() below handles local persistence for refresh survival.
                                 cachePlan({
                                     mealPlan: eventData.mealPlan || [],
                                     results: eventData.results || {},
@@ -927,27 +889,12 @@ const useAppLogic = ({
 
                             showToast('Plan recovered after connection interruption!', 'success');
                             
-                            if (planPersistence && planPersistence.autoSavePlan) {
-                                try {
-                                    await planPersistence.autoSavePlan({
-                                        mealPlan: recovered.mealPlan || [],
-                                        results: recovered.results || {},
-                                        uniqueIngredients: recovered.uniqueIngredients || [],
-                                        formData: formData,
-                                        nutritionalTargets: nutritionalTargets
-                                    });
-                                } catch (err) {
-                                    console.error('[AUTO_SAVE] Auto-save failed after retries:', err.message);
-                                    showToast('Plan generated but failed to save. Use "Save Plan" to save manually.', 'warning');
-                                }
-                            }
-
                             cachePlan({
                                 mealPlan: recovered.mealPlan || [],
                                 results: recovered.results || {},
                                 uniqueIngredients: recovered.uniqueIngredients || [],
-                                        formData: formData,
-                                        nutritionalTargets: nutritionalTargets
+                                formData: formData,
+                                nutritionalTargets: nutritionalTargets
                             });
                             clearRunState();
                             return;
@@ -970,7 +917,7 @@ const useAppLogic = ({
                  setTimeout(() => setLoading(false), 2000);
             }
         
-    }, [formData, isLogOpen, recalculateTotalCost, selectedModel, showToast, nutritionalTargets, error, pollForCompletedPlan, planPersistence, getResponseErrorDetails]);
+    }, [formData, isLogOpen, recalculateTotalCost, selectedModel, showToast, nutritionalTargets, error, pollForCompletedPlan, getResponseErrorDetails]);
 
     const handleFetchNutrition = useCallback(async (product) => {
         if (!product || !product.url || nutritionCache[product.url]) { return; }
