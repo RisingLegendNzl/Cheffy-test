@@ -6,12 +6,15 @@
 // collapsible card. Expanded by default so the user can reference the
 // recipe while cooking hands-free.
 //
+// FIX Issue 7: Ingredient names are humanized (snake_case → Title Case).
+//
 // Props:
 //   meal   {object}  — Cheffy meal object
 //   isDark {boolean}
 // =============================================================================
 
 import React, { useState } from 'react';
+import { humanize } from '../../helpers/humanize.js';
 
 const ChevronDown = ({ size = 20, style }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -49,15 +52,14 @@ const RecipeCardVoice = ({ meal, isDark = false }) => {
   return (
     <div
       style={{
-        backgroundColor: t.cardBg,
-        backdropFilter: 'blur(12px)',
+        borderRadius: '14px',
         border: `1px solid ${t.cardBorder}`,
-        borderRadius: '16px',
+        backgroundColor: t.cardBg,
+        backdropFilter: 'blur(8px)',
         overflow: 'hidden',
-        transition: 'all 0.3s ease',
       }}
     >
-      {/* Header — always visible, click to toggle */}
+      {/* Clickable header */}
       <button
         onClick={() => setIsExpanded((prev) => !prev)}
         style={{
@@ -66,44 +68,27 @@ const RecipeCardVoice = ({ meal, isDark = false }) => {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '14px 18px',
-          border: 'none',
           background: 'none',
+          border: 'none',
           cursor: 'pointer',
           textAlign: 'left',
         }}
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h3
-            style={{
-              margin: 0,
-              fontSize: '1.05rem',
-              fontWeight: 700,
-              color: t.titleColor,
-              lineHeight: 1.3,
-            }}
-          >
-            📋 {meal.name}
-          </h3>
-          {meal.description && !isExpanded && (
-            <p
-              style={{
-                margin: '4px 0 0',
-                fontSize: '0.8rem',
-                color: t.descColor,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {meal.description}
-            </p>
-          )}
-        </div>
+        <span
+          style={{
+            fontSize: '0.95rem',
+            fontWeight: 700,
+            color: t.titleColor,
+            lineHeight: 1.3,
+          }}
+        >
+          📋 {meal.name}
+        </span>
         <ChevronDown
-          size={20}
+          size={18}
           style={{
             color: t.chevronColor,
-            transition: 'transform 0.25s ease',
+            transition: 'transform 0.3s ease',
             transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
             flexShrink: 0,
             marginLeft: '12px',
@@ -159,7 +144,8 @@ const RecipeCardVoice = ({ meal, isDark = false }) => {
                 {items.map((item, i) => {
                   const qty = item.qty_value ?? item.qty ?? '';
                   const unit = item.qty_unit ?? item.unit ?? '';
-                  const name = item.key ?? item.name ?? '';
+                  // FIX Issue 7: humanize snake_case ingredient names
+                  const name = humanize(item.key ?? item.name ?? '');
                   return (
                     <span
                       key={i}
