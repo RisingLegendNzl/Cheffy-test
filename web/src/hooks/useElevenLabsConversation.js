@@ -154,12 +154,14 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage }) {
         },
       });
 
-      // Add the first message to transcript immediately
-      if (firstMessage) {
-        setTranscript([
-          { role: 'agent', text: firstMessage, timestamp: Date.now() },
-        ]);
-      }
+      // ──────────────────────────────────────────────────────────────────
+      // FIX Issue 8: Do NOT manually add firstMessage to transcript here.
+      // The ElevenLabs SDK fires an `onMessage` callback when the agent
+      // speaks the firstMessage, which already appends it to the
+      // transcript via the onMessage handler above. Adding it manually
+      // here was causing the greeting to appear twice.
+      // ──────────────────────────────────────────────────────────────────
+
     } catch (err) {
       console.error('[ElevenLabs] Connect failed:', err);
       if (isMounted.current) {
