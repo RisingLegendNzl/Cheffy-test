@@ -1,18 +1,36 @@
 // web/src/contexts/ThemeContext.jsx
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
-const STORAGE_KEY = 'cheffy-theme';
+const BASE_STORAGE_KEY = 'cheffy-theme';
 const ATTRIBUTE = 'data-theme';
 
 const ThemeContext = createContext(undefined);
+
+// Track the current userId so the storage key can be scoped per user.
+let _currentUserId = null;
+
+/**
+ * Returns the localStorage key scoped to the current user.
+ * Falls back to the base key when no user is known yet.
+ */
+const getStorageKey = (uid) => {
+  if (uid) return `${BASE_STORAGE_KEY}:${uid}`;
+  return BASE_STORAGE_KEY;
+};
 
 /**
  * Reads the persisted theme from localStorage.
  * Falls back to 'dark' (the app's current default).
  */
-const getInitialTheme = () => {
+const getInitialTheme = (uid) => {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    // Try user-scoped key first
+    if (uid) {
+      const userStored = localStorage.getItem(getStorageKey(uid));
+      if (userStored === 'light' || userStored === 'dark') return userStored;
+    }
+    // Fall back to the global (legacy) key for first-time migration
+    const stored = localStorage.getItem(BASE_STORAGE_KEY);
     if (stored === 'light' || stored === 'dark') return stored;
   } catch {
     // localStorage unavailable (SSR, private mode edge-cases)
@@ -29,16 +47,25 @@ const applyThemeAttribute = (theme) => {
 };
 
 // Set the attribute immediately (before first paint) to avoid flash
-applyThemeAttribute(getInitialTheme());
+applyThemeAttribute(getInitialTheme(null));
 
-export const ThemeProvider = ({ children }) => {
-  const [theme, setThemeState] = useState(getInitialTheme);
+export const ThemeProvider = ({ children, userId }) => {
+  const [theme, setThemeState] = useState(() => getInitialTheme(userId));
+
+  // When the userId changes (login/logout/switch), re-read that user's theme
+  useEffect(() => {
+    _currentUserId = userId || null;
+    const userTheme = getInitialTheme(userId);
+    setThemeState(userTheme);
+    applyThemeAttribute(userTheme);
+  }, [userId]);
 
   // Sync attribute + localStorage whenever theme changes
   useEffect(() => {
     applyThemeAttribute(theme);
     try {
-      localStorage.setItem(STORAGE_KEY, theme);
+      // Always write to the user-scoped key
+      localStorage.setItem(getStorageKey(_currentUserId), theme);
     } catch {
       // Silently ignore storage errors
     }
