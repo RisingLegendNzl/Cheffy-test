@@ -24,9 +24,10 @@ import { useConversation } from '@elevenlabs/react';
  * @param {object} options
  * @param {string} options.systemPrompt - Full system prompt with recipe context
  * @param {string} options.firstMessage - Initial TTS message from the agent
+ * @param {string} [options.voiceId]    - ElevenLabs voice ID to use for TTS
  * @returns {object} Hook API
  */
-export function useElevenLabsConversation({ systemPrompt, firstMessage }) {
+export function useElevenLabsConversation({ systemPrompt, firstMessage, voiceId }) {
   // ── State ──
   const [sessionStatus, setSessionStatus] = useState('idle'); // idle | connecting | connected | disconnecting | error
   const [transcript, setTranscript] = useState([]); // { role: 'agent'|'user', text: string, timestamp: number }[]
@@ -140,28 +141,25 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage }) {
       startKeepAlive();
 
       // 4. Connect to ElevenLabs via signed URL
-      // The overrides allow us to inject the system prompt and first message
-      // for the Eleven v3 agent at connection time.
-      await conversation.startSession({
-        signedUrl,
-        overrides: {
-          agent: {
-            prompt: {
-              prompt: systemPrompt,
-            },
-            firstMessage: firstMessage,
-          },
+      // The overrides allow us to inject the system prompt, first message,
+      // and the selected TTS voice for the Eleven v3 agent at connection time.
+      const overrides = {
+        agent: {
+          prompt: { prompt: systemPrompt },
+          firstMessage: firstMessage,
         },
-      });
+      };
+      if (voiceId) {
+        overrides.tts = { voiceId };
+      }
+      await conversation.startSession({ signedUrl, overrides });
 
-      // ──────────────────────────────────────────────────────────────────
-      // FIX Issue 8: Do NOT manually add firstMessage to transcript here.
-      // The ElevenLabs SDK fires an `onMessage` callback when the agent
-      // speaks the firstMessage, which already appends it to the
-      // transcript via the onMessage handler above. Adding it manually
-      // here was causing the greeting to appear twice.
-      // ──────────────────────────────────────────────────────────────────
-
+      // Add the first message to transcript immediately
+      if (firstMessage) {
+        setTranscript([
+          { role: 'agent', text: firstMessage, timestamp: Date.now() },
+        ]);
+      }
     } catch (err) {
       console.error('[ElevenLabs] Connect failed:', err);
       if (isMounted.current) {
@@ -171,7 +169,7 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage }) {
       sessionGuard.current = false;
       stopKeepAlive();
     }
-  }, [conversation, systemPrompt, firstMessage, startKeepAlive, stopKeepAlive]);
+  }, [conversation, systemPrompt, firstMessage, voiceId, startKeepAlive, stopKeepAlive]);
 
   // ── Disconnect ──
   const disconnect = useCallback(async () => {
