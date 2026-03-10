@@ -1,7 +1,7 @@
 // web/src/components/wizard/PlanSetupWizard.jsx
 // UPDATED: Full dark mode support across the entire Plan Setup flow.
 import React, { useState, useCallback, useMemo } from 'react';
-import { RefreshCw, Zap, Save, FolderDown, X, ChevronRight } from 'lucide-react';
+import { RefreshCw, Zap, X, ChevronRight } from 'lucide-react';
 import { COLORS, SHADOWS } from '../../constants';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -31,10 +31,6 @@ const PlanSetupWizard = ({
   onSliderChange,
   onSubmit,
 
-  // Profile actions
-  onLoadProfile,
-  onSaveProfile,
-
   // Auth & loading states
   loading,
   isAuthReady,
@@ -62,9 +58,6 @@ const PlanSetupWizard = ({
     () => isStepValid(stepConfig.id, formData),
     [stepConfig.id, formData]
   );
-
-  const isProfileActionDisabled =
-    !isAuthReady || !userId || userId.startsWith('local_');
 
   // --- Error-clearing onChange wrapper ---
   const handleFieldChange = useCallback(
@@ -223,32 +216,6 @@ const PlanSetupWizard = ({
           Plan Setup
         </h2>
         <div className="flex items-center space-x-2">
-          <button
-            type="button"
-            onClick={onLoadProfile}
-            disabled={isProfileActionDisabled}
-            className="flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg shadow transition-colors hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              background: COLORS.info.main,
-              color: '#fff',
-            }}
-            title="Load Saved Profile"
-          >
-            <FolderDown size={14} className="mr-1" /> Load
-          </button>
-          <button
-            type="button"
-            onClick={onSaveProfile}
-            disabled={isProfileActionDisabled}
-            className="flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg shadow transition-colors hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{
-              background: COLORS.success.main,
-              color: '#fff',
-            }}
-            title="Save Current Profile"
-          >
-            <Save size={14} className="mr-1" /> Save
-          </button>
           {/* Mobile close button */}
           {onClose && (
             <button
