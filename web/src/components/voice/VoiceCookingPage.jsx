@@ -29,7 +29,7 @@
 //     covered the full viewport.
 // =============================================================================
 
-import React, { useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useCallback, useMemo, useEffect, useRef, useState } from 'react';
 import { useTheme } from '../../contexts/ThemeContext.jsx';
 import { useElevenLabsConversation } from '../../hooks/useElevenLabsConversation.js';
 import {
@@ -37,6 +37,7 @@ import {
   buildAgentSystemPrompt,
   buildFirstMessage,
 } from '../../lib/recipe.js';
+import { COOKING_VOICES, DEFAULT_VOICE_ID } from '../../lib/voiceConfig.js';
 
 import ChefHatAnimated from './ChefHatAnimated.jsx';
 import TranscriptPanel from './TranscriptPanel.jsx';
@@ -147,6 +148,8 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
   const { isDark } = useTheme();
   const meal = mealProp || DEMO_RECIPE;
 
+  const [selectedVoiceId, setSelectedVoiceId] = useState(DEFAULT_VOICE_ID);
+
   const systemPrompt = useMemo(() => buildAgentSystemPrompt(meal), [meal]);
   const firstMessage = useMemo(() => buildFirstMessage(meal), [meal]);
 
@@ -157,7 +160,7 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
     isSpeaking,
     transcript,
     error,
-  } = useElevenLabsConversation({ systemPrompt, firstMessage });
+  } = useElevenLabsConversation({ systemPrompt, firstMessage, voiceId: selectedVoiceId });
 
   // [FIX v3.0] Save scroll position on mount so we can restore it on close.
   // NO body scroll lock — the fixed overlay already covers the viewport and
@@ -329,6 +332,70 @@ const VoiceCookingPage = ({ meal: mealProp, onClose }) => {
               Hands-free cooking guidance powered by AI
             </p>
           </div>
+
+          {/* Voice selector — shown before session starts */}
+          {(isIdle || isError) && (
+            <div
+              style={{
+                animation: 'vc-slideUp 0.55s ease-out',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  color: isDark ? '#6b7280' : '#9ca3af',
+                }}
+              >
+                Chef Voice
+              </span>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  gap: '8px',
+                }}
+              >
+                {COOKING_VOICES.map((voice) => {
+                  const isSelected = selectedVoiceId === voice.voice_id;
+                  return (
+                    <button
+                      key={voice.voice_id}
+                      onClick={() => setSelectedVoiceId(voice.voice_id)}
+                      title={voice.description}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: '20px',
+                        border: isSelected
+                          ? '1.5px solid #6366f1'
+                          : `1.5px solid ${isDark ? '#2d3148' : '#e5e7eb'}`,
+                        background: isSelected
+                          ? isDark ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.10)'
+                          : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                        color: isSelected
+                          ? isDark ? '#a5b4fc' : '#4f46e5'
+                          : isDark ? '#9ca3b0' : '#6b7280',
+                        fontSize: '0.78rem',
+                        fontWeight: isSelected ? 700 : 500,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {voice.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Action button area */}
           <div
