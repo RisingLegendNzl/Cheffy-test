@@ -153,13 +153,6 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage, voiceId 
         overrides.tts = { voiceId };
       }
       await conversation.startSession({ signedUrl, overrides });
-
-      // Add the first message to transcript immediately
-      if (firstMessage) {
-        setTranscript([
-          { role: 'agent', text: firstMessage, timestamp: Date.now() },
-        ]);
-      }
     } catch (err) {
       console.error('[ElevenLabs] Connect failed:', err);
       if (isMounted.current) {
