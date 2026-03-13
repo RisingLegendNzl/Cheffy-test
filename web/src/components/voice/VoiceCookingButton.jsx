@@ -5,9 +5,22 @@
 // REVAMP v3.0: Friendlier copy, subtle cooking-themed shimmer
 //
 // [FIX v2.1] Import includes explicit .jsx extension for Vercel Linux compat.
+//
+// [FIX v3.1] Render VoiceCookingPage via createPortal to document.body.
+//   - Previously, VoiceCookingPage rendered as a DOM child of RecipeModal.
+//     On mobile, RecipeModal's gradient hero header (meal name + macro pills)
+//     would bleed through on top of the VoiceCookingPage overlay because
+//     the fixed-position overlay was trapped inside RecipeModal's stacking
+//     context (z-index: 9999 on .rm-overlay creates a new context).
+//   - By portaling to document.body, VoiceCookingPage's z-index: 10000
+//     is evaluated at the root stacking level, guaranteeing it renders
+//     above RecipeModal's header on all devices.
+//   - This is the smallest possible fix: only this file changes.
+//     RecipeModal, MealPlanDisplay, and all other consumers are untouched.
 // =============================================================================
 
 import React, { useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import VoiceCookingPage from './VoiceCookingPage.jsx';
 
 const BUTTON_KEYFRAMES = `
@@ -97,9 +110,13 @@ const VoiceCookingButton = ({ meal, isDark = false }) => {
         </svg>
       </button>
 
-      {/* Full-screen voice cooking overlay */}
-      {isOpen && (
-        <VoiceCookingPage meal={meal} onClose={handleClose} />
+      {/* [FIX v3.1] Portal to document.body so VoiceCookingPage escapes
+          RecipeModal's stacking context. This prevents the meal summary
+          header (gradient hero with name + macro pills) from rendering
+          on top of the Voice Cooking overlay on mobile. */}
+      {isOpen && createPortal(
+        <VoiceCookingPage meal={meal} onClose={handleClose} />,
+        document.body
       )}
     </>
   );
