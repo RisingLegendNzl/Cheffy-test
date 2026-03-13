@@ -1,3 +1,4 @@
+
 // web/src/hooks/useElevenLabsConversation.js
 // =============================================================================
 // useElevenLabsConversation — Custom hook for ElevenLabs Conversational AI
@@ -8,11 +9,6 @@
 //   - Transcript accumulation (agent + user messages)
 //   - AudioContext keep-alive for backgrounded tabs
 //   - Clean teardown on unmount
-//
-// [FIX] Removed manual firstMessage injection in connect() to prevent
-// duplicate intro message. The onMessage handler already captures it
-// when the SDK fires the event for the firstMessage. Added a guard
-// in onMessage to deduplicate by text content as a safety net.
 //
 // Requires: npm install @elevenlabs/react
 // =============================================================================
@@ -44,11 +40,6 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage, voiceId 
   const keepAliveCtx = useRef(null); // AudioContext for tab-hidden keep-alive
   const keepAliveOsc = useRef(null);
 
-  // [FIX] Guard ref to track whether the intro message has already been added
-  // to the transcript. Prevents duplication even if onMessage fires more than
-  // once for the same firstMessage (e.g. SDK reconnect edge cases).
-  const introMessageAdded = useRef(false);
-
   // ── ElevenLabs hook ──
   const conversation = useConversation({
     onConnect: () => {
@@ -68,18 +59,6 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage, voiceId 
       if (!isMounted.current) return;
       // ElevenLabs sends message events with { source, message } shape
       if (message?.source === 'ai' && message?.message) {
-        // [FIX] Guard: if this is the firstMessage text and we've already
-        // added it to the transcript, skip to prevent duplication.
-        if (message.message === firstMessage && introMessageAdded.current) {
-          console.log('[ElevenLabs] Intro message already in transcript, skipping duplicate');
-          return;
-        }
-
-        // Mark intro message as added if this is it
-        if (message.message === firstMessage) {
-          introMessageAdded.current = true;
-        }
-
         setTranscript((prev) => [
           ...prev,
           { role: 'agent', text: message.message, timestamp: Date.now() },
@@ -143,9 +122,6 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage, voiceId 
     setError(null);
     setTranscript([]);
 
-    // [FIX] Reset the intro message guard on each new connection
-    introMessageAdded.current = false;
-
     try {
       // 1. Request signed URL from our server
       const res = await fetch('/api/signed-url');
@@ -179,11 +155,12 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage, voiceId 
       }
       await conversation.startSession({ signedUrl, overrides });
 
-      // [FIX] REMOVED manual transcript injection of firstMessage here.
-      // The firstMessage is passed to ElevenLabs as a session override.
-      // The SDK will speak it AND fire an onMessage event for it, which
-      // the onMessage handler above already captures. Manually adding it
-      // here was causing the intro message to appear twice in the chat.
+      // Add the first message to transcript immediately
+      if (firstMessage) {
+        setTranscript([
+          { role: 'agent', text: firstMessage, timestamp: Date.now() },
+        ]);
+      }
     } catch (err) {
       console.error('[ElevenLabs] Connect failed:', err);
       if (isMounted.current) {
