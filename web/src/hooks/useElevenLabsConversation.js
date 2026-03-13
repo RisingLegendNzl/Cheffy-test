@@ -1,4 +1,3 @@
-
 // web/src/hooks/useElevenLabsConversation.js
 // =============================================================================
 // useElevenLabsConversation — Custom hook for ElevenLabs Conversational AI
@@ -155,12 +154,11 @@ export function useElevenLabsConversation({ systemPrompt, firstMessage, voiceId 
       }
       await conversation.startSession({ signedUrl, overrides });
 
-      // Add the first message to transcript immediately
-      if (firstMessage) {
-        setTranscript([
-          { role: 'agent', text: firstMessage, timestamp: Date.now() },
-        ]);
-      }
+      // NOTE (Issue 8 fix): We do NOT manually inject the firstMessage into
+      // the transcript here. The ElevenLabs SDK fires an onMessage event for
+      // the firstMessage automatically, and our onMessage handler above adds
+      // it to the transcript. Manually adding it here as well caused the
+      // introduction message to appear twice in the conversation.
     } catch (err) {
       console.error('[ElevenLabs] Connect failed:', err);
       if (isMounted.current) {
