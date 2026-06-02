@@ -29,14 +29,14 @@ try {
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
     // Change 2.1: Import LLM provider (Primary path)
-    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../utils/llm-provider.js');
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, callWithFallback, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../utils/llm-provider.js');
 } catch (e) {
     console.error("CRITICAL: Failed to import utils. Using local fallbacks.", e.message);
     var { normalizeKey } = require('../../scripts/normalize.js');
     var { toAsSold, getAbsorbedOil, TRANSFORM_VERSION, normalizeToGramsOrMl } = require('../../utils/transforms.js');
     var { reconcileNonProtein, reconcileMealLevel } = require('../../utils/reconcileNonProtein.js'); // FIX: Import reconcileMealLevel
     // Change 2.1: Import LLM provider (Fallback path)
-    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../../utils/llm-provider.js');
+    var { buildLLMRequest, parseLLMResponse, detectProvider, validateChefRecipeShape, callWithFallback, PRIMARY_MODEL, FALLBACK_MODEL, SUPPORTED_MODELS } = require('../../utils/llm-provider.js');
 }
 
 // --- [NEW] Import validation helper (Task 1) ---
@@ -57,7 +57,8 @@ const { tracedScoring } = require('../../utils/traced-scoring');
 
 // --- CONFIGURATION ---
 /// ===== CONFIG-START ===== \\
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Note: API keys and endpoint URLs are managed centrally by utils/llm-provider.js.
+// Do not reference GEMINI_API_KEY or provider-specific URLs here.
 const TRANSFORM_CONFIG_VERSION = TRANSFORM_VERSION || 'v13.3-hybrid';
 
 const USE_SOLVER_V1 = process.env.CHEFFY_USE_SOLVER === '1'; // Default to false (use legacy reconcile)
@@ -843,115 +844,131 @@ async function generateMealPlan_Single(day, formData, nutritionalTargets, log, p
 
 /**
  * Generates grocery query details for the *entire* aggregated list.
+ * [V14.2] Model-agnostic: uses the model configured in AI Model settings.
+ * No provider-specific model name is referenced in this function.
  */
-// --- [MODIFIED V13.1] Added Preprocessing & Enhanced Prompt ---
-async function generateGroceryQueries_Batched(aggregatedIngredients, store, log, primaryModel = 'gpt-5.1', fallbackModel = 'gemini-2.0-flash') {
+async function generateGroceryQueries_Batched(
+    aggregatedIngredients,
+    store,
+    log,
+    primaryModel  = PRIMARY_MODEL,   // <-- driven by CHEFFY_PRIMARY_MODEL env var
+    fallbackModel = FALLBACK_MODEL   // <-- driven by CHEFFY_FALLBACK_MODEL env var
+) {
     if (!aggregatedIngredients || aggregatedIngredients.length === 0) {
-        log("generateGroceryQueries_Batched called with no ingredients. Returning empty.", 'WARN', 'LLM');
+        log('generateGroceryQueries_Batched called with no ingredients. Returning empty.', 'WARN', 'LLM');
         return { ingredients: [] };
     }
 
     // 1. Check Cache
-    // Change 2.13: Keep ingredient-level caching
     const keysHash = hashString(JSON.stringify(aggregatedIngredients));
     const cacheKey = `${CACHE_PREFIX}:queries-batched:${store}:${keysHash}`;
     const cached = await cacheGet(cacheKey, log);
     if (cached) return cached;
     log(`Cache MISS for key: ${cacheKey.split(':').pop()}`, 'INFO', 'CACHE');
-    
-    // PREPROCESSING (V13.1)
+
+    // 2. Preprocessing (V13.1) — clean ingredient names before LLM sees them
     const preprocessedIngredients = cleanIngredientBatch(aggregatedIngredients);
     const llmInput = preprocessedIngredients.map(item => ({
         originalIngredient: item.originalIngredient,
-        cleanName: item._cleanName,
-        requested_total_g: item.requested_total_g,
-        _autoNegatives: item._autoNegatives
+        cleanName:          item._cleanName,
+        requested_total_g:  item.requested_total_g,
+        _autoNegatives:     item._autoNegatives,
     }));
 
-    // 2. Prepare Prompt
-    const isAustralianStore = (store === 'Coles' || store === 'Woolworths');
-    const australianTermNote = isAustralianStore ? " Use common Australian terms (e.g., 'spring onion', 'capsicum')." : "";
+    // 3. Prepare Prompt
+    const isAustralianStore  = (store === 'Coles' || store === 'Woolworths');
+    const australianTermNote = isAustralianStore
+        ? " Use common Australian terms (e.g., 'spring onion', 'capsicum')."
+        : '';
 
-    // Use ENHANCED_GROCERY_PROMPT imported from utils
     const systemPrompt = ENHANCED_GROCERY_PROMPT(store, australianTermNote);
-    
-    let userQuery = `Generate query JSON for the following ingredients.
-Use "cleanName" for generating queries, but set "originalIngredient" in the output to match the "originalIngredient" field exactly.
-${JSON.stringify(llmInput)}`;
+    const userQuery    =
+        `Generate query JSON for the following ingredients.\n` +
+        `Use "cleanName" for generating queries, but set "originalIngredient" in the ` +
+        `output to match the "originalIngredient" field exactly.\n` +
+        JSON.stringify(llmInput);
 
-    const logPrefix = `GroceryOptimizerFullPlan`;
-    log(`Grocery Optimizer AI Prompt`, 'INFO', 'LLM_PROMPT', {
+    const logPrefix = 'GroceryOptimizerFullPlan';
+    log('Grocery Optimizer AI Prompt', 'INFO', 'LLM_PROMPT', {
         systemPromptStart: systemPrompt.substring(0, 200) + '...',
-        userQuery: userQuery,
+        userQuery,
+        primaryModel,
+        fallbackModel,
     });
 
+    // 4. Build provider-neutral payload (Gemini shape; llm-provider.js translates for OpenAI)
     const payload = {
-        contents: [{ parts: [{ text: userQuery }] }],
+        contents:          [{ parts: [{ text: userQuery }] }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: {
-            temperature: 0.05, topK: 20, topP: 0.85, responseMimeType: "application/json",
-        }
+        generationConfig:  {
+            temperature:      0.05,
+            topK:             20,
+            topP:             0.85,
+            responseMimeType: 'application/json',
+        },
     };
-    const expectedShape = { "ingredients": [] };
+    const expectedShape = { ingredients: [] };
 
-    // 3. Execute LLM Call (Change 2.7: Added Fallback)
+    // 5. Execute LLM call — model name comes from caller, never hardcoded here
     let parsedResult;
     try {
         parsedResult = await tryGenerateLLMPlan(primaryModel, payload, log, logPrefix, expectedShape);
     } catch (primaryError) {
         if (fallbackModel) {
-            log(`${logPrefix}: ${primaryModel} failed: ${primaryError.message}. Falling back to ${fallbackModel}.`, 'WARN', 'LLM_FALLBACK');
+            log(
+                `${logPrefix}: ${primaryModel} failed: ${primaryError.message}. ` +
+                `Falling back to ${fallbackModel}.`,
+                'WARN',
+                'LLM_FALLBACK'
+            );
             try {
                 parsedResult = await tryGenerateLLMPlan(fallbackModel, payload, log, logPrefix, expectedShape);
             } catch (fallbackError) {
-                log(`${logPrefix}: Fallback ${fallbackModel} also failed: ${fallbackError.message}.`, 'CRITICAL', 'LLM');
-                throw new Error(`Grocery Query generation failed. Last error: ${fallbackError.message}`);
+                log(
+                    `${logPrefix}: Fallback model ${fallbackModel} also failed: ${fallbackError.message}.`,
+                    'CRITICAL',
+                    'LLM'
+                );
+                throw new Error(
+                    `Grocery Query generation failed: all models failed. ` +
+                    `Primary (${primaryModel}): ${primaryError.message}. ` +
+                    `Fallback (${fallbackModel}): ${fallbackError.message}`
+                );
             }
         } else {
-            throw new Error(`Grocery Query generation failed: ${primaryError.message}`);
+            log(
+                `${logPrefix}: ${primaryModel} failed: ${primaryError.message}. No fallback configured.`,
+                'CRITICAL',
+                'LLM'
+            );
+            throw new Error(
+                `Grocery Query generation failed: ${primaryModel} failed. ${primaryError.message}`
+            );
         }
     }
-    
-    // 4. Post-process and Cache
+
+    // 6. Sanity-check: overwrite the LLM's grams estimate with our exact aggregated total
     if (parsedResult && parsedResult.ingredients && parsedResult.ingredients.length > 0) {
-        // --- Sanity Check & Fix ---
-        // The LLM sometimes ignores the 'totalGramsRequired' from the prompt.
-        // We must overwrite its estimate with our *actual* aggregated total.
-        const inputMap = new Map(aggregatedIngredients.map(item => [item.originalIngredient, item.requested_total_g]));
+        const inputMap = new Map(
+            aggregatedIngredients.map(item => [item.originalIngredient, item.requested_total_g])
+        );
         parsedResult.ingredients.forEach(ing => {
             const requestedGrams = inputMap.get(ing.originalIngredient);
-            if (requestedGrams && ing.totalGramsRequired !== requestedGrams) {
-                log(`Grocery Optimizer mismatch for "${ing.originalIngredient}". LLM returned ${ing.totalGramsRequired}g, but plan needs ${requestedGrams}g. Overwriting.`, 'DEBUG', 'LLM');
+            if (requestedGrams !== undefined && ing.totalGramsRequired !== requestedGrams) {
+                log(
+                    `Grocery Optimizer mismatch for "${ing.originalIngredient}": ` +
+                    `LLM said ${ing.totalGramsRequired}g, overwriting with ${requestedGrams}g.`,
+                    'WARN',
+                    'LLM_SANITY'
+                );
                 ing.totalGramsRequired = requestedGrams;
             }
-
-            // ENHANCEMENT: Merge auto-negative keywords & attach preprocessed data (V13.1)
-            const preprocessedItem = preprocessedIngredients.find(
-                pi => pi.originalIngredient === ing.originalIngredient
-            );
-            if (preprocessedItem) {
-                 // Attach preprocessed data for later use in scoring (Checker needs cleanName and isWholeFood)
-                 ing._cleanName = preprocessedItem._cleanName;
-                 ing._isWholeFood = preprocessedItem._isWholeFood;
-
-                 // Merge auto-negative keywords
-                 if (preprocessedItem._autoNegatives && preprocessedItem._autoNegatives.length > 0) {
-                    const existingNeg = new Set((ing.negativeKeywords || []).map(k => k.toLowerCase()));
-                    const autoNeg = preprocessedItem._autoNegatives
-                        .filter(k => !existingNeg.has(k.toLowerCase()));
-                    if (autoNeg.length > 0) {
-                        ing.negativeKeywords = [...(ing.negativeKeywords || []), ...autoNeg];
-                        log(`Enhanced negativeKeywords for "${ing.originalIngredient}": added [${autoNeg.join(', ')}]`, 'DEBUG', 'PREPROCESS');
-                    }
-                }
-            }
         });
-        // --- End Sanity Check ---
-        
-        // Change 2.13: Keep ingredient-level caching
+
+        // 7. Cache the verified result
         await cacheSet(cacheKey, parsedResult, TTL_PLAN_MS, log);
     }
-    
+
     return parsedResult;
 }
 
