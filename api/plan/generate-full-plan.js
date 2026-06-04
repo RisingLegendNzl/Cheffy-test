@@ -19,6 +19,9 @@ const { createClient } = require('@vercel/kv');
 
 // Import cache-wrapped microservices
 const { fetchPriceData } = require('../price-search.js');
+// [COLES CATALOG] Coles-only catalog client (library module, NOT a serverless route —
+// lives in utils/ so Vercel doesn't count it toward the function limit).
+const { fetchColesCatalogData } = require('../../utils/coles-catalog-client.js');
 // MOD ZONE 1.1: Import new ingredient-centric function
 const { fetchNutritionData, lookupIngredientNutrition } = require('../nutrition-search.js'); 
 
@@ -1429,7 +1432,9 @@ module.exports = async (request, response) => {
                     const currentAttemptLog = result.searchAttempts.at(-1);
 
                     // NOTE: The store variable from the outer scope is correctly captured here.
-                    const { data: priceData } = await fetchPriceData(store, query, 1, log);
+                    const { data: priceData } = (store === 'Coles')
+                        ? await fetchColesCatalogData(store, query, 1, log)
+                        : await fetchPriceData(store, query, 1, log);
 
                     if (priceData.error) {
                         log(`[${ingredientKey}] Fetch failed (${type}): ${priceData.error.message}`, 'WARN', 'HTTP', { status: priceData.error.status });
@@ -1539,7 +1544,9 @@ module.exports = async (request, response) => {
                         const fbAttemptLog = result.searchAttempts.at(-1);
                         
                         try {
-                            const { data: searchData } = await fetchPriceData(store, fbQuery, 1, log);
+                            const { data: searchData } = (store === 'Coles')
+                                ? await fetchColesCatalogData(store, fbQuery, 1, log)
+                                : await fetchPriceData(store, fbQuery, 1, log);
                             const products = searchData?.results || [];
                             fbAttemptLog.foundCount = products.length;
                             
