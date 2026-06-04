@@ -454,4 +454,3 @@ module.exports = {
   // field-name single source of truth (exported for unit tests / later reuse):
   mapColesProduct,
 };
-
